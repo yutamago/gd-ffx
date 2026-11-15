@@ -21,7 +21,10 @@ own documents folder, so the original's settings and saves are untouched.
   (1..110: the saves the developers left in the archive; game data, not
   your saves). `--devsave=7` is Besaid beach at the save sphere with the
   control. `ffx-import devsaves` lists them all (docs/importer.md).
-- `--no-classic`: no classic content (markers and skeletons only).
+- `--no-classic`: no classic content (markers and skeletons only; remade
+  content still shows).
+- `--mods=DIR` (repeatable): mount the `*.pck` mod packs of `DIR` after
+  those of `user://mods/`; `--no-mods`: none (docs/remake.md).
 
 ## The main scene
 
@@ -32,6 +35,10 @@ own documents folder, so the original's settings and saves are untouched.
   posed by the game's skeleton (docs/importer.md), from the game-state API
   at the display's frame rate (interpolated between the game's updates);
   a marker with skeleton points until a model is imported;
+- **the message boxes** (`MessageView`, G4): the game's dialogue, subtitles
+  and choices as native Godot panels at the game's places, the text decoded
+  from your archive in the game's language (Japanese, Korean and Chinese
+  need a system font with those glyphs);
 - **the debug overlay** (F1 shows or hides it): updates (the game runs 30 a
   second), game time, the map, the story progress, the keys held, and the
   newest snapshot: the event, the pad, the camera and the characters shown
@@ -78,12 +85,18 @@ Godot's takes longer than 0.2 s).
 
 ## Headless (Linux, tests)
 
+`--selftest-message --devsave=6` (G4): the arrival's first subtitle shown
+in a native message box, decoded (`--shot=FILE.png` under Xvfb).
+
 `--selftest-besaid --devsave=7` (G2): Besaid's classic map and the
 characters' models posed, then a walk down and left off the beach to the
 next map (`0x14`); `--no-walk` checks that the map stays without input,
 `--shot=FILE.png` takes a picture when Godot renders (not with
 `--headless`: under Xvfb, `xvfb-run -a godot --display-driver x11
 --rendering-driver opengl3 ...`, nothing shows on screen).
+
+`--selftest-remake --devsave=7` and `--selftest-mods --no-game` (G6):
+remade content and mod packs (docs/remake.md).
 
 
 ```bash

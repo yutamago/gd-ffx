@@ -28,6 +28,18 @@ public static class GameSettings
             .FirstOrDefault();
     }
 
+    /// <summary>Every value of <c>--name=VALUE</c> on the command line, in order.</summary>
+    public static string[] Args(string name)
+    {
+        var prefix = $"--{name}=";
+        return OS.GetCmdlineUserArgs()
+            .Concat(OS.GetCmdlineArgs())
+            .Where(a => a.StartsWith(prefix, StringComparison.Ordinal))
+            .Select(a => a[prefix.Length..])
+            .Distinct()
+            .ToArray();
+    }
+
     /// <summary>Whether the command line has the flag <c>--name</c>.</summary>
     public static bool Flag(string name) =>
         OS.GetCmdlineUserArgs().Concat(OS.GetCmdlineArgs()).Contains($"--{name}");

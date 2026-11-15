@@ -41,6 +41,7 @@ public ref struct StateReader
     public bool Bool() => U8() != 0;
     public string Str() => Encoding.UTF8.GetString(Take(U16()));
     public Vector3 Vec3() => new(F32(), F32(), F32());
+    public byte[] Bytes() => Take(U16()).ToArray();
 
     public float[] Floats(int n)
     {

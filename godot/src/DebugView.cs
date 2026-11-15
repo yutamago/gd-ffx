@@ -60,6 +60,10 @@ public partial class DebugView : Control
             _test = new SelfTest(timeout);
         else if (GameSettings.Flag("selftest-besaid"))
             _test = new BesaidTest(timeout, GameSettings.Arg("shot"));
+        else if (GameSettings.Flag("selftest-remake"))
+            _test = new Remake.RemakeTest(timeout);
+        else if (GameSettings.Flag("selftest-message"))
+            _test = new MessageTest(timeout, GameSettings.Arg("shot"));
     }
 
     public override void _UnhandledInput(InputEvent e)
@@ -377,6 +381,55 @@ public sealed class BesaidTest(double timeout, string? shot) : ITest
         GD.Print($"ffx selftest: {_phase} -> {p}");
         _phase = p;
         _phaseTime = 0;
+    }
+
+    private bool Done(bool pass, string note)
+    {
+        Note = note;
+        return pass;
+    }
+}
+
+/// <summary>
+/// G4's check (<c>--selftest-message</c>; run with <c>--devsave=6</c>, the arrival
+/// off Besaid): the cut scene's first subtitle opens a message window, and the
+/// native message box shows its text decoded with the game's character set (with
+/// <c>--shot=FILE.png</c> and a renderer, a picture of it).
+/// </summary>
+public sealed class MessageTest(double timeout, string? shot) : ITest
+{
+    private double _total;
+    private double _seen = -1;
+
+    public string Note { get; private set; } = "";
+
+    public bool? Step(FfxGame game, GameState s, GameStateView v, double delta)
+    {
+        _total += delta;
+        if (!s.Running && s.Seconds > 1)
+            return Done(false, $"the game ended: {s.Outcome}");
+        if (_total > timeout)
+            return Done(false, $"timed out ({DebugView.SnapshotLine(v)})");
+        var mv = (Engine.GetMainLoop() as SceneTree)?.Root.FindChild("MessageView", true, false) as MessageView;
+        if (mv == null || v.Current?.World.Story != 111)
+            return null;
+        foreach (var text in mv.Shown)
+        {
+            if (text.Length < 2)
+                continue;
+            if (_seen < 0)
+                _seen = _total;
+            // a few frames to lay it out, then the picture
+            if (_total - _seen < 0.15)
+                return null;
+            if (shot != null && DisplayServer.GetName() != "headless")
+            {
+                (Engine.GetMainLoop() as SceneTree)!.Root.GetViewport().GetTexture().GetImage().SavePng(shot);
+                GD.Print($"ffx selftest: picture {shot}");
+            }
+            return Done(true, $"the subtitle shown natively: \"{text.Replace('\n', ' ')}\" (language {v.Current.World.Language})");
+        }
+        return null;
     }
 
     private bool Done(bool pass, string note)

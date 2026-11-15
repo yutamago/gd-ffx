@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using GdFfx.Api;
+using GdFfx.Remake;
 using Godot;
 
 namespace GdFfx;
@@ -39,8 +40,11 @@ public partial class StateView3D : Node3D
         public string ModelName = "";
         public Node3D? Model;
         public Skeleton3D? Skeleton;
-        /// <summary>Game bone i → the skeleton's bone index (-1 none).</summary>
-        public int[] BoneMap = [];
+        /// <summary>
+        /// The skeleton's bones named <c>SkeletonNode_i</c> with their game element i, parents
+        /// before children (each global pose is set against its parent's, already set).
+        /// </summary>
+        public (int Bone, int Element)[] BoneMap = [];
         /// <summary>The skeleton's transform in the model's space (inverted).</summary>
         public Transform3D SkeletonInModelInv = Transform3D.Identity;
     }
@@ -115,23 +119,23 @@ public partial class StateView3D : Node3D
     private void UpdateMap(ClassicLibrary? lib, Snapshot? s)
     {
         var level = s?.World.Level ?? "";
-        if (lib == null || level.Length == 0 || !level.StartsWith("/map/"))
+        if (level.Length == 0 || !level.StartsWith("/map/"))
             return;
         if (level == _mapLevel)
             return;
         _wantedLevel = level;
-        if (lib.Path("map", level) is not { } path)
+        if (ContentResolver.Resolve(lib, "map", level) is not { } content)
             return;
-        var map = ClassicLibrary.Load(path);
+        var map = content.Node;
         _map?.QueueFree();
         _map = map;
         _mapLevel = level;
         if (map == null)
             return;
-        map.Name = "ClassicMap";
-        map.Scale = Vector3.One * ClassicLibrary.MapScale;
+        map.Name = content.Remade ? "RemadeMap" : "ClassicMap";
+        map.Scale = Vector3.One * content.MapScale;
         AddChild(map);
-        GD.Print($"ffx: map {level} shown");
+        GD.Print($"ffx: map {level} shown{(content.Remade ? $" (remade: {content.Path})" : "")}");
     }
 
     // ---- the characters -------------------------------------------------------------
@@ -152,9 +156,9 @@ public partial class StateView3D : Node3D
                 n.Id = a.Id;
                 _actors[a.Slot] = n;
             }
-            if (lib != null && n.Model == null && a.Model.Length > 0 && n.ModelName != a.Model
-                && lib.Path("chr", a.Model) is { } path)
-                AttachModel(n, a.Model, path);
+            if (n.Model == null && a.Model.Length > 0 && n.ModelName != a.Model
+                && ContentResolver.Resolve(lib, "chr", a.Model) is { } content)
+                AttachModel(n, a.Model, content);
             n.Root.GlobalTransform = f.Root;
             var hasModel = n.Model != null;
             n.Root.Visible = f.Shown;
@@ -196,16 +200,19 @@ public partial class StateView3D : Node3D
         n.Label.GlobalPosition = top + Vector3.Up * 4f;
     }
 
-    private static void AttachModel(ActorNode n, string name, string path)
+    private static void AttachModel(ActorNode n, string name, Content content)
     {
         n.ModelName = name;
-        var model = ClassicLibrary.Load(path);
+        var model = content.Node;
         if (model == null)
             return;
         model.Name = "Model";
         model.Transform = new Transform3D(FlipXY, Vector3.Zero);
         n.Root.AddChild(model);
         n.Model = model;
+        // a remade character may opt out of the game's posing (docs/remake.md)
+        if (!Content.Posed(model))
+            return;
         var skels = model.FindChildren("*", nameof(Skeleton3D), true, false);
         if (skels.Count == 0 || skels[0] is not Skeleton3D skel)
             return;
@@ -216,13 +223,30 @@ public partial class StateView3D : Node3D
             if (p is Node3D p3)
                 t = p3.Transform * t;
         n.SkeletonInModelInv = t.AffineInverse();
-        var map = new List<int>();
-        for (int i = 0; i < 512; i++)
+        n.BoneMap = BoneOrder(skel);
+    }
+
+    /// <summary>
+    /// The bones named <c>SkeletonNode_i</c> with their element i, sorted by depth (then bone
+    /// index): the game's element order does not put parents first (c001: 0, 1, 2, 74, 3...).
+    /// </summary>
+    private static (int Bone, int Element)[] BoneOrder(Skeleton3D skel)
+    {
+        const string prefix = "SkeletonNode_";
+        var bones = new List<(int Depth, int Bone, int Element)>();
+        for (int b = 0; b < skel.GetBoneCount(); b++)
         {
-            var b = skel.FindBone($"SkeletonNode_{i}");
-            map.Add(b);
+            var name = skel.GetBoneName(b);
+            if (!name.StartsWith(prefix, System.StringComparison.Ordinal)
+                || !int.TryParse(name[prefix.Length..], out var e) || e < 0)
+                continue;
+            int depth = 0;
+            for (int p = skel.GetBoneParent(b); p >= 0; p = skel.GetBoneParent(p))
+                depth++;
+            bones.Add((depth, b, e));
         }
-        n.BoneMap = map.ToArray();
+        bones.Sort();
+        return bones.ConvertAll(x => (x.Bone, x.Element)).ToArray();
     }
 
     /// <summary>A row-major 4x4 of the game (row vectors) as a Godot transform in the same space.</summary>
@@ -246,13 +270,14 @@ public partial class StateView3D : Node3D
                 if (p.Slot == a.Slot && p.Bones.Count == a.Bones.Count && view.Interpolates(p, a))
                     prev = p;
         int posed = 0;
-        int count = System.Math.Min(a.Bones.Count, n.BoneMap.Length);
-        for (int i = 0; i < count; i++)
+        // in skeleton order, parents first: a parent's later set would move its children
+        foreach (var (b, i) in n.BoneMap)
         {
-            var b = n.BoneMap[i];
+            if (i >= a.Bones.Count)
+                continue;
             var m = a.Bones[i].Matrix;
             // bones the game leaves at the identity keep the model's own pose
-            if (b < 0 || IsIdentity(m))
+            if (IsIdentity(m))
                 continue;
             var t = RowMajor(m);
             if (prev != null)
