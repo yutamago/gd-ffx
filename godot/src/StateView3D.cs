@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using GdFfx.Api;
+using GdFfx.Remake;
 using Godot;
 
 namespace GdFfx;
@@ -115,23 +116,23 @@ public partial class StateView3D : Node3D
     private void UpdateMap(ClassicLibrary? lib, Snapshot? s)
     {
         var level = s?.World.Level ?? "";
-        if (lib == null || level.Length == 0 || !level.StartsWith("/map/"))
+        if (level.Length == 0 || !level.StartsWith("/map/"))
             return;
         if (level == _mapLevel)
             return;
         _wantedLevel = level;
-        if (lib.Path("map", level) is not { } path)
+        if (ContentResolver.Resolve(lib, "map", level) is not { } content)
             return;
-        var map = ClassicLibrary.Load(path);
+        var map = content.Load();
         _map?.QueueFree();
         _map = map;
         _mapLevel = level;
         if (map == null)
             return;
-        map.Name = "ClassicMap";
-        map.Scale = Vector3.One * ClassicLibrary.MapScale;
+        map.Name = content.Remade ? "RemadeMap" : "ClassicMap";
+        map.Scale = Vector3.One * content.MapScale;
         AddChild(map);
-        GD.Print($"ffx: map {level} shown");
+        GD.Print($"ffx: map {level} shown{(content.Remade ? $" (remade: {content.Path})" : "")}");
     }
 
     // ---- the characters -------------------------------------------------------------
@@ -152,9 +153,9 @@ public partial class StateView3D : Node3D
                 n.Id = a.Id;
                 _actors[a.Slot] = n;
             }
-            if (lib != null && n.Model == null && a.Model.Length > 0 && n.ModelName != a.Model
-                && lib.Path("chr", a.Model) is { } path)
-                AttachModel(n, a.Model, path);
+            if (n.Model == null && a.Model.Length > 0 && n.ModelName != a.Model
+                && ContentResolver.Resolve(lib, "chr", a.Model) is { } content)
+                AttachModel(n, a.Model, content);
             n.Root.GlobalTransform = f.Root;
             var hasModel = n.Model != null;
             n.Root.Visible = f.Shown;
@@ -196,16 +197,19 @@ public partial class StateView3D : Node3D
         n.Label.GlobalPosition = top + Vector3.Up * 4f;
     }
 
-    private static void AttachModel(ActorNode n, string name, string path)
+    private static void AttachModel(ActorNode n, string name, Content content)
     {
         n.ModelName = name;
-        var model = ClassicLibrary.Load(path);
+        var model = content.Load();
         if (model == null)
             return;
         model.Name = "Model";
         model.Transform = new Transform3D(FlipXY, Vector3.Zero);
         n.Root.AddChild(model);
         n.Model = model;
+        // a remade character may opt out of the game's posing (docs/remake.md)
+        if (!Content.Posed(model))
+            return;
         var skels = model.FindChildren("*", nameof(Skeleton3D), true, false);
         if (skels.Count == 0 || skels[0] is not Skeleton3D skel)
             return;
