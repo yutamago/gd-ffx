@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""export-files.py: the licence notices and the content checks of an export
+r"""export-files.py: the licence notices and the content checks of an export
 (tools/export.sh; docs/exporting.md).
 
   tools/export-files.py notices OUT TARGET [--allow-gpl] [-- CARGO_ARGS...]
@@ -17,9 +17,11 @@ package (Unicorn, behind dev-unicorn) and --allow-gpl is not given.
 `check` fails (exit 1) when the export in DIR (PLATFORM linux or windows)
 misses one of its files (the program, the .NET data folder, the extension,
 the licences), holds game files by name or imported classic content, or
-holds a path of this machine (the home folder, the user name: in ASCII or
-UTF-16, as binaries keep them), or when the extension links Unicorn
-(GPL-2.0) without --dev, the development export.
+holds a path or name of this machine (the home folder; the Linux user name
+and the Windows one, %USERNAME% from cmd.exe on WSL, as whole words; any
+/home/<name>/, /mnt/c/Users/<name>/ or \Users\<name>\ path: in ASCII or
+UTF-16, case-insensitive, as binaries keep them), or when the extension
+links Unicorn (GPL-2.0) without --dev, the development export.
 
 `pkgdir` prints a package's source folder (Unicorn's COPYING for --dev).
 """
@@ -29,6 +31,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 
@@ -38,7 +41,7 @@ GPL = re.compile(r"\b(A|L)?GPL")
 LICENCE_FILE = re.compile(r"(?i)^(licen[cs]e|copying|notice|copyright|unlicense|third[-_]party|authors|patents)")
 # the game's own files, whatever the folder: never in an export
 GAME = re.compile(r"(?i)(\.vbf$|^ffx(-2)?\.exe$|^magic_\d+\.dll$|^fmod|^iggy|^steam_api(64)?\.dll$|"
-                  r"\.(ftcx|dds|fsb|fev|swf|sav|phyre)$|^gamesetting\.ini$)")
+                  r"\.(ftcx|dds|fsb|fev|swf|sav|phyre|bin|dat|webm|pck)$|^gamesetting\.ini$)")
 # classic content imported from the player's copy (user://classic; a stale
 # res://classic/ is excluded by export_presets.cfg)
 CLASSIC = re.compile(rb"classic/[\x21-\x7e]{1,200}\.(glb|scn|res|png|ctex)")
@@ -46,7 +49,7 @@ CLASSIC = re.compile(rb"classic/[\x21-\x7e]{1,200}\.(glb|scn|res|png|ctex)")
 UNICORN_MARKS = (b"UC_IGNORE_REG_BREAK", b"unicorn-engine")
 EXPECTED = {
     "linux": ["gd-ffx.x86_64", "libffx_gd.so", "data_gd-ffx_linuxbsd_x86_64/gd-ffx.dll"],
-    "windows": ["gd-ffx.exe", "ffx_gd.dll", "data_gd-ffx_windows_x86_64/gd-ffx.dll"],
+    "windows": ["gd-ffx.exe", "gd-ffx.console.exe", "ffx_gd.dll", "data_gd-ffx_windows_x86_64/gd-ffx.dll"],
 }
 LIBRARY = {"linux": "libffx_gd.so", "windows": "ffx_gd.dll"}
 LICENCES = ["LICENSE-MIT", "LICENSE-APACHE", "THIRD-PARTY.txt", "godot-LICENSE.txt",
@@ -189,17 +192,62 @@ def notices(out, target, allow_gpl, cargo_args):
     return 0
 
 
-def private_words():
-    """What must not appear in an export: this machine's home folder and
-    user name (ASCII and UTF-16LE)."""
-    words = {str(pathlib.Path.home())}
-    user = os.environ.get("USER") or os.environ.get("LOGNAME") or ""
-    if len(user) >= 4:
-        words |= {user, f"/home/{user}", f"\\Users\\{user}"}
-    out = []
-    for w in sorted(words):
-        out += [w.encode(), w.encode("utf-16-le")]
-    return out
+# user folders of any name, as a build machine leaves them (at the start of a
+# path: not OpenXR's /input/home/click). Generic folder names are no one's:
+# Public, Default, and runner, the GitHub CI builder's home that Godot's
+# official export templates carry (/home/runner/.cargo/...).
+USER_DIRS = (b"/home/", b"/mnt/c/users/", b"\\users\\")
+NOT_A_USER = {b"public", b"default", b"all users", b"default user", b"runner"}
+
+
+def _wide(text):
+    """A regex for ASCII bytes stored as UTF-16LE."""
+    return b"".join(re.escape(bytes([c])) + b"\\x00" for c in text)
+
+
+def windows_user():
+    """The Windows user name on WSL (cmd.exe's %USERNAME%), else ''."""
+    if not shutil.which("cmd.exe"):
+        return ""
+    try:
+        r = subprocess.run(["cmd.exe", "/c", "echo %USERNAME%"],
+                           cwd="/mnt/c" if os.path.isdir("/mnt/c") else None,
+                           capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    name = r.stdout.replace("\r", "").strip()
+    return "" if not name or "%" in name else name
+
+
+def private_patterns():
+    """What must not appear in an export, as (what, regex) pairs, each in
+    ASCII and UTF-16LE, case-insensitive: the home folder, the user names as
+    whole words (any length from 2), user folders of any name."""
+    names = {os.environ.get("USER") or os.environ.get("LOGNAME") or "", windows_user()}
+    home = str(pathlib.Path.home()).encode()
+    pats = [("the home folder", re.escape(home), _wide(home))]
+    for n in sorted(x for x in names if len(x) >= 2):
+        b = n.encode()
+        pats.append((f"the user name {n!r}",
+                     rb"(?<![a-z0-9])" + re.escape(b) + rb"(?![a-z0-9])",
+                     rb"(?<![a-z0-9]\x00)" + _wide(b) + rb"(?![a-z0-9]\x00)"))
+    for d in USER_DIRS:
+        pats.append((f"a user folder ({d.decode()}<name>)",
+                     rb"(?<![a-z0-9_.])" + re.escape(d) + rb"([a-z0-9._ -]{1,40})",
+                     rb"(?<![a-z0-9_.]\x00)" + _wide(d) + rb"((?:[a-z0-9._ -]\x00){1,40})"))
+    return [(what, re.compile(p, re.I)) for what, a, w in pats for p in (a, w)]
+
+
+def private_hit(pattern, data):
+    """The first match of `pattern` in `data` that names someone (generic
+    user folders such as Public pass), else None."""
+    for m in pattern.finditer(data):
+        if m.groups():
+            name = m.group(1).replace(b"\x00", b"").lower().rstrip(b" ")
+            if name in NOT_A_USER or not name.strip(b". "):
+                continue
+        return m
+    return None
 
 
 def check(root, platform, dev):
@@ -208,16 +256,18 @@ def check(root, platform, dev):
     for rel in EXPECTED[platform] + [f"licences/{n}" for n in LICENCES]:
         if not (root / rel).is_file():
             problems.append(f"missing: {rel}")
-    words = private_words()
+    patterns = private_patterns()
     files = sorted(p for p in root.rglob("*") if p.is_file())
     for f in files:
         rel = f.relative_to(root).as_posix()
         if GAME.search(f.name):
             problems.append(f"game file by name: {rel}")
         data = f.read_bytes()
-        for w in words:
-            if w in data:
-                problems.append(f"a path or name of this machine in {rel}")
+        for what, pat in patterns:
+            m = private_hit(pat, data)
+            if m:
+                at = m.group().replace(b"\x00", b"")[:60].decode(errors="replace")
+                problems.append(f"{what} in {rel} at {m.start():#x}: {at!r}")
                 break
         if f.suffix not in (".dll", ".so") and f.name.startswith("gd-ffx") and CLASSIC.search(data):
             problems.append(f"imported classic content in {rel}: {CLASSIC.search(data).group().decode()}")
