@@ -31,5 +31,6 @@ project/assembly_name="gd-ffx"
 
 [ffx]
 
+audio/enabled=true
 game/game_dir=""
 game/documents_dir="user://documents"

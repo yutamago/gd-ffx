@@ -5,7 +5,8 @@ namespace GdFfx;
 /// <summary>
 /// The game, for the whole Godot project (an autoload: <c>/root/GameHost</c>).
 /// Boots ffx-rust from the player's game folder (<see cref="GameSettings"/>),
-/// passes it the window's events and the keyboard, mouse and pads, and
+/// passes it the window's events and the keyboard, mouse and pads, plays its
+/// sound (<c>FfxAudioOut</c>, unless muted), and
 /// refreshes <see cref="View"/> (the game-state API's snapshots, interpolated)
 /// before the scenes' frame.
 /// </summary>
@@ -16,6 +17,12 @@ public partial class GameHost : Node
 
     /// <summary>The game (null when the extension is missing).</summary>
     public FfxGame? Game { get; private set; }
+
+    /// <summary>
+    /// The extension's <c>FfxAudioOut</c>, playing the game's own mix (null when muted:
+    /// <see cref="GameSettings.AudioEnabled"/>).
+    /// </summary>
+    public Node? Audio { get; private set; }
 
     /// <summary>The snapshots, interpolated for this frame.</summary>
     public GameStateView View { get; } = new();
@@ -45,6 +52,13 @@ public partial class GameHost : Node
             return;
         }
         AddChild(Game.Node);
+        // the player first: the game's output runs only with one attached
+        if (GameSettings.AudioEnabled() && ClassDB.ClassExists("FfxAudioOut"))
+        {
+            Audio = (Node)ClassDB.Instantiate("FfxAudioOut");
+            Audio.Name = "FfxAudioOut";
+            AddChild(Audio);
+        }
         SendWindow();
         GetViewport().SizeChanged += SendWindow;
         if (GameSettings.Flag("no-game"))

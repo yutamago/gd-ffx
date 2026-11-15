@@ -89,12 +89,12 @@ public partial class DebugView : Control
         if (s.Seconds - _lastLog >= 5.0)
         {
             _lastLog = s.Seconds;
-            GD.Print($"ffx: {OneLine(s, _rate)}  {SnapshotLine(host.View)}");
+            GD.Print($"ffx: {OneLine(s, _rate)}  {SnapshotLine(host.View)}  {AudioLine(s)}");
         }
         if (_test.Step(host.Game, s, host.View, delta) is { } pass)
         {
             GD.Print(pass ? $"ffx selftest: PASS ({_test.Note})" : $"ffx selftest: FAIL ({_test.Note})");
-            GD.Print($"ffx: {OneLine(s, _rate)}");
+            GD.Print($"ffx: {OneLine(s, _rate)}  {AudioLine(s)}");
             host.Game.Stop();
             GetTree().Quit(pass ? 0 : 1);
             _test = null;
@@ -107,6 +107,11 @@ public partial class DebugView : Control
         $"{s.Seconds,6:F1} s  updates {s.Updates} ({rate:F1}/s)  game time {s.GameTime:F2} s  "
         + $"map {Hex(s.Map, 4)} (from {Hex(s.PreviousMap, 4)}, entrance {s.Entrance})  "
         + $"story {s.Story}  event frame {s.EventFrame}";
+
+    public static string AudioLine(GameState s) =>
+        s.AudioRunning
+            ? $"audio {s.AudioPulled / 48000.0:F1} s played, {s.AudioQueued} frames queued, {s.AudioUnderruns} underruns"
+            : "audio off";
 
     public static string SnapshotLine(GameStateView v)
     {
@@ -131,6 +136,7 @@ public partial class DebugView : Control
         b.AppendLine($"game time      {s.GameTime:F3} s");
         b.AppendLine($"map            {Hex(s.Map, 4)}   {MapName(s.Map)}  (from {Hex(s.PreviousMap, 4)})");
         b.AppendLine($"story          {s.Story}");
+        b.AppendLine($"sound          {AudioLine(s)}");
         b.AppendLine($"focus          {(s.Focused ? "yes" : "no (the game reads no keys)")}");
         b.AppendLine($"keys held      {string.Join(" ", s.Keys.Select(k => k.ToString("x2")))}");
         foreach (var m in s.MessageBoxes)

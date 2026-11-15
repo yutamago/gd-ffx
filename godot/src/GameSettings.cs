@@ -53,6 +53,13 @@ public static class GameSettings
         return Globalize(dir);
     }
 
+    /// <summary>
+    /// Whether the game's sound plays through Godot: off with <c>--mute</c> on the
+    /// command line or the project setting <c>ffx/audio/enabled</c> false.
+    /// </summary>
+    public static bool AudioEnabled() =>
+        !Flag("mute") && ProjectSettings.GetSetting("ffx/audio/enabled", true).AsBool();
+
     private static string Globalize(string path) =>
         path.StartsWith("res://", StringComparison.Ordinal) || path.StartsWith("user://", StringComparison.Ordinal)
             ? ProjectSettings.GlobalizePath(path)

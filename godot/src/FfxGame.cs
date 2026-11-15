@@ -89,4 +89,11 @@ public readonly struct GameState
     public bool Focused => Get("focused").AsBool();
     public int[] Keys => Get("keys").AsInt32Array();
     public string[] MessageBoxes => Get("message_boxes").AsStringArray();
+    /// <summary>The game's sound plays through Godot (started, and a player pulls).</summary>
+    public bool AudioRunning => Get("audio_running").AsBool();
+    /// <summary>Frames of the game's mix queued for Godot's player.</summary>
+    public long AudioQueued => Get("audio_queued").AsInt64();
+    public long AudioUnderruns => Get("audio_underruns").AsInt64();
+    /// <summary>Frames handed to Godot's player so far.</summary>
+    public long AudioPulled => Get("audio_pulled").AsInt64();
 }
