@@ -47,16 +47,48 @@ platform and parts of its state are the process's.
 
 The start-up logos are the remaster's `OpeningScreen.swf`; their end comes
 from the Flash movie's `Finish` callback, which a build without Ruffle never
-gets. ffx-rust's `Options::skip_opening` ends them on their first frame, as
-its fast mode does.
+gets. gd-ffx always sets ffx-rust's `Options::skip_opening`, which ends them
+on their first frame (Godot shows its own picture).
 
-## The state (G0)
+## The game-state API (G1)
 
-`FfxGame.state()` returns a dictionary read from the game's memory
-(`rust/ffx-gd/src/state.rs`): the updates and frames run, the game time, the
-map, the previous map, the entrance and the story progress (`g_SaveData`,
-`0x0112ca90`), and the running event's frame count. The C# wrapper
-(`godot/src/FfxGame.cs`) makes it a typed `GameState`.
+ffx-rust's `ffx-state` crate defines what Godot reads of the game: a
+`Snapshot` after every update with the world (map, story, the running
+event, battle, control, pause, fades), the renderer's camera, the pad and
+the characters (id, model, root matrix, motion and frame, and every bone's
+matrix). ffx-rust's `docs/state-api.md` has the fields, the spaces and the
+encoding.
 
-G1 replaces this with ffx-rust's game-state API: typed and versioned,
-snapshots after each update, interpolation in Godot.
+- `ffx_host::observe` reads a snapshot at each frame boundary (the game's
+  main thread, between two updates) and hands it to the observer
+  `rust/ffx-gd/src/snapshots.rs` registers, which keeps the newest two
+  with the time the newest came.
+- `FfxGame.snapshots()` gives them to C# encoded; the C# bindings
+  (`godot/src/Api/GameStateApi.g.cs`) are generated from the API's schema
+  by `rust/ffx-state-cs` (`cargo run -p ffx-state-cs`; a test fails when
+  they are stale) and read the bytes through `godot/src/Api/StateReader.cs`.
+- `GameStateView` (C#) decodes only when the update changed, and
+  interpolates each frame between the two by the time since the newest
+  came (`alpha` = age / interval): Godot renders at the display's rate,
+  one update behind the game.
+- Spaces: the game's field space has y down; its render space negates x
+  and y and is Godot's (right-handed, y up, the camera along -z). A field
+  point (x, y, z) is (-x, -y, z) in Godot (`GameStateView.FieldPoint`,
+  `Scale` 1 until the classic maps settle the units in G2). The camera's
+  world comes as the renderer keeps it (`CameraTransform`); a character's
+  bones are posed relative to the character and placed by its root
+  (`GameStateView.BonePoint`).
+
+`GameHost` (an autoload) owns the game, its input and the view;
+`StateView3D` draws the camera and the characters (markers, skeleton
+points, names) until G2's classic content replaces them; `DebugView` is
+the overlay (F1).
+
+## The G0 state read-out
+
+`FfxGame.state()` returns a dictionary read directly from the game's memory
+(`rust/ffx-gd/src/state.rs`): the updates and frames run, the game time,
+the map, the previous map, the entrance and the story progress
+(`g_SaveData`, `0x0112ca90`), and the running event's frame count. The C#
+wrapper (`godot/src/FfxGame.cs`) makes it a typed `GameState`; the debug
+overlay shows it next to the snapshot.

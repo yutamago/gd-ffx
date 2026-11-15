@@ -36,16 +36,17 @@ More: [docs/architecture.md](docs/architecture.md).
 | | Milestone | Status |
 |---|---|---|
 | G0 | ffx-rust as a GDExtension; `GodotPlatform` (window, input); the game runs headless inside Godot at 30 updates a second; a debug view of the state | done |
-| G1 | The game-state API: world, camera, actors, input; snapshots and interpolation; C# bindings | next |
+| G1 | The game-state API: world, camera, actors, input; snapshots and interpolation; C# bindings | done |
 | G2 | The classic importer (maps, models, textures, animations, cameras) and the first playable map | |
 | G3 | Sound through Godot's audio engine; effects; battles with classic content | |
 | G4 | Native Godot UI for the menus | |
 | G5 | The whole game with classic content on Windows, Linux, the Steam Deck, macOS | |
 | G6 | Remake tooling: replacement by id, editor workflow, mod packs, launcher | |
 
-In G0 nothing of the game is drawn yet: the debug view shows the game's
-live state (updates, game time, map, story progress) and passes your
-keyboard, mouse and pads to it.
+Nothing of the game's own art is drawn yet: Godot shows the game's camera
+and its characters as markers and skeletons, driven by the game-state API
+at the display's frame rate, with a debug overlay of the live state. Your
+keyboard, mouse and pads go to the game.
 
 ## Building and running
 

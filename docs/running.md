@@ -15,12 +15,19 @@ else the project setting `ffx/game/documents_dir` (default
 `user://documents`, Godot's user data folder for gd-ffx). It is never your
 own documents folder, so the original's settings and saves are untouched.
 
-## The debug view (G0)
+## The main scene
 
-The main scene, `scenes/debug_view.tscn`, boots the game and shows its state
-live: updates (the game runs 30 a second), frames, game time, the map and the
-one before it, the entrance, the story progress, the running event's frame
-count and the keys held.
+`scenes/main.tscn` boots the game (`GameHost`, an autoload) and shows:
+
+- **the 3D view** (`StateView3D`): the game's own camera, and each
+  character as a marker at its root with its skeleton as points and its
+  model name above, from the game-state API at the display's frame rate
+  (interpolated between the game's updates). The game's maps and models
+  come with G2;
+- **the debug overlay** (F1 shows or hides it): updates (the game runs 30 a
+  second), game time, the map, the story progress, the keys held, and the
+  newest snapshot: the event, the pad, the camera and the characters shown
+  with their motion, frame and bones.
 
 Input goes to the game as on the original:
 
@@ -43,8 +50,8 @@ focus, as with the original.
 From the opening, B (Start) goes to the title: the map changes from `0x015d`
 to `0x0017`.
 
-Nothing of the game is drawn yet: the game runs with ffx-rust's null graphics
-device and silent sound. G1 brings the state API scenes draw from.
+The game's own picture is not drawn: it runs with ffx-rust's null graphics
+device and silent sound; what Godot shows comes from the game-state API.
 
 ## Headless (Linux, tests)
 
@@ -52,8 +59,11 @@ device and silent sound. G1 brings the state API scenes draw from.
 FFX_GAME_DIR=/path/to/game tools/selftest.sh [--timeout SECONDS]
 ```
 
-Godot runs headless (no window, no sound), boots the game, waits for the
-opening, presses Start through Godot's input and expects the title. It
+Godot runs headless (no window, no sound), boots the game, checks that the
+game-state API's snapshots come and decode, waits for the party at the fire
+in the opening (at least three party members shown, posed by their
+skeletons, and the camera), presses Start through Godot's input and
+expects the title. It
 prints the state every 5 seconds and `ffx selftest: PASS` or `FAIL`; the exit
 status is 0 on a pass. The game's documents go to a temporary folder. By hand:
 
