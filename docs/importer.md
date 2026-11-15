@@ -21,7 +21,9 @@ ships with gd-ffx or goes into git.
   that is there already is reused.
 - `godot/src/ClassicLibrary.cs` asks for what the snapshots name and loads
   finished `.glb` files at run time (`GltfDocument`); `StateView3D` shows
-  them.
+  them, through `ContentResolver`, which takes a remade scene instead when
+  one is registered for the id (docs/remake.md); then the classic import is
+  never asked for.
 
 ## Placing them
 

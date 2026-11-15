@@ -41,7 +41,7 @@ More: [docs/architecture.md](docs/architecture.md).
 | G3 | Sound through Godot's audio engine; effects; battles with classic content | |
 | G4 | Native Godot UI for the menus | |
 | G5 | The whole game with classic content on Windows, Linux, the Steam Deck, macOS | |
-| G6 | Remake tooling: replacement by id, editor workflow, mod packs, launcher | |
+| G6 | Remake tooling: replacement by id, editor workflow, mod packs, launcher | groundwork: remade maps and characters replace classic ones by the game's ids, mod packs in a load order (docs/remake.md) |
 
 Godot shows the game's own maps and characters, imported on your machine
 from your copy (docs/importer.md), posed and placed by the game through the
