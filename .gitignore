@@ -1,0 +1,43 @@
+# Never commit game data: the game's files, archives, anything extracted or
+# converted from them, saves, captures. gd-ffx reads the player's own copy at
+# run time.
+*.vbf
+*.exe
+*.dll
+*.fsb
+*.fev
+*.phyre
+*.dds
+*.bin
+*.dat
+*.sav
+*.webm
+/game/
+/extracted/
+/captures/
+/saves/
+# imported classic content (made from the player's copy on their machine)
+/godot/classic/
+
+# Godot
+/godot/.godot/
+/godot/android/
+*.pck
+*.tmp
+
+# .NET
+bin/
+obj/
+*.user
+.vs/
+.idea/
+
+# Rust
+/rust/target/
+# a local cargo config (patches to a local ffx-rust checkout)
+/.cargo/
+
+# OS
+.DS_Store
+Thumbs.db
+*:Zone.Identifier

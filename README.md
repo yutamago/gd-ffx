@@ -1,0 +1,66 @@
+# gd-ffx
+
+A Godot 4 frontend for [ffx-rust](https://github.com/yutamago/ffx-rust), the
+Rust rewrite of FINAL FANTASY X (the Steam HD Remaster). The aim is a
+community-driven remake: ffx-rust stays the game (its logic, event scripts,
+battles, saves, 30 updates a second), and Godot becomes everything the player
+sees, hears and touches.
+
+**You need your own copy of the game.** gd-ffx contains nothing of FINAL
+FANTASY X: no game files, no extracted or converted assets, no code from the
+original. It reads the game from your installed copy (the Steam HD Remaster)
+when it runs, and only reads it. Your saves are left alone: the game's
+settings and saves go to a separate folder of gd-ffx's own.
+
+## How it works
+
+```
+ Godot 4 (.NET, C#)                     ffx-rust (Rust, a GDExtension)
+ +------------------------------+       +-------------------------------+
+ | scenes, UI, audio (C#)       | <---- | the game: logic, scripts,     |
+ |                              | state |   battles, menus, saves       |
+ | input, window                | ----> |   at 30 updates a second      |
+ +------------------------------+       | GodotPlatform (window, input) |
+                                        +-------------------------------+
+```
+
+- `rust/ffx-gd`: ffx-rust loaded into Godot as a GDExtension (godot-rust).
+  It plugs into ffx-rust's platform seam as `GodotPlatform`, boots the game
+  from your game folder and runs it on its own thread.
+- `godot/`: the Godot project (C#).
+
+More: [docs/architecture.md](docs/architecture.md).
+
+## Status
+
+| | Milestone | Status |
+|---|---|---|
+| G0 | ffx-rust as a GDExtension; `GodotPlatform` (window, input); the game runs headless inside Godot at 30 updates a second; a debug view of the state | done |
+| G1 | The game-state API: world, camera, actors, input; snapshots and interpolation; C# bindings | next |
+| G2 | The classic importer (maps, models, textures, animations, cameras) and the first playable map | |
+| G3 | Sound through Godot's audio engine; effects; battles with classic content | |
+| G4 | Native Godot UI for the menus | |
+| G5 | The whole game with classic content on Windows, Linux, the Steam Deck, macOS | |
+| G6 | Remake tooling: replacement by id, editor workflow, mod packs, launcher | |
+
+In G0 nothing of the game is drawn yet: the debug view shows the game's
+live state (updates, game time, map, story progress) and passes your
+keyboard, mouse and pads to it.
+
+## Building and running
+
+[docs/building.md](docs/building.md) and [docs/running.md](docs/running.md).
+In short, on Linux:
+
+```bash
+tools/build-extension.sh                          # rust/ffx-gd
+FFX_GAME_DIR=/path/to/FINAL\ FANTASY\ X-X2\ HD\ Remaster tools/selftest.sh
+```
+
+## Licence
+
+gd-ffx's code is licensed under either of [Apache License, Version 2.0](LICENSE-APACHE)
+or [MIT license](LICENSE-MIT), at your option, like ffx-rust.
+
+FINAL FANTASY is a registered trademark of Square Enix Holdings Co., Ltd.
+gd-ffx is a fan project, not affiliated with or endorsed by Square Enix.

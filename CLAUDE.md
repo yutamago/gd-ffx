@@ -1,0 +1,33 @@
+# gd-ffx
+
+Godot 4 (.NET/C#) frontend for ffx-rust. Plan: ffx-rust's `docs/godot-plan.md`;
+here: `docs/architecture.md`, `docs/building.md`, `docs/running.md`.
+
+## Rules
+
+- No game data in git: no game files, extracted or converted assets,
+  decompilation output, saves. The game is read from the player's copy at
+  run time; the game folder is read-only, saves go to gd-ffx's own sandbox.
+- Licence MIT OR Apache-2.0; no GPL dependencies in release builds (gdext is
+  MPL-2.0: fine; Unicorn only behind the `dev-unicorn` feature).
+- Commit as Yutamago <12561505+yutamago@users.noreply.github.com>. No real
+  names, user names or user paths in commits, code or docs. The second
+  machine is "PC2" in docs.
+- Push only to github.com/yutamago/gd-ffx (private until a first playable
+  map). Never `git push --all`, never force-push main.
+- Changes gd-ffx needs in ffx-rust: a branch in its own worktree, a PR on
+  ffx-rust, reviewed, merged; keep its gates green (fmt, clippy
+  `-D warnings` in both ffx-host feature sets, ffx-host tests,
+  `tools/check-hostptr.py`, `tools/check-licences.py`) and every replay
+  unchanged.
+- Running the game counts as playing: headless/background only, no visible
+  windows unless the user asks. Kill processes by exact PID.
+
+## Commands
+
+```bash
+export FFX_RUST_DIR=/path/to/ffx-rust            # optional: a local ffx-rust
+tools/build-extension.sh [linux|windows] [build|clippy|test]
+FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/selftest.sh    # headless G0 check
+(cd godot && dotnet build)
+```

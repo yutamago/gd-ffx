@@ -1,0 +1,83 @@
+# Building
+
+gd-ffx has two parts: the GDExtension (`rust/ffx-gd`, Rust) and the Godot
+project (`godot/`, C#). Build the extension first; the Godot project loads it
+from `rust/target` (`godot/ffx_gd.gdextension`).
+
+## What you need
+
+- **Rust** (stable, 1.94 or newer) with cargo.
+- **Godot 4.7 .NET** (the "mono" build), from the official releases:
+  <https://github.com/godotengine/godot/releases> (`Godot_v4.7.2-stable_mono_*`).
+  Check the download against the release's `SHA512-SUMS.txt`.
+- **.NET SDK** 9 or newer (the project targets `net9.0`).
+- For the Windows build from Linux/WSL: `cargo-xwin`, clang/LLVM (`clang-cl`,
+  `llvm-lib`, `llvm-ml64`), and cmake and ninja (or `uvx` to fetch them).
+
+On the development machine (WSL2 with Windows beside it) Godot lives in two
+places: the Linux build under `~/tools/Godot_v4.7.2-stable_mono_linux_x86_64/`
+(headless runs and tests; `godot` there is a link to the binary) and the
+Windows build under `%USERPROFILE%\tools\godot\Godot_v4.7.2-stable_mono_win64\`.
+
+## ffx-rust
+
+`rust/Cargo.toml` takes ffx-rust's crates (`ffx-host`, `ffx-bridge`) from its
+GitHub repository, branch `main`. To build against a local checkout instead (a
+branch not merged yet, your own changes), set `FFX_RUST_DIR`:
+
+```bash
+export FFX_RUST_DIR=/path/to/ffx-rust
+tools/build-extension.sh
+```
+
+The script passes `[patch]` entries for the two crates to cargo. Plain cargo
+in `rust/` can do the same with a gitignored `.cargo/config.toml` at the
+repository's root:
+
+```toml
+[patch."https://github.com/yutamago/ffx-rust"]
+ffx-host = { path = "/path/to/ffx-rust/crates/ffx-host" }
+ffx-bridge = { path = "/path/to/ffx-rust/crates/ffx-bridge" }
+```
+
+## The extension
+
+```bash
+tools/build-extension.sh                   # Linux: rust/target/release/libffx_gd.so
+tools/build-extension.sh windows           # rust/target/x86_64-pc-windows-msvc/release/ffx_gd.dll
+tools/build-extension.sh linux clippy -- -D warnings
+tools/build-extension.sh linux test
+```
+
+The Windows build is cross-built from Linux/WSL with cargo-xwin, the way
+ffx-rust builds `ffx-rust.exe` (its `tools/build-host.sh`); it needs
+`FFX_RUST_DIR` for ffx-rust's toolchain shims.
+
+Always a release build: the game runs inside the extension, and ffx-rust's
+executor is far too slow unoptimised (`rust/Cargo.toml` optimises the
+dependencies of a debug build too).
+
+### Features
+
+- `dev-unicorn` (default): development only, as in ffx-rust. Functions of
+  the game without a Rust port yet run in Unicorn, from your own `FFX.exe`.
+  Unicorn is GPL-2.0, so a build for others turns it off
+  (`FFX_GD_FEATURES=none`); such a build stops at the first function without
+  a port until ffx-rust's port is complete.
+- `swf`: the remaster's Flash (Iggy) screens on Ruffle. Heavy (wgpu); off by
+  default. Without it the start-up logos are skipped and the Flash screens
+  are empty.
+
+## The Godot project
+
+```bash
+cd godot
+dotnet build                     # the C# assembly
+~/tools/Godot_v4.7.2-stable_mono_linux_x86_64/godot --headless --editor --quit --path .   # import once
+```
+
+The first import registers the extension. Godot 4.7.2 may crash on exit right
+after that first registration (seen on Linux, no harm: the import is done);
+later runs exit cleanly.
+
+Open `godot/project.godot` in the Godot .NET editor to work on it.
