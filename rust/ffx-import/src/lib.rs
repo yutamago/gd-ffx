@@ -150,6 +150,21 @@ impl Importer {
             .map_err(|e| Error::Archive(format!("{path}: {e}")))
     }
 
+    /// The game's character set for `language` (`us`, `jp`, `de`...; the
+    /// archive's table), to decode the game's text
+    /// (`ffx_text::Charset::decode`).
+    ///
+    /// # Errors
+    /// An unknown language, or a missing or bad table.
+    pub fn charset(&self, language: &str) -> Result<ffx_text::Charset> {
+        let lang = ffx_text::Language::from_code(language)
+            .ok_or_else(|| Error::Missing(format!("language {language}")))?;
+        let path = lang.charset_path();
+        let table = self.read(&path)?;
+        ffx_text::Charset::from_table(&table, lang)
+            .map_err(|_| Error::Model(format!("{path}: not a character table")))
+    }
+
     /// The model at `path` as a glTF binary with its base colour textures
     /// embedded (PNG), as stored (no axis change: see the module's doc).
     ///
@@ -267,6 +282,9 @@ mod tests {
         };
         let imp = Importer::open(Path::new(&dir)).unwrap();
         let cache = std::env::temp_dir().join(format!("ffx-import-test-{}", std::process::id()));
+        // the English character set decodes plain letters
+        let cs = imp.charset("us").unwrap();
+        assert_ne!(cs.decode(&[0x30, 0x31]), "");
         let map = imp.import_map("/map/znkd/znkd06/", &cache).unwrap();
         let chr = imp.import_character("c001", &cache).unwrap();
         for p in [&map, &chr] {

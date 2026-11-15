@@ -127,6 +127,16 @@ encoding.
 classic models posed by the game (docs/importer.md), markers until they
 are imported; `DebugView` is the overlay (F1).
 
+## Native UI (G4)
+
+The game-state API 3 adds the menus' state and the event script's
+message windows (ffx-rust's docs/state-api.md, "Menus and messages").
+`MessageView` draws the open windows as Godot panels; their text is the
+game's own encoding, decoded by `FfxGame.decode_text` with ffx-text's
+character set for `World.language`, read from the player's archive
+(`ffx-import`'s `Importer::charset`). The menus (field menu, battle
+commands, save and load) come next on the same state.
+
 ## The G0 state read-out
 
 `FfxGame.state()` returns a dictionary read directly from the game's memory

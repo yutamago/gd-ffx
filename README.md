@@ -39,7 +39,7 @@ More: [docs/architecture.md](docs/architecture.md).
 | G1 | The game-state API: world, camera, actors, input; snapshots and interpolation; C# bindings | done |
 | G2 | The classic importer (maps, models, textures, animations, cameras) and the first playable map | done: Besaid beach from the archive, characters posed by the game, walkable to the next map |
 | G3 | Sound through Godot's audio engine; effects; battles with classic content | |
-| G4 | Native Godot UI for the menus | |
+| G4 | Native Godot UI for the menus | in progress: message boxes (dialogue, subtitles, choices) native, decoded from the game's text; menus next |
 | G5 | The whole game with classic content on Windows, Linux, the Steam Deck, macOS | |
 | G6 | Remake tooling: replacement by id, editor workflow, mod packs, launcher | |
 

@@ -60,6 +60,10 @@ public partial class FfxGame : RefCounted
     public Godot.Collections.Array<Dictionary> ClassicFinished() =>
         Node.Call("classic_finished").AsGodotArray<Dictionary>();
 
+    /// <summary>The game's encoded <paramref name="text"/> decoded in <paramref name="language"/>'s character set (<c>us</c>, <c>jp</c>...).</summary>
+    public string DecodeText(byte[] text, string language) =>
+        Node.Call("decode_text", text, language).AsString();
+
     /// <summary>Asks the game to load developer save <paramref name="n"/> (1..110) at its next update.</summary>
     public bool RequestDevSave(int n) => Node.Call("request_devsave", n).AsBool();
 

@@ -37,6 +37,7 @@ fn cs_type(ty: Ty) -> String {
         Ty::F64 => "double".into(),
         Ty::Bool => "bool".into(),
         Ty::Str => "string".into(),
+        Ty::Bytes => "byte[]".into(),
         Ty::Vec3 => "Vector3".into(),
         Ty::Mat34 | Ty::Mat4 => "float[]".into(),
         Ty::Struct(s) => s().name.into(),
@@ -48,6 +49,7 @@ fn cs_type(ty: Ty) -> String {
 fn cs_init(ty: Ty) -> &'static str {
     match ty {
         Ty::Str => " = \"\";",
+        Ty::Bytes => " = [];",
         Ty::Mat34 => " = new float[12];",
         Ty::Mat4 => " = new float[16];",
         Ty::Struct(_) | Ty::List(_) => " = new();",
@@ -67,6 +69,7 @@ fn cs_read(ty: Ty) -> String {
         Ty::F64 => "r.F64()".into(),
         Ty::Bool => "r.Bool()".into(),
         Ty::Str => "r.Str()".into(),
+        Ty::Bytes => "r.Bytes()".into(),
         Ty::Vec3 => "r.Vec3()".into(),
         Ty::Mat34 => "r.Floats(12)".into(),
         Ty::Mat4 => "r.Floats(16)".into(),

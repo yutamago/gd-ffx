@@ -448,6 +448,16 @@ impl FfxGame {
             .collect()
     }
 
+    /// The game's encoded text (a message window's) as text, in
+    /// `language`'s character set (`us`, `jp`, `de`...). Empty without the
+    /// archive (`classic_open`).
+    #[func]
+    fn decode_text(&self, text: PackedByteArray, language: GString) -> GString {
+        classic()
+            .decode(&language.to_string(), text.as_slice())
+            .map_or_else(GString::new, |s| GString::from(s.as_str()))
+    }
+
     /// Asks the game to load developer save `n` (1..=110, from the
     /// player's archive) at its next frame boundary. False when the game
     /// has not booted. `request_results` reports the outcome.

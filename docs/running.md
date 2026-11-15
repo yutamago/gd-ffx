@@ -32,6 +32,10 @@ own documents folder, so the original's settings and saves are untouched.
   posed by the game's skeleton (docs/importer.md), from the game-state API
   at the display's frame rate (interpolated between the game's updates);
   a marker with skeleton points until a model is imported;
+- **the message boxes** (`MessageView`, G4): the game's dialogue, subtitles
+  and choices as native Godot panels at the game's places, the text decoded
+  from your archive in the game's language (Japanese, Korean and Chinese
+  need a system font with those glyphs);
 - **the debug overlay** (F1 shows or hides it): updates (the game runs 30 a
   second), game time, the map, the story progress, the keys held, and the
   newest snapshot: the event, the pad, the camera and the characters shown
@@ -77,6 +81,9 @@ each a few milliseconds of silence: after an underrun, or when a frame of
 Godot's takes longer than 0.2 s).
 
 ## Headless (Linux, tests)
+
+`--selftest-message --devsave=6` (G4): the arrival's first subtitle shown
+in a native message box, decoded (`--shot=FILE.png` under Xvfb).
 
 `--selftest-besaid --devsave=7` (G2): Besaid's classic map and the
 characters' models posed, then a walk down and left off the beach to the
