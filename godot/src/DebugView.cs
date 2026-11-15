@@ -119,8 +119,9 @@ public partial class DebugView : Control
 
     public static string AudioLine(GameState s) =>
         s.AudioRunning
-            ? $"audio {s.AudioPulled / 48000.0:F1} s played, {s.AudioQueued} frames queued, "
-                + $"{s.AudioUnderruns} underruns, {s.AudioSkips} skips"
+            ? $"audio {s.AudioPulled / 48000.0:F1} s played, {s.AudioQueued} frames queued "
+                + $"(mean {s.AudioMeanQueued}), {s.AudioUnderruns} underruns, "
+                + $"latency {s.AudioLatencyMs:F0} ms (queue {s.AudioMeanQueuedMs:F0} + output {s.AudioOutputLatencyMs:F0})"
             : "audio off";
 
     public static string SnapshotLine(GameStateView v)
