@@ -96,8 +96,9 @@ fn run_game(
             ..ffx_host::gfx::Config::default()
         },
         real_clock: true,
-        // the start-up logos are Iggy's; without Ruffle they never end
-        skip_opening: !cfg!(feature = "swf"),
+        // Godot shows its own picture; the start-up logos are Iggy's
+        // (without Ruffle they would never end)
+        skip_opening: true,
         ..ffx_host::Options::default()
     };
     let mut exec = match ffx_host::boot_opts(&boot.exe, ffx_host::ports::table(), &opts) {

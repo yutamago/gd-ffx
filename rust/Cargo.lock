@@ -712,6 +712,7 @@ dependencies = [
 [[package]]
 name = "ffx-auto"
 version = "0.1.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#68e36592ae6f74da1f3a35024c62426c72692706"
 dependencies = [
  "ffx-bridge",
 ]
@@ -719,6 +720,7 @@ dependencies = [
 [[package]]
 name = "ffx-battle"
 version = "0.1.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#68e36592ae6f74da1f3a35024c62426c72692706"
 dependencies = [
  "ffx-bridge",
  "ffx-chara",
@@ -731,6 +733,7 @@ dependencies = [
 [[package]]
 name = "ffx-bridge"
 version = "0.1.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#68e36592ae6f74da1f3a35024c62426c72692706"
 dependencies = [
  "lz4_flex",
 ]
@@ -738,6 +741,7 @@ dependencies = [
 [[package]]
 name = "ffx-chara"
 version = "0.1.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#68e36592ae6f74da1f3a35024c62426c72692706"
 dependencies = [
  "ffx-bridge",
  "ffx-ps2",
@@ -747,6 +751,7 @@ dependencies = [
 [[package]]
 name = "ffx-core"
 version = "0.1.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#68e36592ae6f74da1f3a35024c62426c72692706"
 dependencies = [
  "miniz_oxide 0.9.1",
 ]
@@ -754,6 +759,7 @@ dependencies = [
 [[package]]
 name = "ffx-field"
 version = "0.1.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#68e36592ae6f74da1f3a35024c62426c72692706"
 dependencies = [
  "ffx-battle",
  "ffx-bridge",
@@ -765,6 +771,7 @@ dependencies = [
 [[package]]
 name = "ffx-fpu"
 version = "0.1.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#68e36592ae6f74da1f3a35024c62426c72692706"
 dependencies = [
  "unicorn-engine",
 ]
@@ -781,10 +788,12 @@ dependencies = [
 [[package]]
 name = "ffx-gfx"
 version = "0.1.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#68e36592ae6f74da1f3a35024c62426c72692706"
 
 [[package]]
 name = "ffx-glue-other"
 version = "0.1.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#68e36592ae6f74da1f3a35024c62426c72692706"
 dependencies = [
  "ffx-bridge",
  "ffx-graphic",
@@ -794,6 +803,7 @@ dependencies = [
 [[package]]
 name = "ffx-graphic"
 version = "0.1.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#68e36592ae6f74da1f3a35024c62426c72692706"
 dependencies = [
  "ffx-bridge",
 ]
@@ -801,6 +811,7 @@ dependencies = [
 [[package]]
 name = "ffx-host"
 version = "0.1.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#68e36592ae6f74da1f3a35024c62426c72692706"
 dependencies = [
  "ffx-bridge",
  "ffx-core",
@@ -826,6 +837,7 @@ dependencies = [
 [[package]]
 name = "ffx-host-ports"
 version = "0.1.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#68e36592ae6f74da1f3a35024c62426c72692706"
 dependencies = [
  "ffx-auto",
  "ffx-battle",
@@ -857,6 +869,7 @@ dependencies = [
 [[package]]
 name = "ffx-kernel"
 version = "0.1.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#68e36592ae6f74da1f3a35024c62426c72692706"
 dependencies = [
  "ffx-bridge",
  "ffx-text",
@@ -867,6 +880,7 @@ dependencies = [
 [[package]]
 name = "ffx-magic"
 version = "0.1.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#68e36592ae6f74da1f3a35024c62426c72692706"
 dependencies = [
  "ffx-bridge",
  "ffx-core",
@@ -875,6 +889,7 @@ dependencies = [
 [[package]]
 name = "ffx-menu"
 version = "0.1.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#68e36592ae6f74da1f3a35024c62426c72692706"
 dependencies = [
  "ffx-battle",
  "ffx-bridge",
@@ -892,6 +907,7 @@ dependencies = [
 [[package]]
 name = "ffx-movie"
 version = "0.1.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#68e36592ae6f74da1f3a35024c62426c72692706"
 dependencies = [
  "ffx-bridge",
  "ffx-graphic",
@@ -903,6 +919,7 @@ dependencies = [
 [[package]]
 name = "ffx-panim"
 version = "0.1.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#68e36592ae6f74da1f3a35024c62426c72692706"
 dependencies = [
  "ffx-bridge",
  "ffx-graphic",
@@ -914,6 +931,7 @@ dependencies = [
 [[package]]
 name = "ffx-pcore"
 version = "0.1.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#68e36592ae6f74da1f3a35024c62426c72692706"
 dependencies = [
  "ffx-bridge",
  "ffx-graphic",
@@ -924,6 +942,7 @@ dependencies = [
 [[package]]
 name = "ffx-pcui"
 version = "0.1.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#68e36592ae6f74da1f3a35024c62426c72692706"
 dependencies = [
  "ffx-bridge",
  "ffx-graphic",
@@ -932,6 +951,7 @@ dependencies = [
 [[package]]
 name = "ffx-pload"
 version = "0.1.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#68e36592ae6f74da1f3a35024c62426c72692706"
 dependencies = [
  "ffx-bridge",
  "ffx-graphic",
@@ -942,6 +962,7 @@ dependencies = [
 [[package]]
 name = "ffx-pother-a"
 version = "0.1.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#68e36592ae6f74da1f3a35024c62426c72692706"
 dependencies = [
  "ffx-bridge",
  "ffx-graphic",
@@ -950,6 +971,7 @@ dependencies = [
 [[package]]
 name = "ffx-pother-b"
 version = "0.1.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#68e36592ae6f74da1f3a35024c62426c72692706"
 dependencies = [
  "ffx-bridge",
  "ffx-graphic",
@@ -959,6 +981,7 @@ dependencies = [
 [[package]]
 name = "ffx-prender"
 version = "0.1.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#68e36592ae6f74da1f3a35024c62426c72692706"
 dependencies = [
  "ffx-bridge",
  "ffx-graphic",
@@ -967,6 +990,7 @@ dependencies = [
 [[package]]
 name = "ffx-ps2"
 version = "0.1.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#68e36592ae6f74da1f3a35024c62426c72692706"
 dependencies = [
  "ffx-bridge",
  "ffx-graphic",
@@ -976,6 +1000,7 @@ dependencies = [
 [[package]]
 name = "ffx-script"
 version = "0.1.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#68e36592ae6f74da1f3a35024c62426c72692706"
 dependencies = [
  "ffx-bridge",
  "thiserror",
@@ -984,6 +1009,7 @@ dependencies = [
 [[package]]
 name = "ffx-sg"
 version = "0.1.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#68e36592ae6f74da1f3a35024c62426c72692706"
 dependencies = [
  "ffx-battle",
  "ffx-bridge",
@@ -998,6 +1024,7 @@ dependencies = [
 [[package]]
 name = "ffx-sound"
 version = "0.1.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#68e36592ae6f74da1f3a35024c62426c72692706"
 dependencies = [
  "ffx-bridge",
  "ffx-graphic",
@@ -1007,6 +1034,7 @@ dependencies = [
 [[package]]
 name = "ffx-static-a"
 version = "0.1.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#68e36592ae6f74da1f3a35024c62426c72692706"
 dependencies = [
  "ffx-bridge",
  "ffx-graphic",
@@ -1015,6 +1043,7 @@ dependencies = [
 [[package]]
 name = "ffx-swf"
 version = "0.1.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#68e36592ae6f74da1f3a35024c62426c72692706"
 dependencies = [
  "anyhow",
  "ffx-vbf",
@@ -1029,6 +1058,7 @@ dependencies = [
 [[package]]
 name = "ffx-system"
 version = "0.1.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#68e36592ae6f74da1f3a35024c62426c72692706"
 dependencies = [
  "ffx-bridge",
  "ffx-graphic",
@@ -1038,6 +1068,7 @@ dependencies = [
 [[package]]
 name = "ffx-text"
 version = "0.1.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#68e36592ae6f74da1f3a35024c62426c72692706"
 dependencies = [
  "ffx-bridge",
  "thiserror",
@@ -1047,6 +1078,7 @@ dependencies = [
 [[package]]
 name = "ffx-vbf"
 version = "0.1.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#68e36592ae6f74da1f3a35024c62426c72692706"
 dependencies = [
  "flate2",
  "md-5",
@@ -1056,6 +1088,7 @@ dependencies = [
 [[package]]
 name = "ffx-vfx"
 version = "0.1.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#68e36592ae6f74da1f3a35024c62426c72692706"
 dependencies = [
  "ffx-bridge",
  "ffx-field",
@@ -4033,6 +4066,7 @@ checksum = "568189ce764b4890342f24ed013595066b6beb0d8e30af37bb755fafae074b90"
 [[package]]
 name = "zvidlib-vp8"
 version = "0.5.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#68e36592ae6f74da1f3a35024c62426c72692706"
 dependencies = [
  "zvidlib-build",
  "zvidlib-color",
