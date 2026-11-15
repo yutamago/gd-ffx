@@ -55,6 +55,9 @@ public partial class DebugView : Control
         help.AddThemeColorOverride("font_color", new Color(0.6f, 0.65f, 0.7f));
         help.AddThemeFontSizeOverride("font_size", 12);
         box.AddChild(help);
+        // --no-overlay: start hidden (screenshots for comparison)
+        if (GameSettings.Flag("no-overlay"))
+            Visible = false;
         var timeout = GameSettings.Number("selftest-timeout", 300);
         if (GameSettings.Flag("selftest"))
             _test = new SelfTest(timeout);
