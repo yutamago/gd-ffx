@@ -1,0 +1,31 @@
+[package]
+name = "ffx-gd"
+description = "ffx-rust as a Godot GDExtension: the game runs inside Godot, Godot takes the input (docs/architecture.md)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["dev-unicorn"]
+# Development only, as in ffx-rust: functions without a Rust port run in
+# Unicorn from the player's FFX.exe. Unicorn is GPL-2.0, so a release
+# build turns this off (and then stops at the first function without a
+# port; docs/building.md, "Features").
+dev-unicorn = ["ffx-host/dev-unicorn"]
+# Iggy's Flash screens on Ruffle (heavy: wgpu). Without it the start-up
+# logos are skipped and the Flash screens are null.
+swf = ["ffx-host/swf"]
+
+[dependencies]
+ffx-bridge.workspace = true
+ffx-host.workspace = true
+godot.workspace = true
+
+[lints]
+workspace = true

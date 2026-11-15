@@ -1,0 +1,4 @@
+[env]
+# unicorn-engine-sys (ffx-rust's development build) declares an old cmake
+# minimum that cmake 4 rejects.
+CMAKE_POLICY_VERSION_MINIMUM = "3.5"
