@@ -177,12 +177,13 @@ public sealed partial class Camera
     /// </summary>
     public float Far;
     /// <summary>
-    /// The battle camera's eye in field space (`g_Camera`,
-    /// `MsCameraGetPosNow`; zeros where the battle camera is unused).
+    /// The camera channel's eye in field space (`g_Camera`,
+    /// `MsCameraGetPosNow`, which the battle reads; zeros early in the
+    /// opening's event, where the scene's camera above is the one drawn).
     /// </summary>
     public Vector3 Eye;
     /// <summary>
-    /// The battle camera's look-at point in field space.
+    /// The camera channel's look-at point in field space.
     /// </summary>
     public Vector3 Target;
 

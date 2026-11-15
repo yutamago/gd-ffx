@@ -5,7 +5,7 @@
 //! `GdFfx.GameStateView`). Rendering runs one update behind the game, as
 //! interpolation needs.
 
-use std::sync::{Arc, Mutex, Once, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
 use ffx_state::Snapshot;
@@ -67,12 +67,16 @@ impl Snapshots {
         self.pair.lock().ok().and_then(|p| p.current.clone())
     }
 
-    /// (previous, current) encoded, seconds since the current came, the
-    /// interval between updates.
+    /// The two encoded, with their timing.
     #[must_use]
-    pub fn encoded(&self) -> (Option<Arc<Vec<u8>>>, Option<Arc<Vec<u8>>>, f64, f64) {
+    pub fn encoded(&self) -> Encoded {
         let Ok(mut p) = self.pair.lock() else {
-            return (None, None, 0.0, UPDATE);
+            return Encoded {
+                previous: None,
+                current: None,
+                age: 0.0,
+                interval: UPDATE,
+            };
         };
         if p.current_bytes.is_none() {
             p.current_bytes = p.current.as_ref().map(|s| Arc::new(s.encode()));
@@ -82,13 +86,26 @@ impl Snapshots {
         }
         let age = p.at.map_or(0.0, |t| t.elapsed().as_secs_f64());
         let interval = if p.interval > 0.0 { p.interval } else { UPDATE };
-        (
-            p.previous_bytes.clone(),
-            p.current_bytes.clone(),
+        Encoded {
+            previous: p.previous_bytes.clone(),
+            current: p.current_bytes.clone(),
             age,
             interval,
-        )
+        }
     }
+}
+
+/// The newest two snapshots encoded ([`Snapshots::encoded`]).
+#[derive(Debug, Clone)]
+pub struct Encoded {
+    /// The one before the newest.
+    pub previous: Option<Arc<Vec<u8>>>,
+    /// The newest.
+    pub current: Option<Arc<Vec<u8>>>,
+    /// Seconds since the newest came.
+    pub age: f64,
+    /// Seconds between updates (smoothed).
+    pub interval: f64,
 }
 
 /// The process's snapshots (one game per process).
@@ -97,13 +114,11 @@ pub fn global() -> &'static Arc<Snapshots> {
     S.get_or_init(Arc::default)
 }
 
-/// Registers the observer that feeds [`global`] (once).
-pub fn observe() {
-    static ONCE: Once = Once::new();
-    ONCE.call_once(|| {
-        let s = Arc::clone(global());
-        ffx_host::observe::observe(Box::new(move |snap| s.push(snap)));
-    });
+/// Registers the observer that feeds [`global`] on the game `shared` (the
+/// boot's, before its entry runs).
+pub fn observe(shared: &ffx_host::exec::Shared) {
+    let s = Arc::clone(global());
+    shared.observers.add(Arc::new(move |snap| s.push(snap)));
 }
 
 #[cfg(test)]
@@ -121,8 +136,9 @@ mod tests {
             }));
         }
         assert_eq!(s.update(), 3);
-        let (prev, cur, age, interval) = s.encoded();
-        let (prev, cur) = (prev.unwrap(), cur.unwrap());
+        let e = s.encoded();
+        let (prev, cur, age, interval) =
+            (e.previous.unwrap(), e.current.unwrap(), e.age, e.interval);
         assert_eq!(u32::from_le_bytes(prev[8..12].try_into().unwrap()), 2);
         assert_eq!(u32::from_le_bytes(cur[8..12].try_into().unwrap()), 3);
         assert!(age >= 0.0 && interval > 0.0);

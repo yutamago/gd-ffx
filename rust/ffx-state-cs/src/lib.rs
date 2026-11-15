@@ -151,7 +151,10 @@ mod tests {
 
     #[test]
     fn the_bindings_are_current() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../godot/src/Api/GameStateApi.g.cs");
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../godot/src/Api/GameStateApi.g.cs"
+        );
         let committed = std::fs::read_to_string(path).unwrap_or_default();
         assert!(
             committed == generate(),

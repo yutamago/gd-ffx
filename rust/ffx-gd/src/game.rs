@@ -105,6 +105,7 @@ fn run_game(
         Ok(e) => e,
         Err(e) => return format!("boot: {e}"),
     };
+    crate::snapshots::observe(exec.shared());
     if let Ok(mut s) = shared.lock() {
         *s = Some(Arc::clone(exec.shared()));
     }
@@ -219,8 +220,9 @@ fn poll_pads(bridge: &Bridge) {
     }
 }
 
-// Godot passes the arguments of a `#[func]` by value.
-#[allow(clippy::needless_pass_by_value)]
+// Godot passes the arguments of a `#[func]` by value; some read the
+// process's state, not the node's.
+#[allow(clippy::needless_pass_by_value, clippy::unused_self)]
 #[godot_api]
 impl FfxGame {
     /// Boots the game from `game_dir` (the player's folder with `FFX.exe`
@@ -249,7 +251,6 @@ impl FfxGame {
         {
             return self.fail("another platform was installed before");
         }
-        crate::snapshots::observe();
         let shared = Arc::new(Mutex::new(None));
         let outcome = Arc::new(Mutex::new(None));
         let boot = Boot { exe, documents };
@@ -353,9 +354,16 @@ impl FfxGame {
     #[func]
     fn snapshots(&self) -> VarDictionary {
         let s = crate::snapshots::global();
-        let (previous, current, age, interval) = s.encoded();
+        let crate::snapshots::Encoded {
+            previous,
+            current,
+            age,
+            interval,
+        } = s.encoded();
         let bytes = |b: Option<Arc<Vec<u8>>>| {
-            b.map_or_else(PackedByteArray::new, |b| PackedByteArray::from(b.as_slice()))
+            b.map_or_else(PackedByteArray::new, |b| {
+                PackedByteArray::from(b.as_slice())
+            })
         };
         vdict! {
             "update" => s.update(),
