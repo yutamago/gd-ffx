@@ -328,9 +328,12 @@ impl FfxGame {
     /// `game_time`, `map`, `previous_map`, `entrance`, `story`,
     /// `event_frame`, `keys` (the scan codes held), `focused`,
     /// `message_boxes`, and the sound's `audio_running`, `audio_queued`
-    /// (frames), `audio_underruns` (the queue ran dry), `audio_skips`
-    /// (Godot's player ran empty: gaps heard), `audio_pulled` (frames
-    /// played).
+    /// (frames), `audio_mean_queued` (their mean when Godot's mix took
+    /// frames), `audio_underruns` (Godot's mix asked for more than was
+    /// queued: gaps heard), `audio_pulled` (frames played), and its delay
+    /// in milliseconds: `audio_queued_ms`, `audio_mean_queued_ms`,
+    /// `audio_output_latency_ms` (Godot's driver) and `audio_latency_ms`
+    /// (the mean queue and the driver: the mixer to the speakers).
     #[func]
     fn state(&self) -> VarDictionary {
         let Some(run) = &self.run else {
@@ -348,8 +351,14 @@ impl FfxGame {
         d.set("audio_running", audio.running);
         d.set("audio_queued", int(audio.queued as u64));
         d.set("audio_underruns", int(audio.underruns));
-        d.set("audio_skips", int(audio.skips));
+        d.set("audio_mean_queued", int(audio.mean_queued as u64));
         d.set("audio_pulled", int(audio.pulled));
+        let (queued_ms, mean_ms, output_ms) =
+            crate::audio::latency(audio.queued, audio.mean_queued);
+        d.set("audio_queued_ms", queued_ms);
+        d.set("audio_mean_queued_ms", mean_ms);
+        d.set("audio_output_latency_ms", output_ms);
+        d.set("audio_latency_ms", mean_ms + output_ms);
         if let Some(s) = run.shared() {
             let snap = crate::state::snapshot(&s);
             d.set("updates", i64::from(snap.updates));
