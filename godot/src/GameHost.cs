@@ -43,8 +43,10 @@ public partial class GameHost : Node
         ProcessPriority = -100;
     }
 
-    /// <summary>Whether <see cref="Start"/> ran (the game booted, or failed to).</summary>
+    /// <summary>Whether <see cref="Start"/> succeeded (the game booted, or <c>--no-game</c>).</summary>
     public bool Started { get; private set; }
+
+    private bool _tried;
 
     public override void _Ready()
     {
@@ -55,62 +57,54 @@ public partial class GameHost : Node
 
     private void StartUnlessLauncher()
     {
-        if (!Started && GetTree().CurrentScene is not Launcher.Launcher)
+        if (!_tried && GetTree().CurrentScene is not Launcher.Launcher)
             Start();
     }
 
     /// <summary>
-    /// Mounts the mod packs (<see cref="Remake.ModLoader.MountAll"/>) and boots the game, once:
-    /// from <paramref name="gameDir"/> (the launcher's folder) or <see cref="GameSettings.GameDir"/>,
-    /// at developer save <paramref name="devsave"/> or <c>--devsave=N</c>. Call it before
-    /// <c>scenes/main.tscn</c> loads, so packs can replace its files. With <c>--no-game</c> the
-    /// game is not booted.
+    /// Mounts the mod packs (<see cref="Remake.ModLoader.MountAll"/>) and boots the game: from
+    /// <paramref name="gameDir"/> (the launcher's folder) or <see cref="GameSettings.GameDir"/>
+    /// (<c>user://</c> and <c>res://</c> made absolute), at developer save
+    /// <paramref name="devsave"/> or <c>--devsave=N</c>. Call it before <c>scenes/main.tscn</c>
+    /// loads, so packs can replace its files. With <c>--no-game</c> the game is not booted.
+    /// False when the game could not start: <see cref="Error"/> says why, <see cref="Game"/> is
+    /// null again and Start may be called again (another folder). Once it succeeded, later
+    /// calls do nothing.
     /// </summary>
-    public void Start(string? gameDir = null, int devsave = 0)
+    public bool Start(string? gameDir = null, int devsave = 0)
     {
         if (Started)
-            return;
-        Started = true;
+            return true;
+        _tried = true;
+        Error = "";
         Remake.ModLoader.MountAll();
-        try
-        {
-            Game = new FfxGame();
-        }
-        catch (System.InvalidOperationException e)
-        {
-            Fail(e.Message);
-            return;
-        }
-        AddChild(Game.Node);
-        // the player first: the game's output runs only with one attached
-        if (GameSettings.AudioEnabled() && ClassDB.ClassExists("FfxAudioOut"))
-        {
-            Audio = (Node)ClassDB.Instantiate("FfxAudioOut");
-            Audio.Name = "FfxAudioOut";
-            AddChild(Audio);
-        }
-        SendWindow();
-        GetViewport().SizeChanged += SendWindow;
         if (GameSettings.Flag("no-game"))
         {
             GD.Print("ffx: started without the game (--no-game)");
-            return;
+            Started = true;
+            if (ClassDB.ClassExists("FfxGame"))
+                Attach();
+            return true;
         }
         if (string.IsNullOrEmpty(gameDir))
             gameDir = GameSettings.GameDir();
+        gameDir = GameSettings.Globalize(gameDir);
         var documents = GameSettings.DocumentsDir();
         if (string.IsNullOrEmpty(gameDir))
-        {
-            Fail("No game folder: choose one in the launcher, set FFX_GAME_DIR, pass --game-dir=PATH after --, "
+            return Fail("No game folder: choose one in the launcher, set FFX_GAME_DIR, pass --game-dir=PATH after --, "
                 + "or set ffx/game/game_dir in the project settings (docs/running.md).");
-            return;
+        try
+        {
+            Attach();
+        }
+        catch (System.InvalidOperationException e)
+        {
+            return Fail(e.Message);
         }
         GD.Print($"ffx: booting the game from {gameDir} (documents: {documents})");
-        if (!Game.Start(gameDir, documents))
-        {
-            Fail(Game.LastError);
-            return;
-        }
+        if (!Game!.Start(gameDir, documents))
+            return Fail(Game.LastError);
+        Started = true;
         if (!GameSettings.Flag("no-classic"))
         {
             Classic = new ClassicLibrary(Game, gameDir, GameSettings.ClassicDir());
@@ -130,12 +124,38 @@ public partial class GameHost : Node
             else
                 GD.PrintErr("ffx: --battle=FIELD,GROUP,FORMATION");
         }
+        return true;
     }
 
-    private void Fail(string why)
+    /// <summary>The game's node and its sound player (the player first: the game's output runs only with one attached).</summary>
+    private void Attach()
+    {
+        Game = new FfxGame();
+        AddChild(Game.Node);
+        if (GameSettings.AudioEnabled() && ClassDB.ClassExists("FfxAudioOut"))
+        {
+            Audio = (Node)ClassDB.Instantiate("FfxAudioOut");
+            Audio.Name = "FfxAudioOut";
+            AddChild(Audio);
+        }
+        SendWindow();
+        GetViewport().SizeChanged += SendWindow;
+    }
+
+    /// <summary>A failed start: the reason kept, the game's node and player let go (a later Start makes new ones).</summary>
+    private bool Fail(string why)
     {
         Error = why;
         GD.PrintErr($"ffx: {why}");
+        if (Game != null)
+        {
+            GetViewport().SizeChanged -= SendWindow;
+            Game.Node.QueueFree();
+            Game = null;
+        }
+        Audio?.QueueFree();
+        Audio = null;
+        return false;
     }
 
     private void SendWindow()

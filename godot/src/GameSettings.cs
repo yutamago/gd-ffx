@@ -9,8 +9,9 @@ namespace GdFfx;
 ///
 /// The game folder (the one with <c>FFX.exe</c> and <c>data/</c>), first found of:
 /// the command line's <c>--game-dir=PATH</c> (after <c>--</c>), the environment's
-/// <c>FFX_GAME_DIR</c>, the project setting <c>ffx/game/game_dir</c>, the folder the launcher
-/// remembered in the user settings file (<see cref="SettingsPath"/>). It is only read.
+/// <c>FFX_GAME_DIR</c>, the folder the player picked in the launcher (remembered in the user
+/// settings file, <see cref="SettingsPath"/>), the project setting <c>ffx/game/game_dir</c>.
+/// It is only read.
 ///
 /// The documents folder (the game's <c>GameSetting.ini</c> and saves): <c>--documents=PATH</c>,
 /// else <c>ffx/game/documents_dir</c> (default <c>user://documents</c>): a sandbox of
@@ -53,8 +54,8 @@ public static class GameSettings
 
     /// <summary>
     /// The game folder and where it came from: <c>--game-dir</c>, <c>FFX_GAME_DIR</c>, the
-    /// project setting, else the folder the launcher remembered (<see cref="SavedGameDir"/>);
-    /// the source is empty when none is set.
+    /// folder the player picked in the launcher (<see cref="SavedGameDir"/>), else the project
+    /// setting (a default for development); the source is empty when none is set.
     /// </summary>
     public static (string Dir, string Source) GameDirFrom()
     {
@@ -64,12 +65,12 @@ public static class GameSettings
         dir = OS.GetEnvironment("FFX_GAME_DIR");
         if (!string.IsNullOrEmpty(dir))
             return (dir, "FFX_GAME_DIR");
-        dir = ProjectSettings.GetSetting("ffx/game/game_dir", "").AsString();
-        if (!string.IsNullOrEmpty(dir))
-            return (dir, "the project setting ffx/game/game_dir");
         dir = SavedGameDir();
         if (!string.IsNullOrEmpty(dir))
             return (dir, SettingsPath);
+        dir = ProjectSettings.GetSetting("ffx/game/game_dir", "").AsString();
+        if (!string.IsNullOrEmpty(dir))
+            return (dir, "the project setting ffx/game/game_dir");
         return ("", "");
     }
 
@@ -178,7 +179,8 @@ public static class GameSettings
     public static bool AudioEnabled() =>
         !Flag("mute") && ProjectSettings.GetSetting("ffx/audio/enabled", true).AsBool();
 
-    private static string Globalize(string path) =>
+    /// <summary>A path with <c>res://</c> or <c>user://</c> made absolute; others as they are.</summary>
+    public static string Globalize(string path) =>
         path.StartsWith("res://", StringComparison.Ordinal) || path.StartsWith("user://", StringComparison.Ordinal)
             ? ProjectSettings.GlobalizePath(path)
             : path;

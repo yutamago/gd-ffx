@@ -104,10 +104,15 @@ public partial class LauncherSelfTest : Node
             var cfg = new ConfigFile();
             Check(cfg.Load(Tmp("settings.cfg")) == Error.Ok && cfg.GetValue("game", "dir", "").AsString() == Tmp("game"),
                 "the game folder is remembered in the settings file");
+            // the player's pick wins over the project setting (a development default)
+            var projectDir = ProjectSettings.GetSetting("ffx/game/game_dir", "");
+            ProjectSettings.SetSetting("ffx/game/game_dir", Tmp("not-game"));
             var (from, source) = GameSettings.GameDirFrom();
-            Check(OS.GetEnvironment("FFX_GAME_DIR").Length > 0 || ProjectSettings.GetSetting("ffx/game/game_dir", "").AsString().Length > 0
+            ProjectSettings.SetSetting("ffx/game/game_dir", projectDir);
+            Check(OS.GetEnvironment("FFX_GAME_DIR").Length > 0
                 || (from == Tmp("game") && source == GameSettings.SettingsPath),
-                $"the next start finds it there ({source})");
+                $"the next start finds it there, over the project setting ({source})");
+            Check(!System.IO.File.Exists(Tmp("mods", ModLoader.LoadOrderFile)), "no load_order.txt written before a change");
 
             // the packs: alphabetical without a load order
             Check(l.Folders.Count == 1 && l.Folders[0].Entries.Select(e => e.File).SequenceEqual(["alpha.pck", "beta.pck", "gamma.pck"])
@@ -137,6 +142,17 @@ public partial class LauncherSelfTest : Node
             // the language and the cache
             Check(l.LanguageLabel.Text.Contains("German (de)"), $"the language: \"{l.LanguageLabel.Text}\"");
             Check(l.CacheBytes() == 3000 && l.CacheLabel.Text.Contains("2.9 KB"), $"the cache: \"{l.CacheLabel.Text}\"");
+            // only a safe folder is cleared
+            var home = System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile);
+            foreach (var bad in new[] { "", "relative/classic", "/", home, OS.GetUserDataDir() })
+                Check(ClassicLibrary.WhyNotClearable(bad) != null, $"refused: \"{bad}\" ({ClassicLibrary.WhyNotClearable(bad)})");
+            var userCache = ProjectSettings.GlobalizePath("user://classic");
+            Check(ClassicLibrary.WhyNotClearable(userCache) == null, "a cache under user:// may be cleared (not cleared here)");
+            Check(l.ClearCacheButton.Disabled && !l.ClearCache() && l.CacheBytes() == 3000,
+                $"a folder outside user:// without the marker is not cleared: \"{l.CacheLabel.Text}\"");
+            ClassicLibrary.WriteMarker(Tmp("classic"));
+            l.Refresh();
+            Check(!l.ClearCacheButton.Disabled, "with the marker, Clear cache is on");
             l.ClearCacheConfirm.EmitSignal(AcceptDialog.SignalName.Confirmed);
             Check(l.CacheBytes() == 0 && !System.IO.Directory.Exists(Tmp("classic", "chr"))
                 && System.IO.File.Exists(Tmp("classic", "keep.txt")),
@@ -144,8 +160,12 @@ public partial class LauncherSelfTest : Node
 
             // Start
             Check(GameHost.Instance is { Started: false } && !ModLoader.MountedAll, "nothing started before Start");
+            var orderTime = System.IO.File.GetLastWriteTimeUtc(orderFile);
+            await Frames(2);
             l.StartButton.EmitSignal(BaseButton.SignalName.Pressed);
             await Frames(5);
+            Check(System.IO.File.ReadAllText(orderFile) == text && System.IO.File.GetLastWriteTimeUtc(orderFile) == orderTime,
+                "Start does not write load_order.txt again");
             var scene = GetTree().CurrentScene;
             Check(scene?.SceneFilePath == Launcher.MainScene, $"handed over to {scene?.SceneFilePath}");
             Check(GameHost.Instance is { Started: true } && GameHost.Instance.Game?.IsRunning != true,

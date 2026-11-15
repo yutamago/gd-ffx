@@ -41,6 +41,7 @@ public partial class Launcher : Control
     public Button StartButton { get; private set; } = null!;
     public SpinBox DevSaveSpin { get; private set; } = null!;
     public Button DevSaveButton { get; private set; } = null!;
+    public Label StartError { get; private set; } = null!;
 
     /// <summary>The mod folders shown (<see cref="ModLoader.Dirs"/>).</summary>
     public List<ModFolder> Folders { get; } = new();
@@ -70,7 +71,7 @@ public partial class Launcher : Control
         if (ShouldSkip())
         {
             GD.Print("ffx: launcher skipped");
-            HandOver(null, 0);
+            HandOver(null, 0, always: true);
             return;
         }
         if (GameSettings.Flag("selftest-launcher"))
@@ -175,7 +176,7 @@ public partial class Launcher : Control
         {
             DialogText = "Delete the imported maps and characters? They are imported again when needed.",
         };
-        ClearCacheConfirm.Confirmed += ClearCache;
+        ClearCacheConfirm.Confirmed += () => ClearCache();
         AddChild(ClearCacheConfirm);
 
         // start
@@ -192,6 +193,8 @@ public partial class Launcher : Control
         DevSaveSpin = new SpinBox { MinValue = 1, MaxValue = 110, Value = 7, Step = 1 };
         startRow.AddChild(DevSaveSpin);
         col.AddChild(startRow);
+        StartError = new Label { Visible = false, AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = new Color(1, 0.5f, 0.5f) };
+        col.AddChild(StartError);
     }
 
     private static Label Heading(string text)
@@ -362,12 +365,27 @@ public partial class Launcher : Control
         return n;
     }
 
-    private void ShowCache() =>
-        CacheLabel.Text = $"{ClassicDir}: {ByteSize(CacheBytes())}";
-
-    /// <summary>Deletes the classic cache's imports (its <c>map/</c> and <c>chr/</c> folders, nothing else).</summary>
-    public void ClearCache()
+    private void ShowCache()
     {
+        var why = ClassicLibrary.WhyNotClearable(ClassicDir);
+        CacheLabel.Text = $"{ClassicDir}: {ByteSize(CacheBytes())}"
+            + (why == null ? "" : $" (not cleared from here: {why})");
+        ClearCacheButton.Disabled = why != null;
+    }
+
+    /// <summary>
+    /// Deletes the classic cache's imports (its <c>map/</c> and <c>chr/</c> folders, nothing
+    /// else), only when the folder is safe to clear (<see cref="ClassicLibrary.WhyNotClearable"/>);
+    /// false when refused.
+    /// </summary>
+    public bool ClearCache()
+    {
+        if (ClassicLibrary.WhyNotClearable(ClassicDir) is { } why)
+        {
+            GD.PrintErr($"ffx: launcher: the classic cache {ClassicDir} is not cleared: {why}");
+            ShowCache();
+            return false;
+        }
         foreach (var d in CacheDirs())
         {
             try
@@ -381,6 +399,7 @@ public partial class Launcher : Control
         }
         GD.Print($"ffx: launcher: classic cache cleared ({ClassicDir})");
         ShowCache();
+        return true;
     }
 
     /// <summary>A byte count for people.</summary>
@@ -397,18 +416,27 @@ public partial class Launcher : Control
     {
         if (!CheckGameDir(GameDirEdit.Text, save: true) || ValidGameDir == null)
             return;
-        for (int i = 0; i < Folders.Count; i++)
-            if (Folders[i].Entries.Count > 0)
-                SaveMods(i);
+        // load_order.txt is written at each change of the list, not here
         GD.Print($"ffx: launcher: start{(devsave > 0 ? $" at developer save {devsave}" : "")}");
-        HandOver(ValidGameDir, devsave);
+        if (!HandOver(ValidGameDir, devsave))
+        {
+            // stay: the reason shown, the folder can be changed and Start pressed again
+            StartError.Text = $"The game did not start: {GameHost.Instance?.Error}";
+            StartError.Visible = true;
+        }
     }
 
-    /// <summary>Mounts the packs and boots the game (<see cref="GameHost.Start"/>), then loads <see cref="MainScene"/>.</summary>
-    private void HandOver(string? gameDir, int devsave)
+    /// <summary>
+    /// Mounts the packs and boots the game (<see cref="GameHost.Start"/>), then loads
+    /// <see cref="MainScene"/>; from the launcher's screen only when the game started
+    /// (skipped, the main scene shows the error as before).
+    /// </summary>
+    private bool HandOver(string? gameDir, int devsave, bool always = false)
     {
-        GameHost.Instance?.Start(gameDir, devsave);
-        // deferred: not while this scene is in its _Ready or a button's signal
-        GetTree().CallDeferred(SceneTree.MethodName.ChangeSceneToFile, MainScene);
+        var ok = GameHost.Instance?.Start(gameDir, devsave) ?? false;
+        if (ok || always)
+            // deferred: not while this scene is in its _Ready or a button's signal
+            GetTree().CallDeferred(SceneTree.MethodName.ChangeSceneToFile, MainScene);
+        return ok;
     }
 }
