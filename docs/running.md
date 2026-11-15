@@ -18,10 +18,10 @@ the first found of:
 
 1. `--game-dir=PATH` on the command line, after `--`;
 2. the environment variable `FFX_GAME_DIR`;
-3. the project setting `ffx/game/game_dir`;
-4. the folder the launcher remembered (`user://settings.cfg`).
+3. the folder picked in the launcher (`user://settings.cfg`);
+4. the project setting `ffx/game/game_dir`.
 
-Started from the launcher, the folder it shows.
+Started from the launcher, the folder it shows (docs/launcher.md).
 
 The game's settings (`GameSetting.ini`) and saves go to `--documents=PATH`,
 else the project setting `ffx/game/documents_dir` (default
