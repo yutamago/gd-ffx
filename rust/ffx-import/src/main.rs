@@ -4,6 +4,7 @@
 //! ffx-import --game-dir DIR --out DIR map <level>...     # /map/znkd/znkd06/, bsil0000
 //! ffx-import --game-dir DIR --out DIR chr <model>...     # c001, m009, w041
 //! ffx-import --game-dir DIR devsaves                     # the developers' saves: map, entrance, scenario
+//! ffx-import --game-dir DIR list <text>...               # archive paths containing the text
 //! ```
 //!
 //! `--game-dir` defaults to `FFX_GAME_DIR`. Only reads the game; writes only
@@ -40,6 +41,14 @@ fn main() -> ExitCode {
         .map_or(("", &[][..]), |(w, n)| (w.as_str(), n));
     if what == "devsaves" {
         return devsaves(&imp);
+    }
+    if what == "list" {
+        for n in names {
+            for p in imp.list(n) {
+                println!("{p}");
+            }
+        }
+        return ExitCode::SUCCESS;
     }
     let Some(out) = out else {
         eprintln!("--out DIR is needed");

@@ -119,7 +119,7 @@ public partial class StateView3D : Node3D
     private void UpdateMap(ClassicLibrary? lib, Snapshot? s)
     {
         var level = s?.World.Level ?? "";
-        if (level.Length == 0 || !level.StartsWith("/map/"))
+        if (level.Length == 0 || !(level.StartsWith("/map/") || level.StartsWith("/btlmap/")))
             return;
         if (level == _mapLevel)
             return;

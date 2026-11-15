@@ -70,9 +70,10 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub fn map_model_path(level: &str) -> Option<String> {
     let l = level.trim().trim_matches('/').to_ascii_lowercase();
     let parts: Vec<&str> = l.split('/').filter(|p| !p.is_empty()).collect();
-    let map = match parts.as_slice() {
-        ["map", _, map, ..] => (*map).to_string(),
-        [one] if one.len() >= 6 => one[..6].to_string(),
+    // `/map/<area>/<map>/` (the field), `/btlmap/<area>/<map>/` (a battle)
+    let (root, map) = match parts.as_slice() {
+        [root @ ("map" | "btlmap"), _, map, ..] => (*root, (*map).to_string()),
+        [one] if one.len() >= 6 => ("map", one[..6].to_string()),
         _ => return None,
     };
     if map.len() < 4 || !map.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
@@ -80,7 +81,7 @@ pub fn map_model_path(level: &str) -> Option<String> {
     }
     let area = &map[..4];
     Some(format!(
-        "{PS3DATA}/map/{area}/{map}/mdl/d3d11/{map}.dae.phyre"
+        "{PS3DATA}/{root}/{area}/{map}/mdl/d3d11/{map}.dae.phyre"
     ))
 }
 
@@ -108,13 +109,15 @@ pub fn character_model_path(model: &str) -> Option<String> {
 /// The player's archive, open.
 pub struct Importer {
     archive: ffx_vbf::Archive,
+    /// Kernel tables read so far, by archive path.
+    kernel: std::sync::Mutex<HashMap<String, Option<std::sync::Arc<ffx_kernel::Table>>>>,
 }
 
 impl std::fmt::Debug for Importer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Importer")
             .field("entries", &self.archive.entries().len())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -127,7 +130,25 @@ impl Importer {
         let path = game_dir.join("data").join("FFX_Data.vbf");
         let archive = ffx_vbf::Archive::open(&path)
             .map_err(|e| Error::Archive(format!("{}: {e}", path.display())))?;
-        Ok(Self { archive })
+        Ok(Self {
+            archive,
+            kernel: std::sync::Mutex::default(),
+        })
+    }
+
+    /// The archive's paths containing `needle` (lower case), sorted.
+    #[must_use]
+    pub fn list(&self, needle: &str) -> Vec<String> {
+        let needle = needle.to_ascii_lowercase();
+        let mut v: Vec<String> = self
+            .archive
+            .entries()
+            .iter()
+            .map(|e| e.path.to_ascii_lowercase())
+            .filter(|p| p.contains(&needle))
+            .collect();
+        v.sort();
+        v
     }
 
     /// Whether the archive holds `path`.
@@ -163,6 +184,40 @@ impl Importer {
         let table = self.read(&path)?;
         ffx_text::Charset::from_table(&table, lang)
             .map_err(|_| Error::Model(format!("{path}: not a character table")))
+    }
+
+    /// The name of the battle command, item or monster ability `id` (the
+    /// battle menu's ids: `id >> 12` 2 an item, 3 a command, 4 and 6 a
+    /// monster's; the low 12 bits the record) in `language`, encoded (the
+    /// kernel tables' first string; docs/formats/kernel.md in ffx-rust);
+    /// `None` for an id of another kind or without a record.
+    #[must_use]
+    pub fn kernel_name(&self, language: &str, id: u16) -> Option<Vec<u8>> {
+        let table = match id >> 12 {
+            2 => "item",
+            3 => "command",
+            4 => "monmagic1",
+            6 => "monmagic2",
+            _ => return None,
+        };
+        let lang = ffx_text::Language::from_code(language)?;
+        let path = format!("{}{table}.bin", lang.kernel_dir());
+        let t = {
+            let mut cache = self
+                .kernel
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            cache
+                .entry(path.clone())
+                .or_insert_with(|| {
+                    self.read(&path)
+                        .ok()
+                        .and_then(|b| ffx_kernel::Table::parse(&b).ok())
+                        .map(std::sync::Arc::new)
+                })
+                .clone()?
+        };
+        t.string(id & 0x0fff, 0).map(<[u8]>::to_vec)
     }
 
     /// The model at `path` as a glTF binary with its base colour textures
@@ -254,6 +309,10 @@ mod tests {
             map_model_path("bsil0000").as_deref(),
             Some("ffx_data/gamedata/ps3data/map/bsil/bsil00/mdl/d3d11/bsil00.dae.phyre")
         );
+        assert_eq!(
+            map_model_path("/btlmap/cdsp/cdsp00_a/").as_deref(),
+            Some("ffx_data/gamedata/ps3data/btlmap/cdsp/cdsp00_a/mdl/d3d11/cdsp00_a.dae.phyre")
+        );
         assert_eq!(map_model_path(""), None);
         assert_eq!(map_model_path("/map/../x/"), None);
     }
@@ -285,6 +344,9 @@ mod tests {
         // the English character set decodes plain letters
         let cs = imp.charset("us").unwrap();
         assert_ne!(cs.decode(&[0x30, 0x31]), "");
+        // the first battle command is Attack
+        let attack = imp.kernel_name("us", 0x3000).unwrap();
+        assert_eq!(cs.decode(&attack), "Attack");
         let map = imp.import_map("/map/znkd/znkd06/", &cache).unwrap();
         let chr = imp.import_character("c001", &cache).unwrap();
         for p in [&map, &chr] {

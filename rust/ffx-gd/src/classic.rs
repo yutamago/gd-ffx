@@ -99,6 +99,15 @@ impl Classic {
         cs.as_ref().map(|(_, c)| c.decode(text))
     }
 
+    /// The battle command, item or monster ability `id`'s name in
+    /// `language` as text; `None` without the archive or such a record.
+    #[must_use]
+    pub fn kernel_name(&self, language: &str, id: u16) -> Option<String> {
+        let open = lock(&self.open).clone()?;
+        let name = open.importer.kernel_name(language, id)?;
+        self.decode(language, &name)
+    }
+
     /// Whether the archive is open.
     #[must_use]
     pub fn is_open(&self) -> bool {

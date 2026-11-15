@@ -19,6 +19,7 @@ ffx-state = { git = "https://github.com/yutamago/ffx-rust", branch = "main" }
 ffx-phyre = { git = "https://github.com/yutamago/ffx-rust", branch = "main" }
 ffx-vbf = { git = "https://github.com/yutamago/ffx-rust", branch = "main" }
 ffx-text = { git = "https://github.com/yutamago/ffx-rust", branch = "main" }
+ffx-kernel = { git = "https://github.com/yutamago/ffx-rust", branch = "main" }
 # godot-rust (gdext), MPL-2.0
 godot = { version = "0.5.5", features = ["api-4-7"] }
 

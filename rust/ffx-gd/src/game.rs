@@ -458,6 +458,41 @@ impl FfxGame {
             .map_or_else(GString::new, |s| GString::from(s.as_str()))
     }
 
+    /// The name of the battle command, item or monster ability `id` (the
+    /// battle menu's ids) in `language` (`us`, `jp`...); empty without the
+    /// archive or such a record.
+    #[func]
+    fn kernel_name(&self, id: i64, language: GString) -> GString {
+        u16::try_from(id)
+            .ok()
+            .and_then(|id| classic().kernel_name(&language.to_string(), id))
+            .map_or_else(GString::new, |s| GString::from(s.as_str()))
+    }
+
+    /// Asks the game to start a battle (`field` the battle field's record,
+    /// its `group` and `formation`) as a random encounter would; refused
+    /// while one runs. `request_results` reports it.
+    #[func]
+    fn request_battle(&mut self, field: i64, group: i64, formation: i64) -> bool {
+        let Some(shared) = self.run.as_ref().and_then(Run::shared) else {
+            return false;
+        };
+        let results = Arc::clone(&self.results);
+        shared.requests.push(
+            ffx_host::requests::Request::Battle {
+                field: u16::try_from(field).unwrap_or(0),
+                group: u8::try_from(group).unwrap_or(0),
+                formation: u8::try_from(formation).unwrap_or(0),
+            },
+            Box::new(move |r| {
+                if let Ok(mut v) = results.lock() {
+                    v.push(r.unwrap_or_else(|e| format!("err {e}")));
+                }
+            }),
+        );
+        true
+    }
+
     /// Asks the game to load developer save `n` (1..=110, from the
     /// player's archive) at its next frame boundary. False when the game
     /// has not booted. `request_results` reports the outcome.
