@@ -2,7 +2,8 @@
 
 Godot 4 (.NET/C#) frontend for ffx-rust. Plan: ffx-rust's `docs/godot-plan.md`;
 here: `docs/architecture.md`, `docs/building.md`, `docs/running.md`,
-`docs/exporting.md`.
+`docs/exporting.md`, `docs/launcher.md` (the main scene; skipped with
+`--game-dir`, `FFX_GAME_DIR`, `--devsave`, `--selftest*`, `--no-launcher`).
 
 ## Rules
 
@@ -40,6 +41,7 @@ FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/selftest.sh    # headless check (open
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-besaid --devsave=7)   # G2 check
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-remake --devsave=7)  # G6: a remade c001 posed by the game
 (cd godot && godot --headless --path . -- --selftest-mods --no-game)   # G6: mod packs, load order, registry (no game)
+(cd godot && godot --headless --path . -- --selftest-launcher --no-game)   # G6: the launcher (no game; fake folders in /tmp)
 (cd godot && dotnet build)
 (cd rust && cargo run -p ffx-state-cs)                    # regenerate the C# state bindings after an ffx-state change
 tools/capped.sh tools/export.sh [linux|windows|all]       # standalone program in build/<platform>/ (docs/exporting.md)

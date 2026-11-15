@@ -1,5 +1,15 @@
 # Running
 
+## The first start: the launcher
+
+A normal start (`godot --path godot`, F5 in the editor, an exported
+program) opens the launcher (docs/launcher.md): choose the game folder
+(the one with `FFX.exe`; remembered for the next start), switch mod packs
+on or off and order them, see the game's language and the classic cache,
+then Start (or Start at a developer save). It is skipped, and the game
+starts at once, with `--game-dir`, `FFX_GAME_DIR`, `--devsave`, any
+`--selftest...` or `--no-launcher`.
+
 ## The game folder
 
 gd-ffx boots the game from your installed copy: the folder with `FFX.exe`
@@ -8,7 +18,10 @@ the first found of:
 
 1. `--game-dir=PATH` on the command line, after `--`;
 2. the environment variable `FFX_GAME_DIR`;
-3. the project setting `ffx/game/game_dir`.
+3. the project setting `ffx/game/game_dir`;
+4. the folder the launcher remembered (`user://settings.cfg`).
+
+Started from the launcher, the folder it shows.
 
 The game's settings (`GameSetting.ini`) and saves go to `--documents=PATH`,
 else the project setting `ffx/game/documents_dir` (default
@@ -28,7 +41,7 @@ own documents folder, so the original's settings and saves are untouched.
 
 ## The main scene
 
-`scenes/main.tscn` boots the game (`GameHost`, an autoload) and shows:
+`scenes/main.tscn` (loaded once the launcher hands over and `GameHost`, an autoload, booted the game) shows:
 
 - **the 3D view** (`StateView3D`): the game's own camera, the classic map
   of the level the game loaded, and each character as its classic model
@@ -100,7 +113,8 @@ next map (`0x14`); `--no-walk` checks that the map stays without input,
 --rendering-driver opengl3 ...`, nothing shows on screen).
 
 `--selftest-remake --devsave=7` and `--selftest-mods --no-game` (G6):
-remade content and mod packs (docs/remake.md).
+remade content and mod packs (docs/remake.md); `--selftest-launcher --no-game`:
+the launcher (docs/launcher.md).
 
 
 ```bash

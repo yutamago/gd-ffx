@@ -92,17 +92,20 @@ placed, turned, shown and hidden by the game, but its skeleton is left alone.
 ## Mod packs
 
 Godot packs (`.pck`) carry remade content: scenes, meshes, textures,
-materials, GDScript. At start-up the `ModLoader` autoload (listed before
-`GameHost` in `project.godot`, so before any scene loads) mounts:
+materials, GDScript. When the launcher hands over (docs/launcher.md; at
+once when it is skipped), before `scenes/main.tscn` loads, `GameHost.Start`
+has the `ModLoader` autoload mount (`ModLoader.MountAll`):
 
-1. every `*.pck` in `user://mods/` (Godot's user data folder for gd-ffx:
+1. every enabled `*.pck` in `user://mods/` (Godot's user data folder for gd-ffx:
    `~/.local/share/godot/app_userdata/gd-ffx/mods/` on Linux,
    `%APPDATA%\Godot\app_userdata\gd-ffx\mods\` on Windows);
-2. then every `*.pck` in each `--mods=DIR` (after `--`; repeatable).
+2. then every enabled `*.pck` in each `--mods=DIR` (after `--`; repeatable).
 
 Each folder's load order: the packs named in its `load_order.txt` (one file
 name a line, `.pck` optional, any case, `#` comments), in that order, then the others
-alphabetically. Later packs win: a file at the same `res://` path replaces
+alphabetically. A line `# disabled: NAME` keeps a pack at its place but
+does not mount it (the launcher writes these; to anything else they are
+comments). Later packs win: a file at the same `res://` path replaces
 the earlier one (so a pack can ship `res://remake/chr/c001.tscn` and win the
 convention), and its registry entries come later. A pack named
 `<pack>.pck` registers ids with `res://mods/<pack>/remake.json`; keep a
@@ -124,9 +127,12 @@ ffx: mods: loaded tidus-hd (.../mods/tidus-hd.pck), 1 remake entries
 ffx: mods: 1 pack(s): tidus-hd
 ```
 
+The launcher (docs/launcher.md) lists the packs of each folder with a
+switch and Up and Down, and writes the folder's `load_order.txt`.
+
 Not yet: C# scripts in packs (they need gd-ffx's assembly rebuilt; use
-GDScript or plain scenes), `ffx-rust`'s data mods, a launcher listing both,
-per-pack enable switches.
+GDScript or plain scenes), `ffx-rust`'s data mods (and the launcher
+listing them beside the packs).
 
 ## Making a pack
 
@@ -155,9 +161,11 @@ godot --headless --path . -- --selftest-mods --no-game
 FFX_GAME_DIR=... godot --headless --path . -- --selftest-remake --devsave=7
 ```
 
-`--selftest-mods` builds three packs at run time with `PCKPacker` in a
+`--selftest-mods` reads load orders with disabled packs (and writes one
+back), builds four packs at run time with `PCKPacker` in a
 temporary folder (from the example), mounts them through the same code as
-`--mods=DIR` and checks the order (names in any case), a file in two packs,
+`--mods=DIR` and checks the order (names in any case), that the disabled one is not
+mounted, a file in two packs,
 registry overrides, an id pinned to classic, the convention from a pack,
 that the scenes instantiate with their skeleton and their root's own
 transform, that a non-scene entry and a scene whose root is not a `Node3D`
