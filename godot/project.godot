@@ -18,6 +18,7 @@ config/icon="res://icon.svg"
 
 [autoload]
 
+ModLoader="*res://src/Remake/ModLoader.cs"
 GameHost="*res://src/GameHost.cs"
 
 [display]

@@ -30,6 +30,8 @@ export FFX_RUST_DIR=/path/to/ffx-rust            # optional: a local ffx-rust
 tools/build-extension.sh [linux|windows] [build|clippy|test]
 FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/selftest.sh    # headless check (opening, snapshots, Start)
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-besaid --devsave=7)   # G2 check
+(cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-remake --devsave=7)  # G6: a remade c001 posed by the game
+(cd godot && godot --headless --path . -- --selftest-mods --no-game)   # G6: mod packs, load order, registry (no game)
 (cd godot && dotnet build)
 (cd rust && cargo run -p ffx-state-cs)                    # regenerate the C# state bindings after an ffx-state change
 ```

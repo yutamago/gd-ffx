@@ -60,6 +60,8 @@ public partial class DebugView : Control
             _test = new SelfTest(timeout);
         else if (GameSettings.Flag("selftest-besaid"))
             _test = new BesaidTest(timeout, GameSettings.Arg("shot"));
+        else if (GameSettings.Flag("selftest-remake"))
+            _test = new Remake.RemakeTest(timeout);
         else if (GameSettings.Flag("selftest-message"))
             _test = new MessageTest(timeout, GameSettings.Arg("shot"));
     }

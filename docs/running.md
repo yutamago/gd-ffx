@@ -21,7 +21,10 @@ own documents folder, so the original's settings and saves are untouched.
   (1..110: the saves the developers left in the archive; game data, not
   your saves). `--devsave=7` is Besaid beach at the save sphere with the
   control. `ffx-import devsaves` lists them all (docs/importer.md).
-- `--no-classic`: no classic content (markers and skeletons only).
+- `--no-classic`: no classic content (markers and skeletons only; remade
+  content still shows).
+- `--mods=DIR` (repeatable): mount the `*.pck` mod packs of `DIR` after
+  those of `user://mods/`; `--no-mods`: none (docs/remake.md).
 
 ## The main scene
 
@@ -91,6 +94,9 @@ next map (`0x14`); `--no-walk` checks that the map stays without input,
 `--shot=FILE.png` takes a picture when Godot renders (not with
 `--headless`: under Xvfb, `xvfb-run -a godot --display-driver x11
 --rendering-driver opengl3 ...`, nothing shows on screen).
+
+`--selftest-remake --devsave=7` and `--selftest-mods --no-game` (G6):
+remade content and mod packs (docs/remake.md).
 
 
 ```bash
