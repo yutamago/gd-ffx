@@ -93,8 +93,12 @@ public partial class BattleMenuView : Control
         else if ((m.MainMask & 0x2) != 0)
         {
             title = "Menu";
-            for (int i = 0; i < m.MainOptions; i++)
-                rows.Add($"Option {i + 1}");
+            var lang = MessageView.LanguageCode(s.World.Language);
+            foreach (var o in m.MainOptionList)
+            {
+                var name = o.Name.Length > 0 ? MessageView.Clean(host.Game.DecodeText(o.Name, lang)) : $"0x{o.Id:x}";
+                rows.Add(o.Enabled ? name : $"({name})");
+            }
             cursor = m.MainCursor;
         }
         else

@@ -160,6 +160,9 @@ public partial class DebugView : Control
             b.AppendLine($"event          {w.Event}  frame {w.EventFrame}{(w.Battle ? "  BATTLE" : "")}"
                 + $"{(w.PlayerControl ? "  control" : "")}{(w.Paused ? "  paused" : "")}{(w.Fading ? "  fading" : "")}");
             b.AppendLine($"pad            held {c.Input.Held:x4} pressed {c.Input.Pressed:x4} stick {c.Input.StickX},{c.Input.StickY}");
+            var fx = c.Effects;
+            b.AppendLine($"effects        magic {fx.Magic}  records {fx.Running.Count}  music {fx.Music}  shake {fx.ShakeX:F1},{fx.ShakeY:F1}"
+                + $"  filters {string.Join(" ", System.Linq.Enumerable.Select(System.Linq.Enumerable.Where(fx.Filters, f => f.Active), f => $"{f.Slot}:{f.Mode}"))}");
             if (c.Camera.Valid)
             {
                 var t = GameStateView.CameraTransform(c.Camera.World);
