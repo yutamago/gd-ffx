@@ -1,31 +1,53 @@
 using System.Collections.Generic;
+using GdFfx.Api;
 using Godot;
 
 namespace GdFfx;
 
 /// <summary>
-/// G1's 3D view of the game-state API: the game's camera (interpolated), and
-/// each character as a marker at its root with its skeleton as points and
-/// its model name above. A stand-in until the classic importer (G2) brings
-/// the game's own models and maps.
+/// The game in 3D from the game-state API: the game's camera (interpolated),
+/// the classic map of the level the game's renderer loaded, and each
+/// character as its classic model posed by the game's skeleton (element i
+/// poses <c>SkeletonNode_i</c>), or as a marker with skeleton points until
+/// its model is imported.
 /// </summary>
 public partial class StateView3D : Node3D
 {
     private Camera3D _camera = null!;
     private readonly Dictionary<ushort, ActorNode> _actors = new();
     private SphereMesh _boneMesh = null!;
+    private Node3D? _map;
+    private string _mapLevel = "";
+    private string _wantedLevel = "";
+
+    /// <summary>Character space (the field's, y down) to Godot's: half a turn about z.</summary>
+    private static readonly Basis FlipXY = new(new Vector3(-1, 0, 0), new Vector3(0, -1, 0), new Vector3(0, 0, 1));
+
+    /// <summary>The level whose map is shown ("" none yet).</summary>
+    public string MapLevel => _mapLevel;
+
+    /// <summary>Characters drawn with their classic model, and how many of their bones are posed.</summary>
+    public (int Models, int PosedBones) Posed { get; private set; }
 
     private sealed class ActorNode
     {
         public required Node3D Root;
+        public required Node3D Marker;
         public required MultiMeshInstance3D Bones;
         public required Label3D Label;
         public ushort Id;
+        public string ModelName = "";
+        public Node3D? Model;
+        public Skeleton3D? Skeleton;
+        /// <summary>Game bone i → the skeleton's bone index (-1 none).</summary>
+        public int[] BoneMap = [];
+        /// <summary>The skeleton's transform in the model's space (inverted).</summary>
+        public Transform3D SkeletonInModelInv = Transform3D.Identity;
     }
 
     public override void _Ready()
     {
-        _camera = new Camera3D { Current = true, Near = 0.05f, Far = 5000f };
+        _camera = new Camera3D { Current = true, Near = 0.5f, Far = 20000f };
         AddChild(_camera);
         var env = new WorldEnvironment
         {
@@ -34,11 +56,13 @@ public partial class StateView3D : Node3D
                 BackgroundMode = Environment.BGMode.Color,
                 BackgroundColor = new Color(0.05f, 0.06f, 0.09f),
                 AmbientLightSource = Environment.AmbientSource.Color,
-                AmbientLightColor = new Color(0.6f, 0.6f, 0.65f),
+                AmbientLightColor = new Color(0.75f, 0.75f, 0.78f),
+                AmbientLightEnergy = 1.0f,
+                TonemapMode = Environment.ToneMapper.Filmic,
             },
         };
         AddChild(env);
-        AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-50, 30, 0) });
+        AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-55, 30, 0), LightEnergy = 0.8f });
         _boneMesh = new SphereMesh { Radius = 0.6f, Height = 1.2f, RadialSegments = 6, Rings = 3 };
     }
 
@@ -56,11 +80,7 @@ public partial class StateView3D : Node3D
     {
         var root = new Node3D { Name = $"Actor{slot}" };
         var mat = new StandardMaterial3D { AlbedoColor = KindColor(kind) };
-        var marker = new MeshInstance3D
-        {
-            Mesh = new PrismMesh { Size = new Vector3(3f, 6f, 3f) },
-            MaterialOverride = mat,
-        };
+        var marker = new MeshInstance3D { Mesh = new PrismMesh { Size = new Vector3(3f, 6f, 3f) }, MaterialOverride = mat };
         root.AddChild(marker);
         AddChild(root);
         var bones = new MultiMeshInstance3D
@@ -71,7 +91,7 @@ public partial class StateView3D : Node3D
         AddChild(bones);
         var label = new Label3D { Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, PixelSize = 0.05f, FontSize = 48 };
         AddChild(label);
-        return new ActorNode { Root = root, Bones = bones, Label = label };
+        return new ActorNode { Root = root, Marker = marker, Bones = bones, Label = label };
     }
 
     public override void _Process(double delta)
@@ -86,7 +106,40 @@ public partial class StateView3D : Node3D
             _camera.Fov = Mathf.RadToDeg(cam.FovY);
             _camera.Far = Mathf.Clamp(cam.Far, 100f, 20000f);
         }
+        UpdateMap(host.Classic, view.Current);
+        UpdateActors(host.Classic, view);
+    }
+
+    // ---- the map ----------------------------------------------------------------
+
+    private void UpdateMap(ClassicLibrary? lib, Snapshot? s)
+    {
+        var level = s?.World.Level ?? "";
+        if (lib == null || level.Length == 0 || !level.StartsWith("/map/"))
+            return;
+        if (level == _mapLevel)
+            return;
+        _wantedLevel = level;
+        if (lib.Path("map", level) is not { } path)
+            return;
+        var map = ClassicLibrary.Load(path);
+        _map?.QueueFree();
+        _map = map;
+        _mapLevel = level;
+        if (map == null)
+            return;
+        map.Name = "ClassicMap";
+        map.Scale = Vector3.One * ClassicLibrary.MapScale;
+        AddChild(map);
+        GD.Print($"ffx: map {level} shown");
+    }
+
+    // ---- the characters -------------------------------------------------------------
+
+    private void UpdateActors(ClassicLibrary? lib, GameStateView view)
+    {
         var seen = new HashSet<ushort>();
+        int models = 0, posed = 0;
         foreach (var f in view.Actors())
         {
             var a = f.Actor;
@@ -99,21 +152,22 @@ public partial class StateView3D : Node3D
                 n.Id = a.Id;
                 _actors[a.Slot] = n;
             }
-            n.Root.Visible = f.Shown;
-            n.Bones.Visible = f.Shown;
-            n.Label.Visible = f.Shown;
+            if (lib != null && n.Model == null && a.Model.Length > 0 && n.ModelName != a.Model
+                && lib.Path("chr", a.Model) is { } path)
+                AttachModel(n, a.Model, path);
             n.Root.GlobalTransform = f.Root;
-            var mm = n.Bones.Multimesh;
-            if (mm.InstanceCount != f.Bones.Length)
-                mm.InstanceCount = f.Bones.Length;
-            var top = f.Root.Origin;
-            for (int i = 0; i < f.Bones.Length; i++)
+            var hasModel = n.Model != null;
+            n.Root.Visible = f.Shown;
+            n.Marker.Visible = !hasModel;
+            n.Bones.Visible = f.Shown && !hasModel;
+            n.Label.Visible = f.Shown && !hasModel;
+            if (hasModel && f.Shown)
             {
-                mm.SetInstanceTransform(i, new Transform3D(Basis.Identity, f.Bones[i]));
-                if (f.Bones[i].Y > top.Y)
-                    top = f.Bones[i];
+                models++;
+                posed += Pose(n, a, view);
             }
-            n.Label.GlobalPosition = top + Vector3.Up * 4f;
+            else
+                Points(n, f);
             n.Label.Text = $"{a.Model}{(a.Player ? " (player)" : "")}";
         }
         foreach (var slot in new List<ushort>(_actors.Keys))
@@ -124,6 +178,89 @@ public partial class StateView3D : Node3D
                 _actors.Remove(slot);
             }
         }
+        Posed = (models, posed);
+    }
+
+    private static void Points(ActorNode n, GameStateView.ActorFrame f)
+    {
+        var mm = n.Bones.Multimesh;
+        if (mm.InstanceCount != f.Bones.Length)
+            mm.InstanceCount = f.Bones.Length;
+        var top = f.Root.Origin;
+        for (int i = 0; i < f.Bones.Length; i++)
+        {
+            mm.SetInstanceTransform(i, new Transform3D(Basis.Identity, f.Bones[i]));
+            if (f.Bones[i].Y > top.Y)
+                top = f.Bones[i];
+        }
+        n.Label.GlobalPosition = top + Vector3.Up * 4f;
+    }
+
+    private static void AttachModel(ActorNode n, string name, string path)
+    {
+        n.ModelName = name;
+        var model = ClassicLibrary.Load(path);
+        if (model == null)
+            return;
+        model.Name = "Model";
+        model.Transform = new Transform3D(FlipXY, Vector3.Zero);
+        n.Root.AddChild(model);
+        n.Model = model;
+        var skels = model.FindChildren("*", nameof(Skeleton3D), true, false);
+        if (skels.Count == 0 || skels[0] is not Skeleton3D skel)
+            return;
+        n.Skeleton = skel;
+        // the skeleton's place in the model (the glTF nodes above it)
+        Transform3D t = Transform3D.Identity;
+        for (Node? p = skel; p != null && p != model; p = p.GetParent())
+            if (p is Node3D p3)
+                t = p3.Transform * t;
+        n.SkeletonInModelInv = t.AffineInverse();
+        var map = new List<int>();
+        for (int i = 0; i < 512; i++)
+        {
+            var b = skel.FindBone($"SkeletonNode_{i}");
+            map.Add(b);
+        }
+        n.BoneMap = map.ToArray();
+    }
+
+    /// <summary>A row-major 4x4 of the game (row vectors) as a Godot transform in the same space.</summary>
+    private static Transform3D RowMajor(float[] m) => new(
+        new Basis(new Vector3(m[0], m[1], m[2]), new Vector3(m[4], m[5], m[6]), new Vector3(m[8], m[9], m[10])),
+        new Vector3(m[12], m[13], m[14]));
+
+    private static bool IsIdentity(float[] m) =>
+        m[0] == 1 && m[5] == 1 && m[10] == 1 && m[15] == 1 && m[1] == 0 && m[2] == 0 && m[4] == 0
+        && m[6] == 0 && m[8] == 0 && m[9] == 0 && m[12] == 0 && m[13] == 0 && m[14] == 0;
+
+    /// <summary>Poses the model's skeleton from the game's bones (interpolated); the bones posed.</summary>
+    private static int Pose(ActorNode n, Actor a, GameStateView view)
+    {
+        var skel = n.Skeleton;
+        if (skel == null)
+            return 0;
+        Actor? prev = null;
+        if (view.Previous != null)
+            foreach (var p in view.Previous.Actors)
+                if (p.Slot == a.Slot && p.Id == a.Id && p.Bones.Count == a.Bones.Count)
+                    prev = p;
+        int posed = 0;
+        int count = System.Math.Min(a.Bones.Count, n.BoneMap.Length);
+        for (int i = 0; i < count; i++)
+        {
+            var b = n.BoneMap[i];
+            var m = a.Bones[i].Matrix;
+            // bones the game leaves at the identity keep the model's own pose
+            if (b < 0 || IsIdentity(m))
+                continue;
+            var t = RowMajor(m);
+            if (prev != null)
+                t = RowMajor(prev.Bones[i].Matrix).InterpolateWith(t, view.Alpha);
+            skel.SetBoneGlobalPose(b, n.SkeletonInModelInv * t);
+            posed++;
+        }
+        return posed;
     }
 
     private static void Free(ActorNode n)

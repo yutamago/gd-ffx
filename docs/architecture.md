@@ -80,9 +80,9 @@ encoding.
   (`GameStateView.BonePoint`).
 
 `GameHost` (an autoload) owns the game, its input and the view;
-`StateView3D` draws the camera and the characters (markers, skeleton
-points, names) until G2's classic content replaces them; `DebugView` is
-the overlay (F1).
+`StateView3D` draws the camera, the classic map and the characters'
+classic models posed by the game (docs/importer.md), markers until they
+are imported; `DebugView` is the overlay (F1).
 
 ## The G0 state read-out
 

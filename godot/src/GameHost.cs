@@ -20,6 +20,9 @@ public partial class GameHost : Node
     /// <summary>The snapshots, interpolated for this frame.</summary>
     public GameStateView View { get; } = new();
 
+    /// <summary>The classic content (null before the boot).</summary>
+    public ClassicLibrary? Classic { get; private set; }
+
     /// <summary>Why the game is not running, if it is not.</summary>
     public string Error { get; private set; } = "";
 
@@ -59,7 +62,18 @@ public partial class GameHost : Node
         }
         GD.Print($"ffx: booting the game from {gameDir} (documents: {documents})");
         if (!Game.Start(gameDir, documents))
+        {
             Fail(Game.LastError);
+            return;
+        }
+        if (!GameSettings.Flag("no-classic"))
+        {
+            Classic = new ClassicLibrary(Game, gameDir, GameSettings.ClassicDir());
+            if (!Classic.Open)
+                GD.PrintErr($"ffx: no classic content: {Game.LastError}");
+        }
+        // --devsave=N: start at developer save N once the game runs an event
+        _devsave = GameSettings.Int("devsave", 0);
     }
 
     private void Fail(string why)
@@ -76,10 +90,23 @@ public partial class GameHost : Node
         Game.SetWindow(size, DisplayServer.ScreenGetSize(), DisplayServer.WindowGetPosition());
     }
 
+    private int _devsave;
+
     public override void _Process(double delta)
     {
-        if (Game != null)
-            View.Refresh(Game);
+        if (Game == null)
+            return;
+        View.Refresh(Game);
+        Classic?.Poll();
+        // the developer save once an event runs (the opening is the first)
+        if (_devsave > 0 && View.Current is { } s && s.World.Event.Length > 0 && s.Update > 30)
+        {
+            Game.RequestDevSave(_devsave);
+            GD.Print($"ffx: developer save {_devsave} asked");
+            _devsave = 0;
+        }
+        foreach (var r in Game.RequestResults())
+            GD.Print($"ffx: request: {r}");
     }
 
     public override void _Notification(int what)

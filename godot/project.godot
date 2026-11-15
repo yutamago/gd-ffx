@@ -33,3 +33,4 @@ project/assembly_name="gd-ffx"
 
 game/game_dir=""
 game/documents_dir="user://documents"
+classic/cache_dir="user://classic"

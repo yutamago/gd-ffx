@@ -28,7 +28,8 @@ here: `docs/architecture.md`, `docs/building.md`, `docs/running.md`.
 ```bash
 export FFX_RUST_DIR=/path/to/ffx-rust            # optional: a local ffx-rust
 tools/build-extension.sh [linux|windows] [build|clippy|test]
-FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/selftest.sh    # headless G0 check
+FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/selftest.sh    # headless check (opening, snapshots, Start)
+(cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-besaid --devsave=7)   # G2 check
 (cd godot && dotnet build)
 (cd rust && cargo run -p ffx-state-cs)                    # regenerate the C# state bindings after an ffx-state change
 ```

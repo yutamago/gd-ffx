@@ -48,6 +48,24 @@ public partial class FfxGame : RefCounted
     /// </summary>
     public Dictionary Snapshots => Node.Call("snapshots").AsGodotDictionary();
 
+    /// <summary>Opens the player's archive for the classic importer, with <paramref name="cacheDir"/> as its output.</summary>
+    public bool ClassicOpen(string gameDir, string cacheDir) =>
+        Node.Call("classic_open", gameDir, cacheDir).AsBool();
+
+    /// <summary>Imports a map (<c>map</c>, by level name) or character (<c>chr</c>, by model name) in the background.</summary>
+    public bool ClassicRequest(string kind, string name) =>
+        Node.Call("classic_request", kind, name).AsBool();
+
+    /// <summary>The imports finished since the last call: kind, name, path, error.</summary>
+    public Godot.Collections.Array<Dictionary> ClassicFinished() =>
+        Node.Call("classic_finished").AsGodotArray<Dictionary>();
+
+    /// <summary>Asks the game to load developer save <paramref name="n"/> (1..110) at its next update.</summary>
+    public bool RequestDevSave(int n) => Node.Call("request_devsave", n).AsBool();
+
+    /// <summary>The requests' replies since the last call.</summary>
+    public string[] RequestResults() => Node.Call("request_results").AsStringArray();
+
     /// <summary>A key event; true when the game has a code for the key.</summary>
     public bool KeyInput(InputEventKey e) => Node.Call("key_input", e).AsBool();
 

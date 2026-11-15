@@ -17,7 +17,8 @@ namespace GdFfx;
 /// </summary>
 public static class GameSettings
 {
-    private static string? Arg(string name)
+    /// <summary>The value of <c>--name=VALUE</c> on the command line, if any.</summary>
+    public static string? Arg(string name)
     {
         var prefix = $"--{name}=";
         return OS.GetCmdlineUserArgs()
@@ -52,6 +53,19 @@ public static class GameSettings
             dir = ProjectSettings.GetSetting("ffx/game/documents_dir", "user://documents").AsString();
         return Globalize(dir);
     }
+
+    /// <summary>The classic importer's cache (<c>--classic=PATH</c>, else <c>ffx/classic/cache_dir</c>, default <c>user://classic</c>).</summary>
+    public static string ClassicDir()
+    {
+        var dir = Arg("classic");
+        if (string.IsNullOrEmpty(dir))
+            dir = ProjectSettings.GetSetting("ffx/classic/cache_dir", "user://classic").AsString();
+        return Globalize(dir);
+    }
+
+    /// <summary>A whole number from <c>--name=N</c>, else <paramref name="fallback"/>.</summary>
+    public static int Int(string name, int fallback) =>
+        int.TryParse(Arg(name), out var v) ? v : fallback;
 
     private static string Globalize(string path) =>
         path.StartsWith("res://", StringComparison.Ordinal) || path.StartsWith("user://", StringComparison.Ordinal)

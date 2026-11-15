@@ -21,7 +21,7 @@ public partial class DebugView : Control
     public const int MapTitle = 0x17;
 
     private Label _label = null!;
-    private SelfTest? _test;
+    private ITest? _test;
     private double _lastLog;
     private long _rateUpdates;
     private double _rateSeconds;
@@ -55,8 +55,11 @@ public partial class DebugView : Control
         help.AddThemeColorOverride("font_color", new Color(0.6f, 0.65f, 0.7f));
         help.AddThemeFontSizeOverride("font_size", 12);
         box.AddChild(help);
+        var timeout = GameSettings.Number("selftest-timeout", 300);
         if (GameSettings.Flag("selftest"))
-            _test = new SelfTest(GameSettings.Number("selftest-timeout", 300));
+            _test = new SelfTest(timeout);
+        else if (GameSettings.Flag("selftest-besaid"))
+            _test = new BesaidTest(timeout, GameSettings.Arg("shot"));
     }
 
     public override void _UnhandledInput(InputEvent e)
@@ -173,7 +176,13 @@ public partial class DebugView : Control
 /// camera is there; then a Start press through Godot's input reaches the
 /// game and it goes to the title.
 /// </summary>
-public sealed class SelfTest(double timeout)
+public interface ITest
+{
+    string Note { get; }
+    bool? Step(FfxGame game, GameState s, GameStateView v, double delta);
+}
+
+public sealed class SelfTest(double timeout) : ITest
 {
     private enum Phase { Boot, Opening, Fire, Press, Release, Title }
 
@@ -242,6 +251,114 @@ public sealed class SelfTest(double timeout)
         // a real key event through Godot's input, as a player's
         var e = new InputEventKey { PhysicalKeycode = Godot.Key.B, Keycode = Godot.Key.B, Pressed = down };
         Godot.Input.ParseInputEvent(e);
+    }
+
+    private void Next(Phase p)
+    {
+        GD.Print($"ffx selftest: {_phase} -> {p}");
+        _phase = p;
+        _phaseTime = 0;
+    }
+
+    private bool Done(bool pass, string note)
+    {
+        Note = note;
+        return pass;
+    }
+}
+
+/// <summary>
+/// G2's check (<c>--selftest-besaid</c>; run with <c>--devsave=7</c>): developer
+/// save 7 puts the game on Besaid beach with the control; the classic map
+/// of its level and the player's classic model come up, posed by the game's
+/// skeleton (with <c>--shot=FILE.png</c> and a renderer, a picture of it);
+/// then the player walks down and left, as the original's replay does, off
+/// the beach to the next map (0x14, <c>bsil0200</c>).
+/// </summary>
+public sealed class BesaidTest(double timeout, string? shot) : ITest
+{
+    public const int MapBeach = 0x46;
+    public const int MapNext = 0x14;
+
+    private enum Phase { Boot, Beach, Classic, Shot, Walk }
+
+    private Phase _phase = Phase.Boot;
+    private double _phaseTime;
+    private double _total;
+    private string _seen = "";
+    private Vector3 _start;
+    private Vector3 _last;
+
+    public string Note { get; private set; } = "";
+
+    /// <summary>The player's field position (zero when none).</summary>
+    private static Vector3 Player(GameStateView v)
+    {
+        if (v.Current != null)
+            foreach (var a in v.Current.Actors)
+                if (a.Player)
+                    return a.Position;
+        return Vector3.Zero;
+    }
+
+    public bool? Step(FfxGame game, GameState s, GameStateView v, double delta)
+    {
+        _total += delta;
+        _phaseTime += delta;
+        if (!s.Running && s.Seconds > 1)
+            return Done(false, $"the game ended: {s.Outcome}");
+        if (_total > timeout)
+            return Done(false, $"timed out in phase {_phase} ({DebugView.SnapshotLine(v)})");
+        var view = (Engine.GetMainLoop() as SceneTree)?.Root.FindChild("StateView3D", true, false) as StateView3D;
+        switch (_phase)
+        {
+            case Phase.Boot when v.Current is { World.Map: MapBeach, World.PlayerControl: true }:
+                Next(Phase.Beach);
+                break;
+            case Phase.Beach when view != null && view.MapLevel == v.Current!.World.Level && view.Posed.Models > 0
+                && view.Posed.PosedBones > 40:
+                _seen = $"{v.Current.World.Level} shown, {view.Posed.Models} character model(s) posed ({view.Posed.PosedBones} bones)";
+                Next(shot != null && DisplayServer.GetName() != "headless" ? Phase.Shot : Phase.Classic);
+                break;
+            case Phase.Shot when _phaseTime > 1.0:
+            {
+                var img = (Engine.GetMainLoop() as SceneTree)!.Root.GetViewport().GetTexture().GetImage();
+                img.SavePng(shot!);
+                GD.Print($"ffx selftest: picture {shot}");
+                Next(Phase.Classic);
+                break;
+            }
+            case Phase.Classic:
+                _start = Player(v);
+                if (!GameSettings.Flag("no-walk"))
+                    Keys(true);
+                Next(Phase.Walk);
+                break;
+            case Phase.Walk when s.Map == MapNext:
+            {
+                Keys(false);
+                var moved = _start.DistanceTo(_last);
+                if (moved < 5f)
+                    return Done(false, $"map {MapNext:x} came without the player moving ({moved:F1} units)");
+                return Done(true, $"{_seen}; walked {moved:F0} units off the beach to map {MapNext:x} in {_phaseTime:F1} s");
+            }
+            case Phase.Walk:
+                if (v.Current?.World.Map == MapBeach)
+                    _last = Player(v);
+                if (_phaseTime > 60)
+                {
+                    Keys(false);
+                    return Done(false, $"still on map {s.Map:x} after 60 s of walking ({_seen})");
+                }
+                break;
+        }
+        return null;
+    }
+
+    private static void Keys(bool down)
+    {
+        foreach (var k in new[] { Godot.Key.Down, Godot.Key.Left })
+            Godot.Input.ParseInputEvent(new InputEventKey { PhysicalKeycode = k, Keycode = k, Pressed = down });
     }
 
     private void Next(Phase p)

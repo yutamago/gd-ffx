@@ -15,15 +15,23 @@ else the project setting `ffx/game/documents_dir` (default
 `user://documents`, Godot's user data folder for gd-ffx). It is never your
 own documents folder, so the original's settings and saves are untouched.
 
+## Starting somewhere
+
+- `--devsave=N` (after `--`): once the game runs, load developer save `N`
+  (1..110: the saves the developers left in the archive; game data, not
+  your saves). `--devsave=7` is Besaid beach at the save sphere with the
+  control. `ffx-import devsaves` lists them all (docs/importer.md).
+- `--no-classic`: no classic content (markers and skeletons only).
+
 ## The main scene
 
 `scenes/main.tscn` boots the game (`GameHost`, an autoload) and shows:
 
-- **the 3D view** (`StateView3D`): the game's own camera, and each
-  character as a marker at its root with its skeleton as points and its
-  model name above, from the game-state API at the display's frame rate
-  (interpolated between the game's updates). The game's maps and models
-  come with G2;
+- **the 3D view** (`StateView3D`): the game's own camera, the classic map
+  of the level the game loaded, and each character as its classic model
+  posed by the game's skeleton (docs/importer.md), from the game-state API
+  at the display's frame rate (interpolated between the game's updates);
+  a marker with skeleton points until a model is imported;
 - **the debug overlay** (F1 shows or hides it): updates (the game runs 30 a
   second), game time, the map, the story progress, the keys held, and the
   newest snapshot: the event, the pad, the camera and the characters shown
@@ -55,6 +63,14 @@ device and silent sound; what Godot shows comes from the game-state API.
 
 ## Headless (Linux, tests)
 
+`--selftest-besaid --devsave=7` (G2): Besaid's classic map and the
+characters' models posed, then a walk down and left off the beach to the
+next map (`0x14`); `--no-walk` checks that the map stays without input,
+`--shot=FILE.png` takes a picture when Godot renders (not with
+`--headless`: under Xvfb, `xvfb-run -a godot --display-driver x11
+--rendering-driver opengl3 ...`, nothing shows on screen).
+
+
 ```bash
 FFX_GAME_DIR=/path/to/game tools/selftest.sh [--timeout SECONDS]
 ```
@@ -72,12 +88,26 @@ cd godot
 ~/tools/Godot_v4.7.2-stable_mono_linux_x86_64/godot --headless --path . -- --selftest --documents=/tmp/gd-ffx-docs
 ```
 
-## Windows
+## Trying it on Windows
 
-Build the DLL (`tools/build-extension.sh windows`), then open
-`godot\project.godot` with the Windows Godot .NET editor
-(`%USERPROFILE%\tools\godot\Godot_v4.7.2-stable_mono_win64\Godot_v4.7.2-stable_mono_win64.exe`)
-and run it, or headless from a terminal:
+A development build, for your own use (it contains Unicorn, GPL, for the
+game functions ffx-rust has not ported yet; a build to share comes with
+G5):
+
+1. From WSL: `tools/build-extension.sh windows` (the DLL) and
+   `cd godot && dotnet.exe build` (the C# assembly).
+2. Open `godot\project.godot` with the Windows Godot .NET editor
+   (`%USERPROFILE%\tools\godot\Godot_v4.7.2-stable_mono_win64\Godot_v4.7.2-stable_mono_win64.exe`).
+3. Project → Project Settings → `ffx/game/game_dir`: your game folder
+   (the one with `FFX.exe`), or set `FFX_GAME_DIR`.
+4. Play (F5). To start on Besaid beach: Project → Project Settings → Run →
+   Main Run Args `-- --devsave=7`, or from a terminal
+   `Godot_v4.7.2-stable_mono_win64_console.exe --path godot -- --devsave=7`.
+
+The first visit of a map or character imports it (a second or two); after
+that it comes from the cache. Arrows walk, F1 hides the overlay.
+
+Headless from a terminal:
 
 ```bat
 set FFX_GAME_DIR=C:\path\to\the\game
