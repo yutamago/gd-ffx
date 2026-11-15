@@ -1,0 +1,11 @@
+; ffx-rust as a GDExtension (rust/ffx-gd). Build it first: docs/building.md.
+[configuration]
+entry_symbol = "gdext_rust_init"
+compatibility_minimum = 4.7
+reloadable = false
+
+[libraries]
+linux.debug.x86_64 = "res://../rust/target/release/libffx_gd.so"
+linux.release.x86_64 = "res://../rust/target/release/libffx_gd.so"
+windows.debug.x86_64 = "res://../rust/target/x86_64-pc-windows-msvc/release/ffx_gd.dll"
+windows.release.x86_64 = "res://../rust/target/x86_64-pc-windows-msvc/release/ffx_gd.dll"
