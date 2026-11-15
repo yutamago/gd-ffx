@@ -9,7 +9,8 @@ namespace GdFfx;
 ///
 /// The game folder (the one with <c>FFX.exe</c> and <c>data/</c>), first found of:
 /// the command line's <c>--game-dir=PATH</c> (after <c>--</c>), the environment's
-/// <c>FFX_GAME_DIR</c>, the project setting <c>ffx/game/game_dir</c>. It is only read.
+/// <c>FFX_GAME_DIR</c>, the project setting <c>ffx/game/game_dir</c>, the folder the launcher
+/// remembered in the user settings file (<see cref="SettingsPath"/>). It is only read.
 ///
 /// The documents folder (the game's <c>GameSetting.ini</c> and saves): <c>--documents=PATH</c>,
 /// else <c>ffx/game/documents_dir</c> (default <c>user://documents</c>): a sandbox of
@@ -48,14 +49,105 @@ public static class GameSettings
     public static double Number(string name, double fallback) =>
         double.TryParse(Arg(name), System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : fallback;
 
-    public static string GameDir()
+    public static string GameDir() => Globalize(GameDirFrom().Dir);
+
+    /// <summary>
+    /// The game folder and where it came from: <c>--game-dir</c>, <c>FFX_GAME_DIR</c>, the
+    /// project setting, else the folder the launcher remembered (<see cref="SavedGameDir"/>);
+    /// the source is empty when none is set.
+    /// </summary>
+    public static (string Dir, string Source) GameDirFrom()
     {
         var dir = Arg("game-dir");
-        if (string.IsNullOrEmpty(dir))
-            dir = OS.GetEnvironment("FFX_GAME_DIR");
-        if (string.IsNullOrEmpty(dir))
-            dir = ProjectSettings.GetSetting("ffx/game/game_dir", "").AsString();
-        return Globalize(dir);
+        if (!string.IsNullOrEmpty(dir))
+            return (dir, "--game-dir");
+        dir = OS.GetEnvironment("FFX_GAME_DIR");
+        if (!string.IsNullOrEmpty(dir))
+            return (dir, "FFX_GAME_DIR");
+        dir = ProjectSettings.GetSetting("ffx/game/game_dir", "").AsString();
+        if (!string.IsNullOrEmpty(dir))
+            return (dir, "the project setting ffx/game/game_dir");
+        dir = SavedGameDir();
+        if (!string.IsNullOrEmpty(dir))
+            return (dir, SettingsPath);
+        return ("", "");
+    }
+
+    /// <summary>
+    /// The user settings file (the launcher's choices): <c>--settings=PATH</c>, else
+    /// <c>user://settings.cfg</c>; settable (the launcher's self-test).
+    /// </summary>
+    public static string SettingsPath
+    {
+        get => _settingsPath ??= Arg("settings") is { Length: > 0 } p ? p : "user://settings.cfg";
+        set => _settingsPath = value;
+    }
+
+    private static string? _settingsPath;
+
+    private static ConfigFile LoadSettings()
+    {
+        var cfg = new ConfigFile();
+        if (FileAccess.FileExists(Globalize(SettingsPath)))
+            cfg.Load(Globalize(SettingsPath));
+        return cfg;
+    }
+
+    /// <summary>The game folder the launcher remembered (<c>[game] dir</c> in <see cref="SettingsPath"/>), or "".</summary>
+    public static string SavedGameDir() => LoadSettings().GetValue("game", "dir", "").AsString();
+
+    /// <summary>Remembers <paramref name="dir"/> as the game folder; false when the file cannot be written.</summary>
+    public static bool SaveGameDir(string dir)
+    {
+        var cfg = LoadSettings();
+        cfg.SetValue("game", "dir", dir);
+        var path = Globalize(SettingsPath);
+        var parent = System.IO.Path.GetDirectoryName(path);
+        if (!string.IsNullOrEmpty(parent))
+            System.IO.Directory.CreateDirectory(parent);
+        return cfg.Save(path) == Error.Ok;
+    }
+
+    /// <summary>
+    /// Why <paramref name="dir"/> is not a game folder (it needs <c>FFX.exe</c> and
+    /// <c>data/FFX_Data.vbf</c>), or null when it is one. Only looks; reads nothing.
+    /// </summary>
+    public static string? CheckGameDir(string dir)
+    {
+        if (string.IsNullOrWhiteSpace(dir))
+            return "no folder chosen";
+        dir = Globalize(dir);
+        if (!System.IO.Directory.Exists(dir))
+            return "the folder is not there";
+        if (!System.IO.File.Exists(System.IO.Path.Combine(dir, "FFX.exe")))
+            return "no FFX.exe in it";
+        if (!System.IO.File.Exists(System.IO.Path.Combine(dir, "data", "FFX_Data.vbf")))
+            return "no data/FFX_Data.vbf in it";
+        return null;
+    }
+
+    /// <summary>The game's settings file in <paramref name="documents"/>, where the game reads and writes it.</summary>
+    public static string GameSettingIni(string documents) =>
+        System.IO.Path.Combine(documents, "Square Enix", "FINAL FANTASY X&X-2 HD Remaster", "GameSetting.ini");
+
+    /// <summary>
+    /// The game's language from <c>GameSetting.ini</c> in <paramref name="documents"/>
+    /// (<c>Language=</c>: jp en fr de it es kr ch), or null when the file or the key is
+    /// missing (the game then starts in Japanese and writes its default file).
+    /// </summary>
+    public static string? GameLanguage(string documents)
+    {
+        var ini = GameSettingIni(documents);
+        if (!System.IO.File.Exists(ini))
+            return null;
+        // the game splits the file at white space into key=value words (keys in any case)
+        foreach (var word in System.IO.File.ReadAllText(ini).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var eq = word.IndexOf('=');
+            if (eq > 0 && word[..eq].Equals("Language", StringComparison.OrdinalIgnoreCase))
+                return word[(eq + 1)..];
+        }
+        return null;
     }
 
     public static string DocumentsDir()
