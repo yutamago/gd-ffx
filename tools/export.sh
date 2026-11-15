@@ -25,6 +25,13 @@
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 godot="${GODOT:-$HOME/tools/Godot_v4.7.2-stable_mono_linux_x86_64/godot}"
+# the remapping flags (RUSTFLAGS, the C flags) split on spaces
+for p in "$repo" "$HOME" "${FFX_RUST_DIR:-}"; do
+    if [[ "$p" == *" "* ]]; then
+        echo "export.sh: a path with spaces is not supported: '$p'" >&2
+        exit 2
+    fi
+done
 case "${1:-linux}" in
     linux) platforms=(linux) ;;
     windows) platforms=(windows) ;;
@@ -43,25 +50,42 @@ templates="${XDG_DATA_HOME:-$HOME/.local/share}/godot/export_templates/$(sed -E 
 dev=0
 case "${FFX_GD_FEATURES-}" in "" | *dev-unicorn*) dev=1 ;; esac
 
-# the cargo arguments of the build (as tools/build-extension.sh), for the notices
-cargo_args=()
+# the cargo arguments of the build (its ffx-rust [patch] entries and features),
+# for the notices: from tools/build-extension.sh itself
+mapfile -t cargo_args < <("$repo/tools/build-extension.sh" args)
 remap="--remap-path-prefix=$HOME=~ --remap-path-prefix=$HOME/.cargo=cargo --remap-path-prefix=$HOME/.rustup=rustup"
 cmap=("$HOME=~" "$HOME/.cargo=cargo" "$repo=gd-ffx")
 if [[ -n "${FFX_RUST_DIR:-}" ]]; then
     ffx="$(cd "$FFX_RUST_DIR" && pwd)"
-    for c in ffx-host ffx-bridge ffx-state ffx-phyre ffx-vbf; do
-        cargo_args+=(--config "patch.\"https://github.com/yutamago/ffx-rust\".$c.path=\"$ffx/crates/$c\"")
-    done
     cmap+=("$ffx=ffx-rust")
 fi
 # the last matching mapping wins: the most specific last
 remap+=" --remap-path-prefix=$repo=gd-ffx"
 [[ -n "${ffx:-}" ]] && remap+=" --remap-path-prefix=$ffx=ffx-rust"
-case "${FFX_GD_FEATURES-}" in
-    "") ;;
-    none) cargo_args+=(--no-default-features) ;;
-    *) cargo_args+=(--no-default-features --features "$FFX_GD_FEATURES") ;;
-esac
+
+# export_filter all_resources packs every resource under godot/, tracked or not:
+# nothing but git's files may be there, apart from what Godot and this script
+# make (.godot/, the .sln, the uid of a script whose uid is not committed) and
+# classic/ (excluded by the presets)
+git -C "$repo" rev-parse --git-dir >/dev/null 2>&1 || {
+    echo "export.sh: not a git checkout: cannot check godot/ for files outside git" >&2
+    exit 2
+}
+stray=()
+while IFS= read -r line; do
+    path="${line:3}"
+    case "$path" in
+        godot/.godot/* | godot/classic/* | godot/*.sln) continue ;;
+        *.uid) grep -qxE 'uid://[a-z0-9]+' "$repo/$path" 2>/dev/null && continue ;;
+    esac
+    stray+=("$path")
+done < <(git -C "$repo" status --porcelain --ignored --untracked-files=all -- godot)
+if [[ ${#stray[@]} -gt 0 ]]; then
+    printf 'export.sh: files under godot/ that git does not track would go into the export:\n' >&2
+    printf '  %s\n' "${stray[@]}" >&2
+    echo "export.sh: commit or remove them first" >&2
+    exit 1
+fi
 
 echo "== the C# assembly"
 # Godot's .NET export needs a solution file; the editor makes one (gitignored),
@@ -136,7 +160,12 @@ for platform in "${platforms[@]}"; do
         exit 1
     }
     # the .NET runtime in the data folder: its runtime pack's licence and notices
-    deps="$(ls "$out"/data_gd-ffx_*/gd-ffx.deps.json)"
+    deps=("$out"/data_gd-ffx_*/gd-ffx.deps.json)
+    [[ -f "${deps[0]}" ]] || {
+        echo "export.sh: no data_gd-ffx_*/gd-ffx.deps.json in build/$platform (Godot's .NET export incomplete)" >&2
+        exit 1
+    }
+    deps="${deps[0]}"
     net="$(grep -o "runtimepack.Microsoft.NETCore.App.Runtime.$rid/[0-9][^\"]*" "$deps" | head -1 | cut -d/ -f2)"
     pack="${NUGET_PACKAGES:-$HOME/.nuget/packages}/microsoft.netcore.app.runtime.$rid/$net"
     [[ -n "$net" && -f "$pack/LICENSE.TXT" ]] || {
