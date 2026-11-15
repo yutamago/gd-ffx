@@ -42,24 +42,30 @@ entry wins over the convention, whatever the order.
 
 `ContentResolver.Resolve(classic, kind, id)` (`godot/src/Remake/ContentResolver.cs`)
 is the one place that chooses: the remade scene if one is registered, else
-the classic import (asked for when needed). Every instance it makes carries
-the metadata `ffx_kind`, `ffx_id`, `ffx_source` (`remade` or `classic`) and
+the classic import (asked for when needed). A remade entry that does not
+load (not a scene, or a root that is not a `Node3D`) is logged once and the
+id falls back to classic. A remade scene comes wrapped in a node of its
+own: the view sets the wrapper's transform (a character's turn, a map's
+scale) and the scene's root keeps its own. Every instance carries the
+metadata `ffx_kind`, `ffx_id`, `ffx_source` (`remade` or `classic`) and
 `ffx_path`. `StateView3D` takes maps and characters from it.
 
 ## Spaces
 
-**A remade map** is authored in Godot's space (right-handed, y up, metres
-as you like them, scale 1) and placed at the origin of the 3D view. That
-space is the game's render space: the camera, the characters' roots and the
-game's positions are all in it. Classic maps are the file times 10
-(`ClassicLibrary.MapScale`); a remade map is not scaled. To line one up,
+**A remade map** is authored in the game's render space, which is Godot's
+(right-handed, y up), in the game's render units, and placed at the origin
+of the 3D view at scale 1: the camera, the characters' roots and the game's
+positions are all in that space. Classic map files are a tenth of it (the
+view scales them by 10, `ClassicLibrary.MapScale`); a remade map is not
+scaled, so one render unit is one unit of the scene. To line one up,
 open the classic import (`<classic cache>/map/<map>.glb`, made from your own
 copy) scaled by 10 as a reference, and leave it out of the scene you save.
 The game does the walking (its own collision); a remade map only draws.
 
 **A remade character** is placed as the classic model is: under the
 character's root (its position and turn from the game) with half a turn
-about z, so it is authored in the game's character space: y down, feet at
+about z (on the wrapper: the scene's root keeps its own transform), so it
+is authored in the game's character space: y down, feet at
 y = 0, the head towards -y (Tidus is about 18 units tall), facing as the
 classic model does (compare with `<classic cache>/chr/<model>.glb`).
 
@@ -74,10 +80,10 @@ display's rate). A remade character gets the same:
   character space as above. The classic model of the same id has the same
   names (look at its glb for which elements it uses; Tidus has 136);
 - elements the game leaves at the identity keep the bone's own pose; bones
-  with other names are not touched. The global poses are set in element
-  order, so a flat skeleton is simplest; with a hierarchy, a parent needs a
-  lower element number than its children (as in the classic models).
-  Meshes skinned to the skeleton or hung on `BoneAttachment3D`s follow.
+  with other names are not touched. The global poses are set in the
+  skeleton's order, parents before children (by depth), whatever the
+  element numbers, so any hierarchy works, a flat one too. Meshes skinned
+  to the skeleton or hung on `BoneAttachment3D`s follow.
 
 A scene that animates itself instead (an `AnimationPlayer`, a physics rig)
 opts out with the metadata `ffx_posed` = `false` on its root: it is still
@@ -95,7 +101,7 @@ materials, GDScript. At start-up the `ModLoader` autoload (listed before
 2. then every `*.pck` in each `--mods=DIR` (after `--`; repeatable).
 
 Each folder's load order: the packs named in its `load_order.txt` (one file
-name a line, `.pck` optional, `#` comments), in that order, then the others
+name a line, `.pck` optional, any case, `#` comments), in that order, then the others
 alphabetically. Later packs win: a file at the same `res://` path replaces
 the earlier one (so a pack can ship `res://remake/chr/c001.tscn` and win the
 convention), and its registry entries come later. A pack named
@@ -103,6 +109,13 @@ convention), and its registry entries come later. A pack named
 pack's own files under `res://mods/<pack>/` too, so packs do not collide by
 accident. A pack's `res://remake/remake.json` has no effect (the base is
 read before the packs).
+
+**Install only packs you trust.** A pack can replace any `res://` file,
+gd-ffx's own scenes included, not only remake content, and it can carry
+GDScript, which runs with gd-ffx's rights (`OS.execute`, reading and
+writing your files). Mounting does not check what a pack contains; a pack
+that keeps to `res://mods/<pack>/` and `res://remake/` is the convention,
+not a guarantee.
 
 `--no-mods` mounts none. The log says what was mounted:
 
@@ -144,9 +157,12 @@ FFX_GAME_DIR=... godot --headless --path . -- --selftest-remake --devsave=7
 
 `--selftest-mods` builds three packs at run time with `PCKPacker` in a
 temporary folder (from the example), mounts them through the same code as
-`--mods=DIR` and checks the order, a file in two packs, registry overrides,
-an id pinned to classic, the convention from a pack, and that the scenes
-instantiate with their skeleton. `--selftest-remake` registers the stand-in
+`--mods=DIR` and checks the order (names in any case), a file in two packs,
+registry overrides, an id pinned to classic, the convention from a pack,
+that the scenes instantiate with their skeleton and their root's own
+transform, that a non-scene entry and a scene whose root is not a `Node3D`
+fall back to classic, and that a registry file with a bad entry registers
+nothing. `--selftest-remake` registers the stand-in
 for `c001` at run time, boots to Besaid beach and checks that the player is
 drawn by it (no classic `c001` beside it), that the game poses its bones and
 keeps posing them, and that the map is still the classic one.
