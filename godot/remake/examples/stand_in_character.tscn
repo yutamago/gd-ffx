@@ -1,0 +1,361 @@
+[gd_scene format=3]
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_ascoy"]
+albedo_color = Color(0.2, 0.75, 0.95, 1)
+
+[sub_resource type="CapsuleMesh" id="CapsuleMesh_tm1fa"]
+material = SubResource("StandardMaterial3D_ascoy")
+radius = 2.5
+height = 16.0
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_cimmi"]
+albedo_color = Color(1, 0.55, 0.1, 1)
+
+[sub_resource type="SphereMesh" id="SphereMesh_7osu6"]
+material = SubResource("StandardMaterial3D_cimmi")
+radial_segments = 8
+rings = 4
+
+[node name="StandInCharacter" type="Node3D" unique_id=311331628]
+
+[node name="Body" type="MeshInstance3D" parent="." unique_id=1460307735]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -8, 0)
+mesh = SubResource("CapsuleMesh_tm1fa")
+
+[node name="Skeleton3D" type="Skeleton3D" parent="." unique_id=833705847]
+bones/0/name = "SkeletonNode_0"
+bones/0/parent = -1
+bones/0/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+bones/0/enabled = true
+bones/0/position = Vector3(0, 0, 0)
+bones/0/rotation = Quaternion(0, 0, 0, 1)
+bones/0/scale = Vector3(1, 1, 1)
+bones/1/name = "SkeletonNode_1"
+bones/1/parent = -1
+bones/1/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+bones/1/enabled = true
+bones/1/position = Vector3(0, 0, 0)
+bones/1/rotation = Quaternion(0, 0, 0, 1)
+bones/1/scale = Vector3(1, 1, 1)
+bones/2/name = "SkeletonNode_2"
+bones/2/parent = -1
+bones/2/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+bones/2/enabled = true
+bones/2/position = Vector3(0, 0, 0)
+bones/2/rotation = Quaternion(0, 0, 0, 1)
+bones/2/scale = Vector3(1, 1, 1)
+bones/3/name = "SkeletonNode_3"
+bones/3/parent = -1
+bones/3/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+bones/3/enabled = true
+bones/3/position = Vector3(0, 0, 0)
+bones/3/rotation = Quaternion(0, 0, 0, 1)
+bones/3/scale = Vector3(1, 1, 1)
+bones/4/name = "SkeletonNode_4"
+bones/4/parent = -1
+bones/4/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+bones/4/enabled = true
+bones/4/position = Vector3(0, 0, 0)
+bones/4/rotation = Quaternion(0, 0, 0, 1)
+bones/4/scale = Vector3(1, 1, 1)
+bones/5/name = "SkeletonNode_5"
+bones/5/parent = -1
+bones/5/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+bones/5/enabled = true
+bones/5/position = Vector3(0, 0, 0)
+bones/5/rotation = Quaternion(0, 0, 0, 1)
+bones/5/scale = Vector3(1, 1, 1)
+bones/6/name = "SkeletonNode_6"
+bones/6/parent = -1
+bones/6/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+bones/6/enabled = true
+bones/6/position = Vector3(0, 0, 0)
+bones/6/rotation = Quaternion(0, 0, 0, 1)
+bones/6/scale = Vector3(1, 1, 1)
+bones/7/name = "SkeletonNode_7"
+bones/7/parent = -1
+bones/7/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+bones/7/enabled = true
+bones/7/position = Vector3(0, 0, 0)
+bones/7/rotation = Quaternion(0, 0, 0, 1)
+bones/7/scale = Vector3(1, 1, 1)
+bones/8/name = "SkeletonNode_8"
+bones/8/parent = -1
+bones/8/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+bones/8/enabled = true
+bones/8/position = Vector3(0, 0, 0)
+bones/8/rotation = Quaternion(0, 0, 0, 1)
+bones/8/scale = Vector3(1, 1, 1)
+bones/9/name = "SkeletonNode_9"
+bones/9/parent = -1
+bones/9/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+bones/9/enabled = true
+bones/9/position = Vector3(0, 0, 0)
+bones/9/rotation = Quaternion(0, 0, 0, 1)
+bones/9/scale = Vector3(1, 1, 1)
+bones/10/name = "SkeletonNode_10"
+bones/10/parent = -1
+bones/10/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+bones/10/enabled = true
+bones/10/position = Vector3(0, 0, 0)
+bones/10/rotation = Quaternion(0, 0, 0, 1)
+bones/10/scale = Vector3(1, 1, 1)
+bones/11/name = "SkeletonNode_11"
+bones/11/parent = -1
+bones/11/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+bones/11/enabled = true
+bones/11/position = Vector3(0, 0, 0)
+bones/11/rotation = Quaternion(0, 0, 0, 1)
+bones/11/scale = Vector3(1, 1, 1)
+bones/12/name = "SkeletonNode_12"
+bones/12/parent = -1
+bones/12/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+bones/12/enabled = true
+bones/12/position = Vector3(0, 0, 0)
+bones/12/rotation = Quaternion(0, 0, 0, 1)
+bones/12/scale = Vector3(1, 1, 1)
+bones/13/name = "SkeletonNode_13"
+bones/13/parent = -1
+bones/13/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+bones/13/enabled = true
+bones/13/position = Vector3(0, 0, 0)
+bones/13/rotation = Quaternion(0, 0, 0, 1)
+bones/13/scale = Vector3(1, 1, 1)
+bones/14/name = "SkeletonNode_14"
+bones/14/parent = -1
+bones/14/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+bones/14/enabled = true
+bones/14/position = Vector3(0, 0, 0)
+bones/14/rotation = Quaternion(0, 0, 0, 1)
+bones/14/scale = Vector3(1, 1, 1)
+bones/15/name = "SkeletonNode_15"
+bones/15/parent = -1
+bones/15/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+bones/15/enabled = true
+bones/15/position = Vector3(0, 0, 0)
+bones/15/rotation = Quaternion(0, 0, 0, 1)
+bones/15/scale = Vector3(1, 1, 1)
+bones/16/name = "SkeletonNode_16"
+bones/16/parent = -1
+bones/16/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+bones/16/enabled = true
+bones/16/position = Vector3(0, 0, 0)
+bones/16/rotation = Quaternion(0, 0, 0, 1)
+bones/16/scale = Vector3(1, 1, 1)
+bones/17/name = "SkeletonNode_17"
+bones/17/parent = -1
+bones/17/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+bones/17/enabled = true
+bones/17/position = Vector3(0, 0, 0)
+bones/17/rotation = Quaternion(0, 0, 0, 1)
+bones/17/scale = Vector3(1, 1, 1)
+bones/18/name = "SkeletonNode_18"
+bones/18/parent = -1
+bones/18/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+bones/18/enabled = true
+bones/18/position = Vector3(0, 0, 0)
+bones/18/rotation = Quaternion(0, 0, 0, 1)
+bones/18/scale = Vector3(1, 1, 1)
+bones/19/name = "SkeletonNode_19"
+bones/19/parent = -1
+bones/19/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+bones/19/enabled = true
+bones/19/position = Vector3(0, 0, 0)
+bones/19/rotation = Quaternion(0, 0, 0, 1)
+bones/19/scale = Vector3(1, 1, 1)
+bones/20/name = "SkeletonNode_20"
+bones/20/parent = -1
+bones/20/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+bones/20/enabled = true
+bones/20/position = Vector3(0, 0, 0)
+bones/20/rotation = Quaternion(0, 0, 0, 1)
+bones/20/scale = Vector3(1, 1, 1)
+bones/21/name = "SkeletonNode_21"
+bones/21/parent = -1
+bones/21/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+bones/21/enabled = true
+bones/21/position = Vector3(0, 0, 0)
+bones/21/rotation = Quaternion(0, 0, 0, 1)
+bones/21/scale = Vector3(1, 1, 1)
+bones/22/name = "SkeletonNode_22"
+bones/22/parent = -1
+bones/22/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+bones/22/enabled = true
+bones/22/position = Vector3(0, 0, 0)
+bones/22/rotation = Quaternion(0, 0, 0, 1)
+bones/22/scale = Vector3(1, 1, 1)
+bones/23/name = "SkeletonNode_23"
+bones/23/parent = -1
+bones/23/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+bones/23/enabled = true
+bones/23/position = Vector3(0, 0, 0)
+bones/23/rotation = Quaternion(0, 0, 0, 1)
+bones/23/scale = Vector3(1, 1, 1)
+
+[node name="Bone0" type="BoneAttachment3D" parent="Skeleton3D" unique_id=66005579]
+bone_name = "SkeletonNode_0"
+bone_idx = 0
+
+[node name="Dot" type="MeshInstance3D" parent="Skeleton3D/Bone0" unique_id=231210679]
+mesh = SubResource("SphereMesh_7osu6")
+
+[node name="Bone1" type="BoneAttachment3D" parent="Skeleton3D" unique_id=147912571]
+bone_name = "SkeletonNode_1"
+bone_idx = 1
+
+[node name="Dot" type="MeshInstance3D" parent="Skeleton3D/Bone1" unique_id=1570539494]
+mesh = SubResource("SphereMesh_7osu6")
+
+[node name="Bone2" type="BoneAttachment3D" parent="Skeleton3D" unique_id=1725624493]
+bone_name = "SkeletonNode_2"
+bone_idx = 2
+
+[node name="Dot" type="MeshInstance3D" parent="Skeleton3D/Bone2" unique_id=2099859304]
+mesh = SubResource("SphereMesh_7osu6")
+
+[node name="Bone3" type="BoneAttachment3D" parent="Skeleton3D" unique_id=649961268]
+bone_name = "SkeletonNode_3"
+bone_idx = 3
+
+[node name="Dot" type="MeshInstance3D" parent="Skeleton3D/Bone3" unique_id=1221898743]
+mesh = SubResource("SphereMesh_7osu6")
+
+[node name="Bone4" type="BoneAttachment3D" parent="Skeleton3D" unique_id=75134926]
+bone_name = "SkeletonNode_4"
+bone_idx = 4
+
+[node name="Dot" type="MeshInstance3D" parent="Skeleton3D/Bone4" unique_id=1636605798]
+mesh = SubResource("SphereMesh_7osu6")
+
+[node name="Bone5" type="BoneAttachment3D" parent="Skeleton3D" unique_id=1056554865]
+bone_name = "SkeletonNode_5"
+bone_idx = 5
+
+[node name="Dot" type="MeshInstance3D" parent="Skeleton3D/Bone5" unique_id=671154954]
+mesh = SubResource("SphereMesh_7osu6")
+
+[node name="Bone6" type="BoneAttachment3D" parent="Skeleton3D" unique_id=1255443304]
+bone_name = "SkeletonNode_6"
+bone_idx = 6
+
+[node name="Dot" type="MeshInstance3D" parent="Skeleton3D/Bone6" unique_id=608619093]
+mesh = SubResource("SphereMesh_7osu6")
+
+[node name="Bone7" type="BoneAttachment3D" parent="Skeleton3D" unique_id=238655855]
+bone_name = "SkeletonNode_7"
+bone_idx = 7
+
+[node name="Dot" type="MeshInstance3D" parent="Skeleton3D/Bone7" unique_id=786183039]
+mesh = SubResource("SphereMesh_7osu6")
+
+[node name="Bone8" type="BoneAttachment3D" parent="Skeleton3D" unique_id=600958037]
+bone_name = "SkeletonNode_8"
+bone_idx = 8
+
+[node name="Dot" type="MeshInstance3D" parent="Skeleton3D/Bone8" unique_id=1697518589]
+mesh = SubResource("SphereMesh_7osu6")
+
+[node name="Bone9" type="BoneAttachment3D" parent="Skeleton3D" unique_id=2062928338]
+bone_name = "SkeletonNode_9"
+bone_idx = 9
+
+[node name="Dot" type="MeshInstance3D" parent="Skeleton3D/Bone9" unique_id=1272372817]
+mesh = SubResource("SphereMesh_7osu6")
+
+[node name="Bone10" type="BoneAttachment3D" parent="Skeleton3D" unique_id=387889483]
+bone_name = "SkeletonNode_10"
+bone_idx = 10
+
+[node name="Dot" type="MeshInstance3D" parent="Skeleton3D/Bone10" unique_id=2022230061]
+mesh = SubResource("SphereMesh_7osu6")
+
+[node name="Bone11" type="BoneAttachment3D" parent="Skeleton3D" unique_id=1544435964]
+bone_name = "SkeletonNode_11"
+bone_idx = 11
+
+[node name="Dot" type="MeshInstance3D" parent="Skeleton3D/Bone11" unique_id=1555899307]
+mesh = SubResource("SphereMesh_7osu6")
+
+[node name="Bone12" type="BoneAttachment3D" parent="Skeleton3D" unique_id=19190724]
+bone_name = "SkeletonNode_12"
+bone_idx = 12
+
+[node name="Dot" type="MeshInstance3D" parent="Skeleton3D/Bone12" unique_id=174172809]
+mesh = SubResource("SphereMesh_7osu6")
+
+[node name="Bone13" type="BoneAttachment3D" parent="Skeleton3D" unique_id=1711064320]
+bone_name = "SkeletonNode_13"
+bone_idx = 13
+
+[node name="Dot" type="MeshInstance3D" parent="Skeleton3D/Bone13" unique_id=1565948075]
+mesh = SubResource("SphereMesh_7osu6")
+
+[node name="Bone14" type="BoneAttachment3D" parent="Skeleton3D" unique_id=979325074]
+bone_name = "SkeletonNode_14"
+bone_idx = 14
+
+[node name="Dot" type="MeshInstance3D" parent="Skeleton3D/Bone14" unique_id=1133730433]
+mesh = SubResource("SphereMesh_7osu6")
+
+[node name="Bone15" type="BoneAttachment3D" parent="Skeleton3D" unique_id=1501268196]
+bone_name = "SkeletonNode_15"
+bone_idx = 15
+
+[node name="Dot" type="MeshInstance3D" parent="Skeleton3D/Bone15" unique_id=857314309]
+mesh = SubResource("SphereMesh_7osu6")
+
+[node name="Bone16" type="BoneAttachment3D" parent="Skeleton3D" unique_id=1006778534]
+bone_name = "SkeletonNode_16"
+bone_idx = 16
+
+[node name="Dot" type="MeshInstance3D" parent="Skeleton3D/Bone16" unique_id=2003750060]
+mesh = SubResource("SphereMesh_7osu6")
+
+[node name="Bone17" type="BoneAttachment3D" parent="Skeleton3D" unique_id=1165415626]
+bone_name = "SkeletonNode_17"
+bone_idx = 17
+
+[node name="Dot" type="MeshInstance3D" parent="Skeleton3D/Bone17" unique_id=1355025454]
+mesh = SubResource("SphereMesh_7osu6")
+
+[node name="Bone18" type="BoneAttachment3D" parent="Skeleton3D" unique_id=1928017046]
+bone_name = "SkeletonNode_18"
+bone_idx = 18
+
+[node name="Dot" type="MeshInstance3D" parent="Skeleton3D/Bone18" unique_id=1349955344]
+mesh = SubResource("SphereMesh_7osu6")
+
+[node name="Bone19" type="BoneAttachment3D" parent="Skeleton3D" unique_id=349744097]
+bone_name = "SkeletonNode_19"
+bone_idx = 19
+
+[node name="Dot" type="MeshInstance3D" parent="Skeleton3D/Bone19" unique_id=1113765175]
+mesh = SubResource("SphereMesh_7osu6")
+
+[node name="Bone20" type="BoneAttachment3D" parent="Skeleton3D" unique_id=1991489325]
+bone_name = "SkeletonNode_20"
+bone_idx = 20
+
+[node name="Dot" type="MeshInstance3D" parent="Skeleton3D/Bone20" unique_id=1969539061]
+mesh = SubResource("SphereMesh_7osu6")
+
+[node name="Bone21" type="BoneAttachment3D" parent="Skeleton3D" unique_id=923714917]
+bone_name = "SkeletonNode_21"
+bone_idx = 21
+
+[node name="Dot" type="MeshInstance3D" parent="Skeleton3D/Bone21" unique_id=624311060]
+mesh = SubResource("SphereMesh_7osu6")
+
+[node name="Bone22" type="BoneAttachment3D" parent="Skeleton3D" unique_id=282997259]
+bone_name = "SkeletonNode_22"
+bone_idx = 22
+
+[node name="Dot" type="MeshInstance3D" parent="Skeleton3D/Bone22" unique_id=518363820]
+mesh = SubResource("SphereMesh_7osu6")
+
+[node name="Bone23" type="BoneAttachment3D" parent="Skeleton3D" unique_id=1958081674]
+bone_name = "SkeletonNode_23"
+bone_idx = 23
+
+[node name="Dot" type="MeshInstance3D" parent="Skeleton3D/Bone23" unique_id=561376258]
+mesh = SubResource("SphereMesh_7osu6")
