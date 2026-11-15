@@ -23,16 +23,18 @@
 //!   foreground cooperative level.
 //! - **Sound.** The game's own mix (ffx-rust's FMOD mixer: 48,000 Hz
 //!   interleaved stereo f32, blocks of 1,600 frames) goes into
-//!   [`AudioQueue`]; Godot's side ([`crate::audio::FfxAudioOut`], an
-//!   `AudioStreamGenerator`) pulls from it each frame. The output runs only
-//!   while that player is attached; else the game's feeder follows the wall
-//!   clock and the mix goes nowhere.
+//!   [`AudioQueue`]; Godot's side ([`crate::audio::FfxAudioOut`], a
+//!   custom `AudioStreamPlayback`) takes from it on Godot's audio thread
+//!   as the device asks for frames ([`AudioQueue::fill`]). The output runs
+//!   only while that player is attached; else the game's feeder follows
+//!   the wall clock and the mix goes nowhere.
 //! - **Steam** is absent; the **documents folder** is the sandbox the
 //!   frontend passes to the boot, never the player's own.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use ffx_host::platform::{
     DeviceCall, DeviceInfo, Message, Platform, Point, Property, Rect, WindowRequest,
@@ -155,6 +157,14 @@ struct AudioRing {
     /// Handing frames to the player (false at the start and after an
     /// underrun until [`AUDIO_PREFILL`] frames are queued).
     playing: bool,
+    /// The queue's time average while playing, since the player attached:
+    /// frames times seconds, and the seconds (by Little's law, the mean
+    /// delay of a frame is the mean queue over the rate, however bursty the
+    /// device's asks are).
+    area: f64,
+    span: f64,
+    /// When the queue last changed (push or fill).
+    since: Option<Instant>,
 }
 
 impl AudioRing {
@@ -162,14 +172,43 @@ impl AudioRing {
         self.samples.clear();
         self.playing = false;
     }
+
+    /// The queue is about to change at `now`: what it held since the last
+    /// change goes into the time average (while playing).
+    fn tick(&mut self, now: Instant) {
+        if let Some(t) = self.since
+            && self.playing
+        {
+            let dt = now.saturating_duration_since(t).as_secs_f64();
+            #[allow(clippy::cast_precision_loss)] // frame counts are small
+            let q = (self.samples.len() / 2) as f64;
+            self.area += q * dt;
+            self.span += dt;
+        }
+        self.since = Some(now);
+    }
+
+    /// The queue's time average in frames (0 before any playing).
+    fn mean(&self) -> usize {
+        if self.span > 0.0 {
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // >= 0, small
+            let m = (self.area / self.span).round() as usize;
+            m
+        } else {
+            0
+        }
+    }
 }
 
 /// The game's mix on its way to Godot's audio, kept as ffx-rust's WASAPI
 /// output keeps it (its `rust_audio_out.rs`): the game's feeder pushes
-/// blocks and never waits; the player pulls as its buffer empties. At most
-/// [`AUDIO_MAX_QUEUE`] frames are kept, the oldest dropped; a pull hands
-/// out nothing until [`AUDIO_PREFILL`] frames are there, and counts an
-/// underrun when the queue has run dry while playing.
+/// blocks and never waits; the player takes frames on Godot's audio
+/// thread exactly as the device asks for them ([`AudioQueue::fill`]), so
+/// the queue is all the buffering on our side and `audio_queued` reports
+/// all of it to the feeder. At most [`AUDIO_MAX_QUEUE`] frames are kept,
+/// the oldest dropped; a fill hands out silence until [`AUDIO_PREFILL`]
+/// frames are there, and counts an underrun when the device asked for
+/// more than there was while playing.
 #[derive(Debug, Default)]
 pub struct AudioQueue {
     ring: Mutex<AudioRing>,
@@ -180,9 +219,6 @@ pub struct AudioQueue {
     dropped: AtomicU64,
     /// Frames handed to the player.
     pulled: AtomicU64,
-    /// Times Godot's player ran empty while playing (its generator's
-    /// skips, counted by the player).
-    skips: AtomicU64,
 }
 
 /// The output's counters (diagnostics).
@@ -198,8 +234,10 @@ pub struct AudioStats {
     pub dropped: u64,
     /// Frames handed to the player so far.
     pub pulled: u64,
-    /// Times Godot's player ran empty (heard as a gap).
-    pub skips: u64,
+    /// The queue's time average while playing, since the player attached
+    /// (0 before): the mean delay between the mixer and Godot's mix, in
+    /// frames.
+    pub mean_queued: usize,
 }
 
 impl AudioQueue {
@@ -216,22 +254,20 @@ impl AudioQueue {
     }
 
     /// A player is attached (true) or gone (false). Either way the queue
-    /// starts empty.
+    /// starts empty (and its mean anew).
     pub fn attach(&self, on: bool) {
         let mut r = lock(&self.ring);
         r.attached = on;
         r.clear();
+        r.area = 0.0;
+        r.span = 0.0;
+        r.since = None;
     }
 
     /// Whether the output runs: the game started it and a player pulls.
     #[must_use]
     pub fn running(&self) -> bool {
         self.started.load(Ordering::Acquire) && lock(&self.ring).attached
-    }
-
-    /// Godot's player ran empty `n` more times.
-    pub fn add_skips(&self, n: u64) {
-        self.skips.fetch_add(n, Ordering::Relaxed);
     }
 
     /// Frames queued and not pulled yet.
@@ -249,10 +285,15 @@ impl AudioQueue {
     /// Appends one mixed block (interleaved stereo); dropped while the
     /// output does not run. Keeps at most [`AUDIO_MAX_QUEUE`] frames.
     pub fn push(&self, block: &[f32]) {
+        self.push_at(block, Instant::now());
+    }
+
+    fn push_at(&self, block: &[f32], now: Instant) {
         let mut r = lock(&self.ring);
         if !r.attached || !self.started.load(Ordering::Acquire) {
             return;
         }
+        r.tick(now);
         r.samples.extend(block.iter().copied());
         // whole frames only, so left and right stay in place
         let over = r.samples.len().saturating_sub(2 * AUDIO_MAX_QUEUE) & !1;
@@ -262,31 +303,34 @@ impl AudioQueue {
         }
     }
 
-    /// Takes up to `frames` frames for the player, appended to `out`
-    /// (interleaved stereo); returns the frames taken. Nothing until
-    /// [`AUDIO_PREFILL`] frames are queued, then what there is up to
-    /// `frames` (the player holds a buffer of its own); an underrun when the
-    /// queue is empty while playing (then nothing again until the
-    /// prefill).
-    pub fn pull(&self, frames: usize, out: &mut Vec<f32>) -> usize {
-        if frames == 0 {
-            return 0;
-        }
+    /// Fills `out` (interleaved stereo, whole frames) for the device, as
+    /// Godot's audio thread asks: the queued frames, oldest first, and
+    /// silence for the rest; returns the frames of sound. Silence until
+    /// [`AUDIO_PREFILL`] frames are queued; an underrun when the device
+    /// asked for more than there was while playing (then silence again
+    /// until the prefill).
+    pub fn fill(&self, out: &mut [f32]) -> usize {
+        self.fill_at(out, Instant::now())
+    }
+
+    fn fill_at(&self, out: &mut [f32], now: Instant) -> usize {
+        let frames = out.len() / 2;
         let mut r = lock(&self.ring);
+        r.tick(now);
         let queued = r.samples.len() / 2;
         if !r.playing && queued >= AUDIO_PREFILL {
             r.playing = true;
         }
-        if !r.playing {
-            return 0;
-        }
-        if queued == 0 {
+        let n = if r.playing { queued.min(frames) } else { 0 };
+        if r.playing && n < frames {
             self.underruns.fetch_add(1, Ordering::Relaxed);
             r.playing = false;
-            return 0;
         }
-        let n = queued.min(frames);
-        out.extend(r.samples.drain(..2 * n));
+        for (d, s) in out.iter_mut().zip(r.samples.drain(..2 * n)) {
+            *d = s;
+        }
+        drop(r);
+        out[2 * n..].fill(0.0);
         self.pulled.fetch_add(n as u64, Ordering::Relaxed);
         n
     }
@@ -300,7 +344,7 @@ impl AudioQueue {
             underruns: self.underruns(),
             dropped: self.dropped.load(Ordering::Relaxed),
             pulled: self.pulled.load(Ordering::Relaxed),
-            skips: self.skips.load(Ordering::Relaxed),
+            mean_queued: lock(&self.ring).mean(),
         }
     }
 }
@@ -1187,22 +1231,30 @@ mod tests {
         assert_eq!(p.audio_queued(), 0, "the queue goes with the player");
     }
 
+    /// What the device asks for at once: `frames` frames, interleaved.
+    fn ask(q: &AudioQueue, frames: usize) -> (usize, Vec<f32>) {
+        let mut out = vec![9.0; 2 * frames];
+        let n = q.fill(&mut out);
+        (n, out)
+    }
+
     #[test]
-    fn audio_waits_for_the_prefill_then_pulls_in_order() {
+    fn audio_waits_for_the_prefill_then_fills_in_order() {
         let q = running_queue();
-        let mut out = Vec::new();
         q.push(&block(0.1));
         q.push(&block(0.2));
-        assert_eq!(q.pull(800, &mut out), 0, "under the prefill");
-        assert_eq!(out.len(), 0);
+        let (n, out) = ask(&q, 128);
+        assert_eq!(n, 0, "under the prefill");
+        assert!(out.iter().all(|&s| s == 0.0), "silence, all of it");
+        assert_eq!(q.underruns(), 0, "waiting for the prefill is no underrun");
         q.push(&block(0.3));
         assert_eq!(q.queued(), AUDIO_PREFILL);
-        assert_eq!(q.pull(1000, &mut out), 1000);
-        assert_eq!(out.len(), 2000);
+        let (n, out) = ask(&q, 1000);
+        assert_eq!(n, 1000);
         assert!(out.chunks(2).all(|f| f == [0.1, -0.1]));
         // on from the first block into the second, left and right in place
-        out.clear();
-        assert_eq!(q.pull(1000, &mut out), 1000);
+        let (n, out) = ask(&q, 1000);
+        assert_eq!(n, 1000);
         assert_eq!(&out[..2], &[0.1, -0.1]);
         assert_eq!(&out[1200..1202], &[0.2, -0.2]);
         assert_eq!(q.queued(), 2800);
@@ -1211,28 +1263,86 @@ mod tests {
     }
 
     #[test]
-    fn audio_counts_an_underrun_when_the_queue_runs_dry() {
+    fn audio_mean_is_the_queues_time_average_while_playing() {
+        let q = running_queue();
+        let t0 = Instant::now();
+        let at = |ms: u64| t0 + std::time::Duration::from_millis(ms);
+        let mut out = vec![0.0; 2 * 1000];
+        // filling up to the prefill: not playing, not counted
+        for (ms, v) in [(0, 0.1), (10, 0.2), (20, 0.3)] {
+            q.push_at(&block(v), at(ms));
+        }
+        assert_eq!(q.fill_at(&mut out, at(100)), 1000);
+        assert_eq!(q.stats().mean_queued, 0, "nothing played for a while yet");
+        // 3,800 frames for 30 ms, then 5,400 for 10 ms
+        q.push_at(&block(0.4), at(130));
+        assert_eq!(q.fill_at(&mut out, at(140)), 1000);
+        assert_eq!(q.stats().mean_queued, (3800 * 30 + 5400 * 10) / 40);
+        // a burst of asks (Godot's dummy driver: 4,096 frames at once)
+        // weighs by time, not by the number of asks
+        let mut big = vec![0.0; 2 * 4096];
+        assert_eq!(q.fill_at(&mut big, at(240)), 4096);
+        for _ in 0..8 {
+            q.fill_at(&mut out[..2], at(240));
+        }
+        // (3,800 * 30 + 5,400 * 10 + 4,400 * 100) / 140 = 4,342.9
+        assert_eq!(q.stats().mean_queued, 4343);
+        // a player attached anew starts its mean anew
+        q.attach(true);
+        assert_eq!(q.stats().mean_queued, 0);
+    }
+
+    #[test]
+    fn audio_counts_an_underrun_when_the_device_asks_for_more() {
         let q = running_queue();
         for v in [0.1, 0.2, 0.3] {
             q.push(&block(v));
         }
-        let mut out = Vec::new();
-        assert_eq!(q.pull(4000, &mut out), 4000);
-        // 800 left, 1000 wanted: what is there (the player has a buffer)
-        assert_eq!(q.pull(1000, &mut out), 800);
-        assert_eq!(q.underruns(), 0);
-        // nothing left: the queue ran dry
-        assert_eq!(q.pull(1000, &mut out), 0);
+        assert_eq!(ask(&q, 4000).0, 4000);
+        // 800 left, 1,000 asked: what is there, then silence, an underrun
+        let (n, out) = ask(&q, 1000);
+        assert_eq!(n, 800);
+        assert_eq!(&out[1598..1600], &[0.3, -0.3]);
+        assert!(out[1600..].iter().all(|&s| s == 0.0));
         assert_eq!(q.underruns(), 1);
         assert_eq!(q.queued(), 0);
-        // then nothing until the prefill again
+        // then silence until the prefill again, no more underruns
         q.push(&block(0.4));
-        assert_eq!(q.pull(100, &mut out), 0);
-        assert_eq!(q.underruns(), 1, "waiting for the prefill is no underrun");
+        assert_eq!(ask(&q, 100).0, 0);
+        assert_eq!(ask(&q, 100).0, 0);
+        assert_eq!(q.underruns(), 1);
         q.push(&block(0.5));
         q.push(&block(0.6));
-        assert_eq!(q.pull(100, &mut out), 100);
-        assert_eq!(&out[out.len() - 2..], &[0.4, -0.4]);
+        let (n, out) = ask(&q, 100);
+        assert_eq!(n, 100);
+        assert_eq!(&out[198..], &[0.4, -0.4]);
+        assert_eq!(q.stats().pulled, 4900);
+    }
+
+    #[test]
+    fn audio_device_pulls_keep_the_queue_at_the_feeders_target() {
+        // the feeder as ffx-rust runs it (feed_due: blocks while queued <
+        // 6,400), Godot's mix in 128-frame chunks (its resampler's): the
+        // queue, all our buffering, stays between the target and a block
+        // over, with no underrun
+        const TARGET: usize = 4800 + 1600;
+        let q = running_queue();
+        let (mut low, mut high) = (usize::MAX, 0);
+        for step in 0..2000 {
+            while q.queued() < TARGET {
+                q.push(&block(0.5));
+            }
+            if step > 0 {
+                low = low.min(q.queued());
+                high = high.max(q.queued());
+            }
+            // the device takes ~4 ms between two looks of the feeder
+            for _ in 0..=step % 2 {
+                assert_eq!(ask(&q, 128).0, 128);
+            }
+        }
+        assert_eq!(q.underruns(), 0);
+        assert!(low >= TARGET && high < TARGET + 1600, "{low}..{high}");
     }
 
     #[test]
@@ -1244,24 +1354,12 @@ mod tests {
         }
         assert_eq!(q.queued(), AUDIO_MAX_QUEUE);
         assert_eq!(q.stats().dropped, 1600);
-        let mut out = Vec::new();
-        assert_eq!(q.pull(2, &mut out), 2);
+        let (n, out) = ask(&q, 2);
+        assert_eq!(n, 2);
         assert_eq!(out, [1.0, -1.0, 1.0, -1.0], "block 0 was dropped");
-        out.clear();
-        assert_eq!(q.pull(AUDIO_MAX_QUEUE, &mut out), AUDIO_MAX_QUEUE - 2);
+        let (n, out) = ask(&q, AUDIO_MAX_QUEUE - 2);
+        assert_eq!(n, AUDIO_MAX_QUEUE - 2);
         assert_eq!(&out[out.len() - 2..], &[15.0, -15.0]);
-        assert_eq!(q.underruns(), 0);
-    }
-
-    #[test]
-    fn audio_fills_an_empty_player_without_an_underrun() {
-        let q = running_queue();
-        for v in [0.1, 0.2, 0.3] {
-            q.push(&block(v));
-        }
-        let mut out = Vec::new();
-        // the player's whole buffer (0.2 s) at once: the prefill is less
-        assert_eq!(q.pull(9600, &mut out), AUDIO_PREFILL);
         assert_eq!(q.underruns(), 0);
     }
 
@@ -1271,14 +1369,14 @@ mod tests {
         for v in [0.1, 0.2, 0.3] {
             q.push(&block(v));
         }
+        assert_eq!(ask(&q, 100).0, 100);
         // a player attached anew gets no stale tail
         q.attach(true);
         assert_eq!(q.queued(), 0);
         for v in [0.1, 0.2, 0.3] {
             q.push(&block(v));
         }
-        let mut out = Vec::new();
-        assert_eq!(q.pull(800, &mut out), 800);
+        assert_eq!(ask(&q, 800).0, 800);
         // the game ends: the queue goes, nothing more comes, and the
         // silence after is no underrun
         q.stop();
@@ -1286,15 +1384,9 @@ mod tests {
         assert_eq!(q.queued(), 0);
         q.push(&block(0.4));
         assert_eq!(q.queued(), 0);
-        assert_eq!(q.pull(800, &mut out), 0);
+        let (n, out) = ask(&q, 800);
+        assert_eq!(n, 0);
+        assert!(out.iter().all(|&s| s == 0.0));
         assert_eq!(q.underruns(), 0);
-    }
-
-    #[test]
-    fn audio_counts_the_players_skips() {
-        let q = running_queue();
-        q.add_skips(2);
-        q.add_skips(1);
-        assert_eq!(q.stats().skips, 3);
     }
 }

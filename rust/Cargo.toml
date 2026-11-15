@@ -22,6 +22,9 @@ ffx-text = { git = "https://github.com/yutamago/ffx-rust", branch = "main" }
 ffx-kernel = { git = "https://github.com/yutamago/ffx-rust", branch = "main" }
 # godot-rust (gdext), MPL-2.0
 godot = { version = "0.5.5", features = ["api-4-7"] }
+# the same crate as godot's, for `meta::RawPtr` (an audio playback's mix
+# buffer; godot does not re-export it): keep the versions equal
+godot-core = { version = "=0.5.5", default-features = false }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

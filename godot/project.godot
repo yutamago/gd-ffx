@@ -16,6 +16,10 @@ run/main_scene="res://scenes/launcher.tscn"
 config/features=PackedStringArray("4.7", "C#", "Forward Plus")
 config/icon="res://icon.svg"
 
+[audio]
+
+driver/mix_rate=48000
+
 [autoload]
 
 ModLoader="*res://src/Remake/ModLoader.cs"

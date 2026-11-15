@@ -786,6 +786,7 @@ dependencies = [
  "ffx-state",
  "ffx-text",
  "godot",
+ "godot-core",
 ]
 
 [[package]]
