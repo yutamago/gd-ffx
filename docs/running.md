@@ -107,6 +107,15 @@ WSLg shows Godot's window on the Windows desktop. Use the OpenGL renderer
 stays white. Without a GPU driver for Mesa in WSL both run on the CPU
 (llvmpipe), so the frame rate is modest; the Windows build is the fast way.
 
+## Comparing with the original
+
+`FFX_GAME_DIR=<game> tools/compare-shot.sh REF.png OUT_DIR [devsave]`
+renders Godot's picture of a developer save offscreen and compares it with
+a screenshot of the original renderer at the same spot (`REF`, your own,
+outside git): a mean absolute difference and a side-by-side picture
+(reference, Godot, difference x4). Developer save 7 is Besaid beach at
+the save sphere.
+
 ## Headless (Linux, tests)
 
 `--selftest-battle --devsave=7 --battle=3,0,0` (G3/G4): the battle with its
