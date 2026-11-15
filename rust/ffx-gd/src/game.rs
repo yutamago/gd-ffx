@@ -249,6 +249,7 @@ impl FfxGame {
         {
             return self.fail("another platform was installed before");
         }
+        crate::snapshots::observe();
         let shared = Arc::new(Mutex::new(None));
         let outcome = Arc::new(Mutex::new(None));
         let boot = Boot { exe, documents };
@@ -342,6 +343,34 @@ impl FfxGame {
             .collect();
         d.set("message_boxes", &boxes);
         d
+    }
+
+    /// The game-state API's newest two snapshots, encoded
+    /// (`ffx_state::Snapshot::encode`; C#: `GdFfx.Api.StateApi.Decode`):
+    /// `update` (the newest's number, -1 none yet), `previous`, `current`
+    /// (`PackedByteArray`, empty when none), `age` (seconds since the
+    /// current came), `interval` (seconds between updates, smoothed).
+    #[func]
+    fn snapshots(&self) -> VarDictionary {
+        let s = crate::snapshots::global();
+        let (previous, current, age, interval) = s.encoded();
+        let bytes = |b: Option<Arc<Vec<u8>>>| {
+            b.map_or_else(PackedByteArray::new, |b| PackedByteArray::from(b.as_slice()))
+        };
+        vdict! {
+            "update" => s.update(),
+            "previous" => &bytes(previous),
+            "current" => &bytes(current),
+            "age" => age,
+            "interval" => interval,
+        }
+    }
+
+    /// The newest snapshot's update number (-1 none yet): cheap, to decode
+    /// only when it changed.
+    #[func]
+    fn snapshot_update(&self) -> i64 {
+        crate::snapshots::global().update()
     }
 
     /// A key event (by its physical key, so the game's bindings sit where

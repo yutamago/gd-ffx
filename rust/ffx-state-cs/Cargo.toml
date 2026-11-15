@@ -1,0 +1,15 @@
+[package]
+name = "ffx-state-cs"
+description = "Generates the C# bindings of ffx-rust's game-state API (ffx-state) for the Godot project"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+ffx-state.workspace = true
+
+[lints]
+workspace = true

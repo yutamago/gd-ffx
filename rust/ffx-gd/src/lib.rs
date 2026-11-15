@@ -5,6 +5,8 @@
 //!   Godot (window events, keyboard, mouse, pads; the null graphics device);
 //! - [`game`]: `FfxGame`, the node that boots the game from the player's
 //!   own copy and runs it on its own thread at 30 updates a second;
+//! - [`snapshots`]: the game-state API's snapshots (ffx-rust's
+//!   `ffx-state`), the newest two, for Godot to interpolate between;
 //! - [`state`]: the few state values the G0 debug view reads;
 //! - [`keys`]: Godot's keys as the game's scan codes.
 //!
@@ -14,6 +16,7 @@
 pub mod game;
 pub mod keys;
 pub mod platform;
+pub mod snapshots;
 pub mod state;
 
 use godot::prelude::*;
