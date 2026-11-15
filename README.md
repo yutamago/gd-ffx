@@ -41,7 +41,7 @@ More: [docs/architecture.md](docs/architecture.md).
 | G3 | Sound through Godot's audio engine; effects; battles with classic content | in progress: the game's mix through Godot; battles start (`--battle`), with the classic battle map and characters; effects not yet |
 | G4 | Native Godot UI for the menus | in progress: native message boxes (dialogue, subtitles, choices) and the battle command menu (the game's names and cursor); the field menu and save screens drawn as simple panels |
 | G5 | The whole game with classic content on Windows, Linux, the Steam Deck, macOS | |
-| G6 | Remake tooling: replacement by id, editor workflow, mod packs, launcher | groundwork: remade maps and characters replace classic ones by the game's ids, mod packs in a load order (docs/remake.md) |
+| G6 | Remake tooling: replacement by id, editor workflow, mod packs, launcher | in progress: remade maps and characters replace classic ones by the game's ids, mod packs in a load order (docs/remake.md); the launcher: game folder, packs switched and ordered, cache (docs/launcher.md) |
 
 Godot shows the game's own maps and characters, imported on your machine
 from your copy (docs/importer.md), posed and placed by the game through the
@@ -59,6 +59,7 @@ a standalone program for Windows and Linux (and the Steam Deck):
 ```bash
 tools/build-extension.sh                          # rust/ffx-gd
 FFX_GAME_DIR=/path/to/FINAL\ FANTASY\ X-X2\ HD\ Remaster tools/selftest.sh
+(cd godot && godot --path .)                      # the launcher: choose the game folder, Start
 tools/export.sh all                               # build/linux, build/windows (development exports)
 ```
 

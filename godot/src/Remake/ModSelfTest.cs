@@ -37,6 +37,18 @@ public static class ModSelfTest
         Check(missing.SequenceEqual(["missing.pck"]), $"listed but missing: {string.Join(", ", missing)}");
         var none = ModLoader.Order(["b.pck", "a.pck"], null, out _);
         Check(none.SequenceEqual(["a.pck", "b.pck"]), $"without load_order.txt: {string.Join(", ", none)}");
+        // disabled packs keep their place, are not mounted, and survive a round trip
+        var withOff = ModLoader.Entries(["c.pck", "a.pck", "b.pck", "d.pck"],
+            "# a comment\nb\n# DISABLED: a.pck\n#notes.pck\n# disabled: gone.pck\n", out var missing2);
+        Check(withOff.SequenceEqual([new ModLoader.Entry("b.pck", true), new ModLoader.Entry("a.pck", false),
+                new ModLoader.Entry("c.pck", true), new ModLoader.Entry("d.pck", true)]),
+            $"entries with a disabled pack: {string.Join(", ", withOff)}");
+        Check(missing2.Count == 0, "a disabled pack that is gone is not reported missing");
+        var orderOff = ModLoader.Order(["c.pck", "a.pck", "b.pck", "d.pck"], ModLoader.Format(withOff), out _);
+        Check(orderOff.SequenceEqual(["b.pck", "c.pck", "d.pck"]),
+            $"the formatted order mounts the enabled ones only: {string.Join(", ", orderOff)}");
+        var back = ModLoader.Entries(["c.pck", "a.pck", "b.pck", "d.pck"], ModLoader.Format(withOff), out _);
+        Check(back.SequenceEqual(withOff), "a load order written and read back is the same");
 
         // 2. real packs in a temporary folder
         var tmp = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"gd-ffx-selftest-mods-{OS.GetProcessId()}");
@@ -81,10 +93,19 @@ public static class ModSelfTest
             {
                 ["res://remake/chr/c998.tscn"] = sceneSrc,
             });
-            System.IO.File.WriteAllText(System.IO.Path.Combine(mods, ModLoader.LoadOrderFile), "Beta.PCK\nalpha\n");
+            // disabled: its files and entries must not appear
+            Build(System.IO.Path.Combine(mods, "delta.pck"), new()
+            {
+                ["res://mods/delta/remake.json"] = Src("delta.json",
+                    "{ \"chr\": { \"c999\": \"res://mods/delta/none.tscn\" } }"),
+                ["res://mods/selftest_shared.txt"] = Src("delta.txt", "delta"),
+            });
+            System.IO.File.WriteAllText(System.IO.Path.Combine(mods, ModLoader.LoadOrderFile),
+                "Beta.PCK\nalpha\n" + ModLoader.DisabledPrefix + " delta.pck\n");
 
             var mounted = ModLoader.LoadDir(mods);
-            Check(mounted == 3, $"{mounted} packs mounted from a --mods folder");
+            Check(mounted == 3, $"{mounted} packs mounted from a --mods folder (one disabled)");
+            Check(!FileAccess.FileExists("res://mods/delta/remake.json"), "a disabled pack is not mounted");
             var names = ModLoader.Packs.Select(p => p.Name).ToList();
             Check(names.SequenceEqual(["beta", "alpha", "gamma"]), $"mounted in order: {string.Join(", ", names)}");
             var shared = FileAccess.GetFileAsString("res://mods/selftest_shared.txt");
@@ -161,7 +182,8 @@ public static class ModSelfTest
         node.GetTree().Quit(pass ? 0 : 1);
     }
 
-    private static void Build(string pck, Dictionary<string, string> files)
+    /// <summary>Writes a pack <paramref name="pck"/> of <paramref name="files"/> (res:// path → source file).</summary>
+    internal static void Build(string pck, Dictionary<string, string> files)
     {
         var p = new PckPacker();
         if (p.PckStart(pck) != Error.Ok)

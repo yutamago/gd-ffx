@@ -122,8 +122,12 @@ encoding.
   bones are posed relative to the character and placed by its root
   (`GameStateView.BonePoint`).
 
-`ModLoader` (the first autoload) mounts the mod packs and fills the remake
-registry (docs/remake.md); `GameHost` (an autoload) owns the game, its input and the view;
+The launcher (`scenes/launcher.tscn`, the main scene; docs/launcher.md)
+chooses the game folder and the packs, then calls `GameHost.Start` and
+loads `scenes/main.tscn`. `ModLoader` (the first autoload) reads the base
+remake registry and, from `GameHost.Start`, mounts the mod packs
+(docs/remake.md); `GameHost` (an autoload) owns the game (booted in
+`Start`), its input and the view;
 `StateView3D` draws the camera, the classic map and the characters'
 classic models posed by the game (docs/importer.md), markers until they
 are imported; `DebugView` is the overlay (F1).

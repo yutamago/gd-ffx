@@ -26,10 +26,60 @@ public sealed class ClassicLibrary
     public (int Ready, int Failed, int Waiting) Counts =>
         (_paths.Count, _errors.Count, _asked.Count - _paths.Count - _errors.Count);
 
+    /// <summary>The file that marks a folder as gd-ffx's classic cache (written when the cache is opened).</summary>
+    public const string Marker = ".gd-ffx-classic-cache";
+
     public ClassicLibrary(FfxGame game, string gameDir, string cacheDir)
     {
         _game = game;
         Open = game.ClassicOpen(gameDir, cacheDir);
+        if (Open)
+            WriteMarker(cacheDir);
+    }
+
+    /// <summary>Marks <paramref name="cacheDir"/> as a classic cache (<see cref="Marker"/>), so the launcher may clear it.</summary>
+    public static void WriteMarker(string cacheDir)
+    {
+        try
+        {
+            System.IO.Directory.CreateDirectory(cacheDir);
+            var m = System.IO.Path.Combine(cacheDir, Marker);
+            if (!System.IO.File.Exists(m))
+                System.IO.File.WriteAllText(m, "gd-ffx's classic cache: imported from the player's copy; safe to delete\n");
+        }
+        catch (System.Exception e) when (e is System.IO.IOException or System.UnauthorizedAccessException)
+        {
+            GD.PrintErr($"ffx: classic cache {cacheDir}: {e.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Why the launcher must not clear <paramref name="dir"/>'s <c>map/</c> and <c>chr/</c>, or
+    /// null when it may: the folder is absolute, not a filesystem root, the home folder or
+    /// gd-ffx's user data folder itself, and lies inside gd-ffx's user data folder
+    /// (<c>user://</c>) or holds the <see cref="Marker"/> that gd-ffx writes into a cache it used.
+    /// </summary>
+    public static string? WhyNotClearable(string dir)
+    {
+        if (string.IsNullOrWhiteSpace(dir))
+            return "no cache folder";
+        if (!System.IO.Path.IsPathFullyQualified(dir))
+            return "not an absolute path";
+        static string Norm(string p) => System.IO.Path.TrimEndingDirectorySeparator(System.IO.Path.GetFullPath(p));
+        var full = Norm(dir);
+        if (full == Norm(System.IO.Path.GetPathRoot(full) ?? full) || full.Length <= 1)
+            return "a filesystem root";
+        var home = System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile);
+        if (home.Length > 0 && string.Equals(full, Norm(home), System.StringComparison.OrdinalIgnoreCase))
+            return "the home folder";
+        var user = Norm(OS.GetUserDataDir());
+        if (string.Equals(full, user, System.StringComparison.OrdinalIgnoreCase))
+            return "gd-ffx's user data folder itself";
+        if (full.StartsWith(user + System.IO.Path.DirectorySeparatorChar, System.StringComparison.Ordinal))
+            return null;
+        if (System.IO.File.Exists(System.IO.Path.Combine(full, Marker)))
+            return null;
+        return $"outside gd-ffx's user data folder and without {Marker}";
     }
 
     /// <summary>Picks up the finished imports (once a frame).</summary>
