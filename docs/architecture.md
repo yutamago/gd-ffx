@@ -27,7 +27,7 @@ goes through one trait, `ffx_host::platform::Platform` (ffx-rust's
 | window | windowed: the game's window procedure gets its `WM_CREATE`, then `WM_SIZE`, `WM_ACTIVATE` and `WM_CLOSE` from Godot's window events (queued on Godot's main thread, drained by the game's message pump). `WM_CLOSE` ends the run. |
 | graphics | ffx-rust's null device: the game's D3D11 calls are answered and dropped. No original picture is drawn in Godot. |
 | input | the system keyboard (DirectInput scan codes, from Godot's physical keys) and mouse (`DIMOUSESTATE2`), Godot's joypads as XInput pads (listed as game controllers with an XInput vendor and product, so the game adds them as XInput devices). Without the focus the keyboard and mouse fail with `DIERR_INPUTLOST`, as the original's foreground devices do. |
-| sound | the game's own mix, pulled by Godot (G3 step 1, below): `audio_push` appends ffx-rust's blocks to a queue in `Bridge`, `audio_queued` and `audio_underruns` report it, `audio_running` is true once the game started its output and Godot's player is attached. |
+| sound | the game's own mix, pulled on Godot's audio thread (G3 step 2, below): `audio_push` appends ffx-rust's blocks to a queue in `Bridge`, `audio_queued` and `audio_underruns` report it, `audio_running` is true once the game started its output and Godot's player is attached. |
 | Steam | absent. |
 | documents | gd-ffx's own sandbox, passed to the boot. |
 
@@ -50,7 +50,7 @@ from the Flash movie's `Finish` callback, which a build without Ruffle never
 gets. gd-ffx always sets ffx-rust's `Options::skip_opening`, which ends them
 on their first frame (Godot shows its own picture).
 
-## Sound (G3 step 1)
+## Sound (G3 step 2: the pull model)
 
 The mix is ffx-rust's: its FMOD mixer, sample for sample, 48,000 Hz
 interleaved stereo f32 in blocks of 1,600 frames (ffx-rust's `docs/host.md`,
@@ -60,34 +60,56 @@ interleaved stereo f32 in blocks of 1,600 frames (ffx-rust's `docs/host.md`,
   mutex) is kept as ffx-rust's WASAPI output keeps its own
   (`rust_audio_out.rs`): at most half a second (24,000 frames), the oldest
   dropped; nothing goes out until 4,800 frames (100 ms) are queued, and
-  again after an underrun (the queue ran dry while playing). It starts
-  empty when a player attaches and is emptied when the game ends (no stale
-  tail, no underruns for the silence after).
-- **The feeder** (ffx-rust's, on the game's side) mixes a block whenever
-  `audio_queued` falls under 6,400 frames, while `audio_running` is true;
-  otherwise it follows the wall clock and the blocks are dropped. The
-  output runs only once Godot's player is attached, so a muted frontend
-  (or one without a player) never fills a queue nobody drains.
+  again after an underrun (Godot's mix asked for more than was queued).
+  It starts empty when a player attaches and is emptied when the game
+  ends (no stale tail, no underruns for the silence after).
+- **The feeder** (ffx-rust's, on the game's side) looks every 4 ms and
+  mixes blocks while `audio_queued` is under 6,400 frames (its
+  `FEED_TARGET`: the prefill and one block), while `audio_running` is
+  true; otherwise it follows the wall clock and the blocks are dropped.
+  The output runs only once Godot's player is attached, so a muted
+  frontend (or one without a player) never fills a queue nobody drains.
 - **The player** (`FfxAudioOut`, `rust/ffx-gd/src/audio.rs`, a node of the
-  extension) is an `AudioStreamPlayer` with an `AudioStreamGenerator`
-  (mix rate 48,000, Godot resamples to the output's rate). Each frame it
-  tops the generator's buffer up to 0.2 s (`get_frames_available`,
-  `push_buffer`), so a Godot frame up to 0.2 s long leaves no gap; when
-  the generator does run empty, its skips (Godot's mix passes that found
-  it empty) are counted (`audio_skips`, beside the queue's underruns). The node runs while the tree is paused,
-  sets its player up each time it enters the tree and lets it go when it
-  leaves. About a third of a second lies between the mixer and the
-  speakers (the queue's 6,400 frames and the generator's 9,600).
+  extension) is an `AudioStreamPlayer` with an `FfxAudioStream`. Its
+  playback, `FfxAudioPlayback`, is an `AudioStreamPlaybackResampled` at
+  48,000 Hz: Godot's audio thread calls its `_mix_resampled` for 128
+  frames at a time as the device needs them, and it fills them from the
+  queue (`AudioQueue::fill`: the queued frames, silence for the rest). It
+  calls no Godot API there; Godot's main thread only starts it, before it
+  joins the audio server's list. Nothing follows Godot's frame rate, and
+  no buffer of ours lies after the queue (the resampler holds one
+  128-frame chunk), so `audio_queued` tells the feeder all our buffering.
+  The project's mix rate is 48,000 Hz (`audio/driver/mix_rate`), so Godot
+  does not resample where the device runs at that rate. The node runs
+  while the tree is paused, sets its player up each time it enters the
+  tree and lets it go when it leaves.
+- **The delay**, mixer to speakers, is the queue plus Godot's output
+  latency (its driver's buffer, `audio/driver/output_latency`, 15 ms by
+  default, as the driver grants it). The queue's time average while
+  playing (`audio_mean_queued`; by Little's law the mean delay of a frame)
+  stays at the feeder's target and up to a block over: about 7,000
+  frames, 147 ms (the headless self-check: `mean 7060`). `FfxGame.state()`
+  has `audio_mean_queued_ms`, `audio_output_latency_ms` and their sum
+  `audio_latency_ms`; the overlay's sound line shows them.
 - `GameHost` adds the player before it starts the game, unless muted
   (`--mute`, or the project setting `ffx/audio/enabled` false). Headless,
-  Godot's audio is its dummy driver: the player is fed and drained at the
-  real rate and nothing is heard.
+  Godot's audio is its dummy driver: it mixes 4,096 frames every 85 ms at
+  the real rate and nothing is heard.
 
-**G3 step 2: a pull-model mix.** The refill above follows Godot's frame
-rate, and its buffer is delay. Next: a custom `AudioStreamPlayback` whose
-mix runs on Godot's audio thread and takes frames from the queue exactly
-as the device asks for them (as WASAPI's event does for ffx-rust on
-Windows), with no frame-rate dependence and a smaller buffer.
+Before (G3 step 1) an `AudioStreamGenerator` topped up to 0.2 s each
+Godot frame sat after the queue: about 16,600 frames, 0.35 s, between the
+mixer and the driver, and a Godot frame over 0.2 s was a gap (the
+generator's skips: 169 in the headless self-check, none now).
+
+**The floor is ffx-rust's.** The feeder's target, 6,400 frames (133 ms),
+is a constant in ffx-rust (`crates/ffx-host/src/audio.rs`, `FEED_TARGET`,
+used by `feed_due`); `audio_queued` can only make it cover the whole
+pipeline, not lower it. A pull on Godot's audio thread needs much less: a
+platform hook, e.g. `Platform::audio_target(&self) -> usize` with
+`FEED_TARGET` as its default, read by the feeder in place of the constant
+(and the frontend's prefill lowered to match), would let gd-ffx keep two
+blocks (3,200 frames: 67–100 ms queued, against stalls of the feeder up
+to about 55 ms). Proposed, not made: a change on ffx-rust's side.
 
 The game's sound requests (G3's later steps: music and effects as Godot
 streams, positional sound) are not routed yet: Godot plays the finished
