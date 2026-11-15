@@ -60,7 +60,9 @@ interleaved stereo f32 in blocks of 1,600 frames (ffx-rust's `docs/host.md`,
   mutex) is kept as ffx-rust's WASAPI output keeps its own
   (`rust_audio_out.rs`): at most half a second (24,000 frames), the oldest
   dropped; nothing goes out until 4,800 frames (100 ms) are queued, and
-  again after an underrun.
+  again after an underrun (the queue ran dry while playing). It starts
+  empty when a player attaches and is emptied when the game ends (no stale
+  tail, no underruns for the silence after).
 - **The feeder** (ffx-rust's, on the game's side) mixes a block whenever
   `audio_queued` falls under 6,400 frames, while `audio_running` is true;
   otherwise it follows the wall clock and the blocks are dropped. The
@@ -69,15 +71,23 @@ interleaved stereo f32 in blocks of 1,600 frames (ffx-rust's `docs/host.md`,
 - **The player** (`FfxAudioOut`, `rust/ffx-gd/src/audio.rs`, a node of the
   extension) is an `AudioStreamPlayer` with an `AudioStreamGenerator`
   (mix rate 48,000, Godot resamples to the output's rate). Each frame it
-  tops the generator's buffer up to 0.1 s (`get_frames_available`,
-  `push_buffer`); the queue counts an underrun when it has fewer frames
-  than the player asks for. The node runs while the tree is paused.
-  About a quarter of a second lies between the mixer and the speakers
-  (the queue's 6,400 frames and the generator's 4,800).
+  tops the generator's buffer up to 0.2 s (`get_frames_available`,
+  `push_buffer`), so a Godot frame up to 0.2 s long leaves no gap; when
+  the generator does run empty, its skips (Godot's mix passes that found
+  it empty) are counted (`audio_skips`, beside the queue's underruns). The node runs while the tree is paused,
+  sets its player up each time it enters the tree and lets it go when it
+  leaves. About a third of a second lies between the mixer and the
+  speakers (the queue's 6,400 frames and the generator's 9,600).
 - `GameHost` adds the player before it starts the game, unless muted
   (`--mute`, or the project setting `ffx/audio/enabled` false). Headless,
   Godot's audio is its dummy driver: the player is fed and drained at the
   real rate and nothing is heard.
+
+**G3 step 2: a pull-model mix.** The refill above follows Godot's frame
+rate, and its buffer is delay. Next: a custom `AudioStreamPlayback` whose
+mix runs on Godot's audio thread and takes frames from the queue exactly
+as the device asks for them (as WASAPI's event does for ffx-rust on
+Windows), with no frame-rate dependence and a smaller buffer.
 
 The game's sound requests (G3's later steps: music and effects as Godot
 streams, positional sound) are not routed yet: Godot plays the finished
