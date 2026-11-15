@@ -3,6 +3,8 @@
 //!
 //! - [`platform`]: `GodotPlatform`, ffx-rust's platform seam answered from
 //!   Godot (window events, keyboard, mouse, pads; the null graphics device);
+//! - [`classic`]: the game's maps and characters imported from the
+//!   player's archive (`ffx-import`) in the background;
 //! - [`game`]: `FfxGame`, the node that boots the game from the player's
 //!   own copy and runs it on its own thread at 30 updates a second;
 //! - [`snapshots`]: the game-state API's snapshots (ffx-rust's
@@ -13,6 +15,7 @@
 //! Nothing of the game is built in: it is read from the player's folder at
 //! run time.
 
+pub mod classic;
 pub mod game;
 pub mod keys;
 pub mod platform;

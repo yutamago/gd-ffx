@@ -41,3 +41,6 @@ obj/
 .DS_Store
 Thumbs.db
 *:Zone.Identifier
+
+# agent worktrees
+/.claude/

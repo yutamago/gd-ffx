@@ -25,6 +25,12 @@ use crate::platform::{Bridge, GodotPlatform, PADS, Pad};
 /// The bridge of the process's platform (installed by the first start).
 static BRIDGE: OnceLock<Arc<Bridge>> = OnceLock::new();
 
+/// The process's classic importer.
+fn classic() -> &'static crate::classic::Classic {
+    static C: OnceLock<crate::classic::Classic> = OnceLock::new();
+    C.get_or_init(crate::classic::Classic::default)
+}
+
 /// The game thread's stack (the game's main thread runs on it).
 const STACK: usize = 64 << 20;
 
@@ -131,6 +137,8 @@ pub struct FfxGame {
     /// Pads are polled each frame (`process`) unless switched off
     /// (`set_poll_pads`).
     poll_pads: bool,
+    /// The requests' replies not yet picked up (`request_results`).
+    results: Arc<Mutex<Vec<String>>>,
 }
 
 #[godot_api]
@@ -141,6 +149,7 @@ impl INode for FfxGame {
             run: None,
             error: String::new(),
             poll_pads: true,
+            results: Arc::default(),
         }
     }
 
@@ -372,6 +381,81 @@ impl FfxGame {
             "age" => age,
             "interval" => interval,
         }
+    }
+
+    /// Opens the player's archive in `game_dir` for the classic importer,
+    /// with `cache` (a folder of gd-ffx's own) as its output. False on
+    /// failure (`last_error`).
+    #[func]
+    fn classic_open(&mut self, game_dir: GString, cache: GString) -> bool {
+        match classic().open(
+            &PathBuf::from(game_dir.to_string()),
+            PathBuf::from(cache.to_string()),
+        ) {
+            Ok(()) => true,
+            Err(e) => self.fail(&format!("classic importer: {e}")),
+        }
+    }
+
+    /// Imports `name` (`kind`: `map` with a level name, `chr` with a model
+    /// name) in the background; `classic_finished` reports it.
+    #[func]
+    fn classic_request(&mut self, kind: GString, name: GString) -> bool {
+        crate::classic::Kind::parse(&kind.to_string())
+            .is_some_and(|k| classic().request(k, &name.to_string()))
+    }
+
+    /// The imports finished since the last call: `kind`, `name`, `path`
+    /// (the `.glb`; empty on failure), `error`.
+    #[func]
+    fn classic_finished(&mut self) -> Array<VarDictionary> {
+        classic()
+            .finished()
+            .into_iter()
+            .map(|d| {
+                let (path, error) = match d.result {
+                    Ok(p) => (p.display().to_string(), String::new()),
+                    Err(e) => (String::new(), e),
+                };
+                vdict! {
+                    "kind" => d.kind.name(),
+                    "name" => d.name.as_str(),
+                    "path" => path.as_str(),
+                    "error" => error.as_str(),
+                }
+            })
+            .collect()
+    }
+
+    /// Asks the game to load developer save `n` (1..=110, from the
+    /// player's archive) at its next frame boundary. False when the game
+    /// has not booted. `request_results` reports the outcome.
+    #[func]
+    fn request_devsave(&mut self, n: i64) -> bool {
+        let Some(shared) = self.run.as_ref().and_then(Run::shared) else {
+            return false;
+        };
+        let results = Arc::clone(&self.results);
+        shared.requests.push(
+            ffx_host::requests::Request::DevSave(i32::try_from(n).unwrap_or(0)),
+            Box::new(move |r| {
+                if let Ok(mut v) = results.lock() {
+                    v.push(r.unwrap_or_else(|e| format!("err {e}")));
+                }
+            }),
+        );
+        true
+    }
+
+    /// The requests' replies since the last call (`err ...` on failure).
+    #[func]
+    fn request_results(&mut self) -> PackedStringArray {
+        let v: Vec<String> = self
+            .results
+            .lock()
+            .map(|mut v| std::mem::take(&mut *v))
+            .unwrap_or_default();
+        v.iter().map(|s| GString::from(s.as_str())).collect()
     }
 
     /// The newest snapshot's update number (-1 none yet): cheap, to decode

@@ -1,5 +1,5 @@
 [workspace]
-members = ["ffx-gd", "ffx-state-cs"]
+members = ["ffx-gd", "ffx-import", "ffx-state-cs"]
 resolver = "3"
 
 [workspace.package]
@@ -16,6 +16,8 @@ repository = "https://github.com/yutamago/gd-ffx"
 ffx-host = { git = "https://github.com/yutamago/ffx-rust", branch = "main", default-features = false }
 ffx-bridge = { git = "https://github.com/yutamago/ffx-rust", branch = "main" }
 ffx-state = { git = "https://github.com/yutamago/ffx-rust", branch = "main" }
+ffx-phyre = { git = "https://github.com/yutamago/ffx-rust", branch = "main" }
+ffx-vbf = { git = "https://github.com/yutamago/ffx-rust", branch = "main" }
 # godot-rust (gdext), MPL-2.0
 godot = { version = "0.5.5", features = ["api-4-7"] }
 

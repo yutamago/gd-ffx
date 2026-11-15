@@ -25,6 +25,7 @@ swf = ["ffx-host/swf"]
 [dependencies]
 ffx-bridge.workspace = true
 ffx-host.workspace = true
+ffx-import = { path = "../ffx-import" }
 ffx-state.workspace = true
 godot.workspace = true
 

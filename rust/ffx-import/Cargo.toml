@@ -1,0 +1,16 @@
+[package]
+name = "ffx-import"
+description = "The classic importer: the player's own game files (FFX_Data.vbf) to glTF for Godot (maps, characters, their textures)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+ffx-phyre.workspace = true
+ffx-vbf.workspace = true
+
+[lints]
+workspace = true
