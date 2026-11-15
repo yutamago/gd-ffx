@@ -110,7 +110,8 @@ public partial class DebugView : Control
 
     public static string AudioLine(GameState s) =>
         s.AudioRunning
-            ? $"audio {s.AudioPulled / 48000.0:F1} s played, {s.AudioQueued} frames queued, {s.AudioUnderruns} underruns"
+            ? $"audio {s.AudioPulled / 48000.0:F1} s played, {s.AudioQueued} frames queued, "
+                + $"{s.AudioUnderruns} underruns, {s.AudioSkips} skips"
             : "audio off";
 
     public static string SnapshotLine(GameStateView v)
@@ -177,7 +178,8 @@ public partial class DebugView : Control
 /// snapshots come and decode; at the campfire (the opening, its event a
 /// few seconds in) the party is shown, posed by their skeletons, and the
 /// camera is there; then a Start press through Godot's input reaches the
-/// game and it goes to the title.
+/// game and it goes to the title; unless muted, the game's sound has reached
+/// Godot's player by then.
 /// </summary>
 public sealed class SelfTest(double timeout)
 {
@@ -233,9 +235,12 @@ public sealed class SelfTest(double timeout)
                 Key(false);
                 Next(Phase.Title);
                 break;
+            // the game's sound reached Godot's player (unless muted)
+            case Phase.Title when s.Map == DebugView.MapTitle && GameSettings.AudioEnabled() && s.AudioPulled == 0:
+                return Done(false, $"at the title, but Godot's player got no sound ({DebugView.AudioLine(s)})");
             case Phase.Title when s.Map == DebugView.MapTitle:
-                return Done(true, $"{_fire}; the opening went to the title after {_presses} Start press(es); "
-                    + $"{s.Updates} updates in {s.Seconds:F1} s, {v.Decoded} snapshots decoded");
+                return Done(true,$"{_fire}; the opening went to the title after {_presses} Start press(es); "
+                    + $"{s.Updates} updates in {s.Seconds:F1} s, {v.Decoded} snapshots decoded; {DebugView.AudioLine(s)}");
             case Phase.Title when _phaseTime > 5 && _presses < 5:
                 Next(Phase.Press);
                 break;

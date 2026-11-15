@@ -93,7 +93,10 @@ public readonly struct GameState
     public bool AudioRunning => Get("audio_running").AsBool();
     /// <summary>Frames of the game's mix queued for Godot's player.</summary>
     public long AudioQueued => Get("audio_queued").AsInt64();
+    /// <summary>Times the queue ran dry (the game's mixer fell behind).</summary>
     public long AudioUnderruns => Get("audio_underruns").AsInt64();
+    /// <summary>Times Godot's player ran empty: gaps heard.</summary>
+    public long AudioSkips => Get("audio_skips").AsInt64();
     /// <summary>Frames handed to Godot's player so far.</summary>
     public long AudioPulled => Get("audio_pulled").AsInt64();
 }
