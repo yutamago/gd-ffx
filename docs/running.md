@@ -96,6 +96,17 @@ behind) and the skips (Godot's mix passes that found the player empty,
 each a few milliseconds of silence: after an underrun, or when a frame of
 Godot's takes longer than 0.2 s).
 
+## In a window under WSL (WSLg)
+
+```bash
+FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/run-wsl.sh -- --devsave=7
+```
+
+WSLg shows Godot's window on the Windows desktop. Use the OpenGL renderer
+(the script passes `--rendering-driver opengl3`): with Vulkan the window
+stays white. Without a GPU driver for Mesa in WSL both run on the CPU
+(llvmpipe), so the frame rate is modest; the Windows build is the fast way.
+
 ## Headless (Linux, tests)
 
 `--selftest-battle --devsave=7 --battle=3,0,0` (G3/G4): the battle with its
