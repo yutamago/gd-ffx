@@ -1,6 +1,6 @@
 //! `FfxAudioOut`, the Godot node that plays the game's own mix: an
 //! `AudioStreamPlayer` with an `AudioStreamGenerator` (48,000 Hz stereo)
-//! that each frame tops its buffer up to 0.1 s from the bridge's
+//! that each frame tops its buffer up to 0.2 s from the bridge's
 //! [`AudioQueue`] (`get_frames_available`, `push_buffer`).
 //!
 //! The mix stays ffx-rust's (its FMOD mixer, sample for sample); Godot only
@@ -8,6 +8,10 @@
 //! node is in the tree the platform's output runs (`audio_running`), so the
 //! game's feeder keeps the queue full; without it (muted, or no node) the
 //! feeder follows the wall clock and the mix goes nowhere.
+//!
+//! The refill follows Godot's frames: a frame slower than the generator's
+//! 0.2 s is heard as a gap (counted as the player's skips). A pull on
+//! Godot's audio thread (a custom `AudioStreamPlayback`) is G3's next step.
 //!
 //! [`AudioQueue`]: crate::platform::AudioQueue
 
@@ -23,15 +27,16 @@ use godot::prelude::*;
 use crate::platform::{AUDIO_RATE, Bridge};
 
 /// The generator's buffer in seconds (Godot rounds its ring up to a power
-/// of two: 8,192 frames).
-const BUFFER_SECONDS: f32 = 0.1;
+/// of two: 16,384 frames).
+const BUFFER_SECONDS: f32 = 0.2;
 /// Frames the generator is filled to at most: what Godot holds beyond the
-/// queue (0.1 s). Long enough for a slow frame (it is refilled once a
-/// frame), short enough to keep the delay small.
-const BUFFERED: usize = 4_800;
+/// queue (0.2 s). A frame of Godot's up to that long is no gap; more
+/// would only add delay.
+const BUFFERED: usize = 9_600;
 
 /// The game's sound, as a node: add it to the tree before the game starts
-/// (the output runs only with a player attached).
+/// (the output runs only with a player attached). It sets its player up
+/// each time it enters the tree and lets it go when it leaves.
 #[derive(GodotClass)]
 #[class(base = Node)]
 pub struct FfxAudioOut {
@@ -41,8 +46,15 @@ pub struct FfxAudioOut {
     playback: Option<Gd<AudioStreamGeneratorPlayback>>,
     /// The generator's ring in frames (the most it ever had free).
     capacity: usize,
+    /// The generator's skips counted so far.
+    skips: i32,
+    /// Frames were pushed since the player was set up (its skips count
+    /// from then on, not while the queue fills the first time).
+    fed: bool,
     /// The samples of one pull (kept to spare the allocation).
     scratch: Vec<f32>,
+    /// The frames of one push (kept likewise).
+    frames: PackedVector2Array,
 }
 
 #[godot_api]
@@ -54,7 +66,10 @@ impl INode for FfxAudioOut {
             player: None,
             playback: None,
             capacity: 0,
+            skips: 0,
+            fed: false,
             scratch: Vec::new(),
+            frames: PackedVector2Array::new(),
         }
     }
 
@@ -75,12 +90,16 @@ impl INode for FfxAudioOut {
         let playback = player
             .get_stream_playback()
             .and_then(|p| p.try_cast::<AudioStreamGeneratorPlayback>().ok());
-        if playback.is_none() {
+        let Some(playback) = playback else {
             godot_warn!("ffx: no AudioStreamGenerator playback; the game stays silent");
+            player.queue_free();
             return;
-        }
+        };
+        self.capacity = 0;
+        self.skips = playback.get_skips();
+        self.fed = false;
         self.player = Some(player);
-        self.playback = playback;
+        self.playback = Some(playback);
         self.bridge.audio.attach(true);
         let server = AudioServer::singleton();
         godot_print!(
@@ -95,22 +114,33 @@ impl INode for FfxAudioOut {
         let Some(playback) = &mut self.playback else {
             return;
         };
+        // the generator's skips: heard as gaps once it has been fed
+        let skips = playback.get_skips();
+        if self.fed && self.bridge.audio.running() {
+            self.bridge
+                .audio
+                .add_skips(u64::try_from(skips - self.skips).unwrap_or(0));
+        }
+        self.skips = skips;
         let free = usize::try_from(playback.get_frames_available()).unwrap_or(0);
         self.capacity = self.capacity.max(free);
-        let held = self.capacity - free;
-        let room = BUFFERED.saturating_sub(held);
+        let room = BUFFERED.saturating_sub(self.capacity - free);
         self.scratch.clear();
-        if self.bridge.audio.pull(room, &mut self.scratch) == 0 {
+        let n = self.bridge.audio.pull(room, &mut self.scratch);
+        if n == 0 {
             return;
         }
-        let frames: PackedVector2Array = self
-            .scratch
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|&[l, r]| Vector2::new(l, r))
-            .collect();
-        playback.push_buffer(&frames);
+        self.frames.resize(n);
+        for (d, &[l, r]) in self
+            .frames
+            .as_mut_slice()
+            .iter_mut()
+            .zip(self.scratch.as_chunks::<2>().0)
+        {
+            *d = Vector2::new(l, r);
+        }
+        playback.push_buffer(&self.frames);
+        self.fed = true;
     }
 
     fn exit_tree(&mut self) {
@@ -119,27 +149,30 @@ impl INode for FfxAudioOut {
         }
         if let Some(mut p) = self.player.take() {
             p.stop();
+            p.queue_free();
         }
+        // set up again if the node comes back
+        self.base_mut().request_ready();
     }
 }
 
 #[godot_api]
 impl FfxAudioOut {
     /// The output's counters: `running` (the game started its output and
-    /// this player pulls), `queued` (frames waiting), `underruns`,
-    /// `dropped` (frames, the queue was full), `pulled` (frames played),
-    /// `skips` (Godot's generator ran empty).
+    /// this player pulls), `queued` (frames waiting), `underruns` (the
+    /// queue ran dry), `skips` (Godot's player ran empty: heard as gaps),
+    /// `dropped` (frames, the queue was full), `pulled` (frames played).
     #[func]
     fn stats(&self) -> VarDictionary {
         let s = self.bridge.audio.stats();
-        let skips = self.playback.as_ref().map_or(0, |p| p.get_skips());
+        let int = |v: u64| i64::try_from(v).unwrap_or(i64::MAX);
         vdict! {
             "running" => s.running,
-            "queued" => i64::try_from(s.queued).unwrap_or(i64::MAX),
-            "underruns" => i64::try_from(s.underruns).unwrap_or(i64::MAX),
-            "dropped" => i64::try_from(s.dropped).unwrap_or(i64::MAX),
-            "pulled" => i64::try_from(s.pulled).unwrap_or(i64::MAX),
-            "skips" => skips,
+            "queued" => int(s.queued as u64),
+            "underruns" => int(s.underruns),
+            "skips" => int(s.skips),
+            "dropped" => int(s.dropped),
+            "pulled" => int(s.pulled),
         }
     }
 }
