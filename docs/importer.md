@@ -37,7 +37,10 @@ ships with gd-ffx or goes into git.
   snapshot: the game's element `i` (`Actor.bones[i]`, relative to the
   character) is the bone `SkeletonNode_i`'s pose, interpolated between the
   newest two snapshots. Elements the game leaves at the identity keep the
-  model's own pose.
+  model's own pose. Each pose is a global one (relative to the character),
+  set in the skeleton's order, parents before children (sorted by depth):
+  the element numbers do not put parents first (c001's joints come as 0, 1,
+  2, 74, 3, ...), and a parent set after its child would move the child.
 
 ## Command line
 
