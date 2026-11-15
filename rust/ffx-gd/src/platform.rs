@@ -170,6 +170,10 @@ struct AudioRing {
 impl AudioRing {
     fn clear(&mut self) {
         self.samples.clear();
+        // room for the most the queue holds and one more block, so a push
+        // under the lock never grows it (the audio thread waits on it)
+        self.samples
+            .reserve((2 * AUDIO_MAX_QUEUE + 2 * 1_600).saturating_sub(self.samples.capacity()));
         self.playing = false;
     }
 

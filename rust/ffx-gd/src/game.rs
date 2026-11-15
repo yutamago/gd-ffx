@@ -353,7 +353,8 @@ impl FfxGame {
         d.set("audio_underruns", int(audio.underruns));
         d.set("audio_mean_queued", int(audio.mean_queued as u64));
         d.set("audio_pulled", int(audio.pulled));
-        let (queued_ms, mean_ms, output_ms) = crate::audio::latency(audio.queued, audio.mean_queued);
+        let (queued_ms, mean_ms, output_ms) =
+            crate::audio::latency(audio.queued, audio.mean_queued);
         d.set("audio_queued_ms", queued_ms);
         d.set("audio_mean_queued_ms", mean_ms);
         d.set("audio_output_latency_ms", output_ms);

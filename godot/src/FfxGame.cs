@@ -122,13 +122,13 @@ public readonly struct GameState
     public bool AudioRunning => Get("audio_running").AsBool();
     /// <summary>Frames of the game's mix queued for Godot's player.</summary>
     public long AudioQueued => Get("audio_queued").AsInt64();
-    /// <summary>The mean of the frames queued when Godot's mix took frames.</summary>
+    /// <summary>The queue's mean over time (the mean delay of a frame, in frames).</summary>
     public long AudioMeanQueued => Get("audio_mean_queued").AsInt64();
     /// <summary>Times Godot's mix asked for more than was queued (the game's mixer fell behind): gaps heard.</summary>
     public long AudioUnderruns => Get("audio_underruns").AsInt64();
     /// <summary>The queue now, in milliseconds.</summary>
     public double AudioQueuedMs => Get("audio_queued_ms").AsDouble();
-    /// <summary>The queue's mean when Godot's mix took frames, in milliseconds: all of gd-ffx's buffering.</summary>
+    /// <summary>The queue's mean over time, in milliseconds: all of gd-ffx's buffering.</summary>
     public double AudioMeanQueuedMs => Get("audio_mean_queued_ms").AsDouble();
     /// <summary>Godot's output latency (its driver's buffer), in milliseconds.</summary>
     public double AudioOutputLatencyMs => Get("audio_output_latency_ms").AsDouble();

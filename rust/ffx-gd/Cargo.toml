@@ -29,7 +29,6 @@ ffx-import = { path = "../ffx-import" }
 ffx-state.workspace = true
 ffx-text.workspace = true
 godot.workspace = true
-godot-core.workspace = true
 
 [lints]
 workspace = true

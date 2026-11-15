@@ -27,8 +27,8 @@ use godot::classes::{
     AudioServer, AudioStreamPlayback, AudioStreamPlaybackResampled, AudioStreamPlayer,
     IAudioStream, IAudioStreamPlaybackResampled, INode, Node,
 };
+use godot::meta::conv::RawPtr;
 use godot::prelude::*;
-use godot_core::meta::RawPtr;
 
 use crate::platform::{AUDIO_RATE, Bridge};
 
@@ -56,6 +56,12 @@ impl IAudioStream for FfxAudioStream {
 /// One playback of [`FfxAudioStream`]. Godot calls `start` on its main
 /// thread before the playback joins the audio server's list, then only
 /// its audio thread mixes it; the mix calls no Godot API.
+///
+/// **Never call this playback from the main thread after `start`** (no
+/// `get_playback_position`, `seek`, no method through
+/// `get_stream_playback()`): without gdext's `experimental-threads` its
+/// borrow cell is not atomic, so a call while the audio thread mixes would
+/// race. Everything the main thread needs is in the bridge's queue.
 #[derive(GodotClass)]
 #[class(base = AudioStreamPlaybackResampled)]
 pub struct FfxAudioPlayback {
