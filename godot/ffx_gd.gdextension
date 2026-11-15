@@ -4,8 +4,17 @@ entry_symbol = "gdext_rust_init"
 compatibility_minimum = 4.7
 reloadable = false
 
+; The editor and `godot --path godot` load the development build. Exports
+; (export_presets.cfg sets the custom feature `ffx_export`; Godot takes the
+; entry that matches the most tags) take tools/export.sh's build from
+; rust/target/export: its own features, no build paths inside. Godot copies
+; the library beside the exported program, where the program loads it from.
 [libraries]
 linux.debug.x86_64 = "res://../rust/target/release/libffx_gd.so"
 linux.release.x86_64 = "res://../rust/target/release/libffx_gd.so"
 windows.debug.x86_64 = "res://../rust/target/x86_64-pc-windows-msvc/release/ffx_gd.dll"
 windows.release.x86_64 = "res://../rust/target/x86_64-pc-windows-msvc/release/ffx_gd.dll"
+linux.debug.x86_64.ffx_export = "res://../rust/target/export/release/libffx_gd.so"
+linux.release.x86_64.ffx_export = "res://../rust/target/export/release/libffx_gd.so"
+windows.debug.x86_64.ffx_export = "res://../rust/target/export/x86_64-pc-windows-msvc/release/ffx_gd.dll"
+windows.release.x86_64.ffx_export = "res://../rust/target/export/x86_64-pc-windows-msvc/release/ffx_gd.dll"

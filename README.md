@@ -52,12 +52,14 @@ boxes and effects are still to come.
 
 ## Building and running
 
-[docs/building.md](docs/building.md) and [docs/running.md](docs/running.md).
-In short, on Linux:
+[docs/building.md](docs/building.md) and [docs/running.md](docs/running.md);
+a standalone program for Windows and Linux (and the Steam Deck):
+[docs/exporting.md](docs/exporting.md). In short, on Linux:
 
 ```bash
 tools/build-extension.sh                          # rust/ffx-gd
 FFX_GAME_DIR=/path/to/FINAL\ FANTASY\ X-X2\ HD\ Remaster tools/selftest.sh
+tools/export.sh all                               # build/linux, build/windows (development exports)
 ```
 
 ## Licence
