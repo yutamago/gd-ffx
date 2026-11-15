@@ -56,6 +56,9 @@ struct Open {
     cache: PathBuf,
 }
 
+/// The game's character set, once loaded ([`Classic::decode`]).
+static CHARSET: Mutex<Option<(String, Arc<ffx_text::Charset>)>> = Mutex::new(None);
+
 /// The importer, its cache and the imports under way.
 #[derive(Default)]
 pub struct Classic {
@@ -81,6 +84,19 @@ impl Classic {
             cache,
         }));
         Ok(())
+    }
+
+    /// The game's encoded `text` as UTF-8 in `language`'s character set
+    /// (loaded from the archive on first use); `None` without the archive.
+    #[must_use]
+    pub fn decode(&self, language: &str, text: &[u8]) -> Option<String> {
+        let open = lock(&self.open).clone()?;
+        let mut cs = lock(&CHARSET);
+        if cs.as_ref().is_none_or(|(l, _)| l != language) {
+            let charset = open.importer.charset(language).ok()?;
+            *cs = Some((language.to_string(), Arc::new(charset)));
+        }
+        cs.as_ref().map(|(_, c)| c.decode(text))
     }
 
     /// Whether the archive is open.

@@ -10,6 +10,7 @@ publish = false
 
 [dependencies]
 ffx-phyre.workspace = true
+ffx-text.workspace = true
 ffx-vbf.workspace = true
 
 [lints]

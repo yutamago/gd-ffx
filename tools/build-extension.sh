@@ -33,7 +33,7 @@ fi
 args=(--release)
 if [[ -n "${FFX_RUST_DIR:-}" ]]; then
     ffx="$(cd "$FFX_RUST_DIR" && pwd)"
-    for c in ffx-host ffx-bridge ffx-state ffx-phyre ffx-vbf; do
+    for c in ffx-host ffx-bridge ffx-state ffx-phyre ffx-vbf ffx-text; do
         args+=(--config "patch.\"https://github.com/yutamago/ffx-rust\".$c.path=\"$ffx/crates/$c\"")
     done
 fi
