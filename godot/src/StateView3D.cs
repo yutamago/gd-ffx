@@ -243,7 +243,7 @@ public partial class StateView3D : Node3D
         Actor? prev = null;
         if (view.Previous != null)
             foreach (var p in view.Previous.Actors)
-                if (p.Slot == a.Slot && p.Id == a.Id && p.Bones.Count == a.Bones.Count)
+                if (p.Slot == a.Slot && p.Bones.Count == a.Bones.Count && view.Interpolates(p, a))
                     prev = p;
         int posed = 0;
         int count = System.Math.Min(a.Bones.Count, n.BoneMap.Length);

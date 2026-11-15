@@ -32,6 +32,23 @@ public sealed class GameStateView
     /// <summary>The last decode error, if any.</summary>
     public string Error { get; private set; } = "";
 
+    /// <summary>
+    /// The newest update is a cut (a new map, or the camera jumped): it is drawn as
+    /// the game has it, nothing interpolated into it. The thresholds are the ones
+    /// the user's tested frame-rate mod for FFX.exe uses (ffx-mods' fps-unlock):
+    /// a camera move over 100 units, a turn over 45 degrees, a field of view
+    /// changed by more than 25 %.
+    /// </summary>
+    public bool Cut { get; private set; }
+
+    /// <summary>Cuts seen so far.</summary>
+    public long Cuts { get; private set; }
+
+    /// <summary>A character's warp: a move over 50 units or a turn over 120 degrees in one update.</summary>
+    public const float WarpDistance = 50f, WarpDegrees = 120f;
+
+    private const float CutDistance = 100f, CutDegrees = 45f, CutFov = 0.25f;
+
     private long _update = -1;
 
     /// <summary>Takes the newest snapshots from the game (decodes only when they changed).</summary>
@@ -52,6 +69,9 @@ public sealed class GameStateView
                 _update = Current?.Update ?? update;
                 Decoded++;
                 Error = "";
+                Cut = IsCut(Previous, Current);
+                if (Cut)
+                    Cuts++;
             }
             catch (FormatException e)
             {
@@ -61,6 +81,43 @@ public sealed class GameStateView
         var age = d["age"].AsDouble();
         var interval = Math.Max(d["interval"].AsDouble(), 1e-3);
         Alpha = (float)Math.Clamp(age / interval, 0.0, 1.0);
+    }
+
+    private static bool IsCut(Snapshot? p, Snapshot? c)
+    {
+        if (p == null || c == null || ReferenceEquals(p, c))
+            return false;
+        if (p.World.Map != c.World.Map || p.World.Level != c.World.Level)
+            return true;
+        if (!p.Camera.Valid || !c.Camera.Valid)
+            return false;
+        var a = CameraTransform(p.Camera.World);
+        var b = CameraTransform(c.Camera.World);
+        if (a.Origin.DistanceTo(b.Origin) > CutDistance * Scale)
+            return true;
+        if (Mathf.RadToDeg(Angle(a.Basis, b.Basis)) > CutDegrees)
+            return true;
+        var fov = Mathf.Max(Mathf.Abs(p.Camera.FovY), 1e-3f);
+        return Mathf.Abs(c.Camera.FovY - p.Camera.FovY) / fov > CutFov;
+    }
+
+    /// <summary>The angle between two rotations (radians; 0 when either is not a rotation).</summary>
+    private static float Angle(Basis a, Basis b)
+    {
+        var qa = a.Orthonormalized().GetRotationQuaternion();
+        var qb = b.Orthonormalized().GetRotationQuaternion();
+        return qa.AngleTo(qb);
+    }
+
+    /// <summary>Whether a character is interpolated between its two updates (no cut, no warp).</summary>
+    public bool Interpolates(Actor previous, Actor current)
+    {
+        if (Cut || previous.Id != current.Id)
+            return false;
+        var a = FieldTransform(previous.World);
+        var b = FieldTransform(current.World);
+        return a.Origin.DistanceTo(b.Origin) <= WarpDistance * Scale
+            && Mathf.RadToDeg(Angle(a.Basis, b.Basis)) <= WarpDegrees;
     }
 
     // ---- spaces ----------------------------------------------------------------
@@ -128,7 +185,7 @@ public sealed class GameStateView
         var t = CameraTransform(c.World);
         var fov = c.FovY;
         var p = Previous?.Camera;
-        if (p is { Valid: true })
+        if (p is { Valid: true } && !Cut)
         {
             var pt = CameraTransform(p.World);
             t = pt.InterpolateWith(t, Alpha);
@@ -156,7 +213,7 @@ public sealed class GameStateView
             var bones = new Vector3[a.Bones.Count];
             for (int i = 0; i < bones.Length; i++)
                 bones[i] = BonePoint(a.World, a.Bones[i].Matrix);
-            if (prevBySlot.TryGetValue(a.Slot, out var p) && p.Id == a.Id)
+            if (prevBySlot.TryGetValue(a.Slot, out var p) && Interpolates(p, a))
             {
                 root = FieldTransform(p.World).InterpolateWith(root, Alpha);
                 if (p.Bones.Count == a.Bones.Count)

@@ -150,7 +150,7 @@ public partial class DebugView : Control
         {
             var w = c.World;
             b.AppendLine();
-            b.AppendLine($"state API      snapshot {c.Update}, interpolation {v.Alpha:F2}{(v.Error.Length > 0 ? ", " + v.Error : "")}");
+            b.AppendLine($"state API      snapshot {c.Update}, interpolation {v.Alpha:F2}{(v.Cut ? " (cut)" : "")}, {v.Cuts} cuts{(v.Error.Length > 0 ? ", " + v.Error : "")}");
             b.AppendLine($"event          {w.Event}  frame {w.EventFrame}{(w.Battle ? "  BATTLE" : "")}"
                 + $"{(w.PlayerControl ? "  control" : "")}{(w.Paused ? "  paused" : "")}{(w.Fading ? "  fading" : "")}");
             b.AppendLine($"pad            held {c.Input.Held:x4} pressed {c.Input.Pressed:x4} stick {c.Input.StickX},{c.Input.StickY}");
