@@ -39,6 +39,15 @@ public partial class FfxGame : RefCounted
     /// <summary>The state now (G0: updates, game time, map, story progress, ...).</summary>
     public GameState State => new(Node.Call("state").AsGodotDictionary());
 
+    /// <summary>The newest snapshot's update number (-1 none yet).</summary>
+    public long SnapshotUpdate => Node.Call("snapshot_update").AsInt64();
+
+    /// <summary>
+    /// The newest two snapshots, encoded (<c>previous</c>, <c>current</c>), with
+    /// <c>update</c>, <c>age</c> and <c>interval</c> (see <see cref="GameStateView"/>).
+    /// </summary>
+    public Dictionary Snapshots => Node.Call("snapshots").AsGodotDictionary();
+
     /// <summary>A key event; true when the game has a code for the key.</summary>
     public bool KeyInput(InputEventKey e) => Node.Call("key_input", e).AsBool();
 
