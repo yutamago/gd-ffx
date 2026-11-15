@@ -2,11 +2,14 @@
 //! Remaster), as a Godot `GDExtension` (docs/architecture.md).
 //!
 //! - [`platform`]: `GodotPlatform`, ffx-rust's platform seam answered from
-//!   Godot (window events, keyboard, mouse, pads; the null graphics device);
+//!   Godot (window events, keyboard, mouse, pads; the null graphics device;
+//!   the queue of the game's sound mix);
 //! - [`classic`]: the game's maps and characters imported from the
 //!   player's archive (`ffx-import`) in the background;
 //! - [`game`]: `FfxGame`, the node that boots the game from the player's
 //!   own copy and runs it on its own thread at 30 updates a second;
+//! - [`audio`]: `FfxAudioOut`, the node that plays the game's own mix
+//!   through Godot's audio;
 //! - [`snapshots`]: the game-state API's snapshots (ffx-rust's
 //!   `ffx-state`), the newest two, for Godot to interpolate between;
 //! - [`state`]: the few state values the G0 debug view reads;
@@ -15,6 +18,7 @@
 //! Nothing of the game is built in: it is read from the player's folder at
 //! run time.
 
+pub mod audio;
 pub mod classic;
 pub mod game;
 pub mod keys;
