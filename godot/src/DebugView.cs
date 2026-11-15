@@ -62,6 +62,8 @@ public partial class DebugView : Control
             _test = new BesaidTest(timeout, GameSettings.Arg("shot"));
         else if (GameSettings.Flag("selftest-remake"))
             _test = new Remake.RemakeTest(timeout);
+        else if (GameSettings.Flag("selftest-battle"))
+            _test = new BattleTest(timeout, GameSettings.Arg("shot"));
         else if (GameSettings.Flag("selftest-message"))
             _test = new MessageTest(timeout, GameSettings.Arg("shot"));
     }
@@ -430,6 +432,55 @@ public sealed class MessageTest(double timeout, string? shot) : ITest
             return Done(true, $"the subtitle shown natively: \"{text.Replace('\n', ' ')}\" (language {v.Current.World.Language})");
         }
         return null;
+    }
+
+    private bool Done(bool pass, string note)
+    {
+        Note = note;
+        return pass;
+    }
+}
+
+/// <summary>
+/// G3/G4's battle check (<c>--selftest-battle --devsave=7 --battle=3,0,0</c>):
+/// from Besaid the deck's battle starts; its classic battle map and the
+/// characters (party, monsters) come up posed, and the native command menu
+/// shows Tidus's commands named from the kernel tables with the game's cursor
+/// (with <c>--shot=FILE.png</c> under a renderer, a picture).
+/// </summary>
+public sealed class BattleTest(double timeout, string? shot) : ITest
+{
+    private double _total;
+    private double _seen = -1;
+
+    public string Note { get; private set; } = "";
+
+    public bool? Step(FfxGame game, GameState s, GameStateView v, double delta)
+    {
+        _total += delta;
+        if (!s.Running && s.Seconds > 1)
+            return Done(false, $"the game ended: {s.Outcome}");
+        var root = (Engine.GetMainLoop() as SceneTree)?.Root;
+        var menu = root?.FindChild("BattleMenuView", true, false) as BattleMenuView;
+        var view3d = root?.FindChild("StateView3D", true, false) as StateView3D;
+        var c = v.Current;
+        if (_total > timeout)
+            return Done(false, $"timed out: battle {c?.World.Battle}, level {c?.World.Level}, map shown {view3d?.MapLevel}, "
+                + $"models {view3d?.Posed.Models}, menu [{string.Join(", ", menu?.Shown ?? [])}]");
+        if (c == null || menu == null || view3d == null || !c.World.Battle || menu.Shown.Count < 2
+            || view3d.MapLevel != c.World.Level || view3d.Posed.Models < 2)
+            return null;
+        if (_seen < 0)
+            _seen = _total;
+        if (_total - _seen < 0.3)
+            return null;
+        if (shot != null && DisplayServer.GetName() != "headless")
+        {
+            root!.GetViewport().GetTexture().GetImage().SavePng(shot);
+            GD.Print($"ffx selftest: picture {shot}");
+        }
+        return Done(true, $"battle {c.World.Level}: {view3d.Posed.Models} models posed ({view3d.Posed.PosedBones} bones); "
+            + $"the command menu: {string.Join(" | ", menu.Shown)}");
     }
 
     private bool Done(bool pass, string note)

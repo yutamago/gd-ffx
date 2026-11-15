@@ -64,6 +64,13 @@ public partial class FfxGame : RefCounted
     public string DecodeText(byte[] text, string language) =>
         Node.Call("decode_text", text, language).AsString();
 
+    /// <summary>A battle command's, item's or monster ability's name (the battle menu's ids) in <paramref name="language"/>.</summary>
+    public string KernelName(int id, string language) => Node.Call("kernel_name", id, language).AsString();
+
+    /// <summary>Asks the game to start battle <paramref name="field"/>/<paramref name="group"/>/<paramref name="formation"/> as an encounter would.</summary>
+    public bool RequestBattle(int field, int group, int formation) =>
+        Node.Call("request_battle", field, group, formation).AsBool();
+
     /// <summary>Asks the game to load developer save <paramref name="n"/> (1..110) at its next update.</summary>
     public bool RequestDevSave(int n) => Node.Call("request_devsave", n).AsBool();
 

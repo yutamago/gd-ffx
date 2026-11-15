@@ -88,6 +88,17 @@ public partial class GameHost : Node
         }
         // --devsave=N: start at developer save N once the game runs an event
         _devsave = GameSettings.Int("devsave", 0);
+        // --battle=FIELD,GROUP,FORMATION: a battle once the field has the control
+        var battle = GameSettings.Arg("battle");
+        if (!string.IsNullOrEmpty(battle))
+        {
+            var p = battle.Split(',');
+            if (p.Length == 3 && int.TryParse(p[0], out var f) && int.TryParse(p[1], out var g)
+                && int.TryParse(p[2], out var fo))
+                _battle = (f, g, fo);
+            else
+                GD.PrintErr("ffx: --battle=FIELD,GROUP,FORMATION");
+        }
     }
 
     private void Fail(string why)
@@ -105,6 +116,7 @@ public partial class GameHost : Node
     }
 
     private int _devsave;
+    private (int Field, int Group, int Formation)? _battle;
 
     public override void _Process(double delta)
     {
@@ -118,6 +130,13 @@ public partial class GameHost : Node
             Game.RequestDevSave(_devsave);
             GD.Print($"ffx: developer save {_devsave} asked");
             _devsave = 0;
+        }
+        if (_battle is { } b && _devsave == 0 && View.Current is { World.PlayerControl: true, World.Battle: false } f2
+            && f2.Update > 60)
+        {
+            Game.RequestBattle(b.Field, b.Group, b.Formation);
+            GD.Print($"ffx: battle {b.Field},{b.Group},{b.Formation} asked");
+            _battle = null;
         }
         foreach (var r in Game.RequestResults())
             GD.Print($"ffx: request: {r}");

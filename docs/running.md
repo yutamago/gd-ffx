@@ -85,6 +85,10 @@ Godot's takes longer than 0.2 s).
 
 ## Headless (Linux, tests)
 
+`--selftest-battle --devsave=7 --battle=3,0,0` (G3/G4): the battle with its
+classic map, the characters posed and the native command menu with the
+game's command names and cursor.
+
 `--selftest-message --devsave=6` (G4): the arrival's first subtitle shown
 in a native message box, decoded (`--shot=FILE.png` under Xvfb).
 

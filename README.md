@@ -38,8 +38,8 @@ More: [docs/architecture.md](docs/architecture.md).
 | G0 | ffx-rust as a GDExtension; `GodotPlatform` (window, input); the game runs headless inside Godot at 30 updates a second; a debug view of the state | done |
 | G1 | The game-state API: world, camera, actors, input; snapshots and interpolation; C# bindings | done |
 | G2 | The classic importer (maps, models, textures, animations, cameras) and the first playable map | done: Besaid beach from the archive, characters posed by the game, walkable to the next map |
-| G3 | Sound through Godot's audio engine; effects; battles with classic content | |
-| G4 | Native Godot UI for the menus | in progress: message boxes (dialogue, subtitles, choices) native, decoded from the game's text; menus next |
+| G3 | Sound through Godot's audio engine; effects; battles with classic content | in progress: the game's mix through Godot; battles start (`--battle`), with the classic battle map and characters; effects not yet |
+| G4 | Native Godot UI for the menus | in progress: native message boxes (dialogue, subtitles, choices) and the battle command menu (the game's names and cursor); the field menu and save screens drawn as simple panels |
 | G5 | The whole game with classic content on Windows, Linux, the Steam Deck, macOS | |
 | G6 | Remake tooling: replacement by id, editor workflow, mod packs, launcher | groundwork: remade maps and characters replace classic ones by the game's ids, mod packs in a load order (docs/remake.md) |
 
