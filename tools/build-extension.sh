@@ -3,6 +3,9 @@
 # project in godot/ (docs/building.md).
 #
 #   tools/build-extension.sh [linux|windows] [build|clippy|test] [cargo args...]
+#   tools/build-extension.sh args     the cargo arguments it would pass (the
+#                                     ffx-rust [patch] entries, the features),
+#                                     one per line (tools/export.sh's notices)
 #
 # linux    rust/target/release/libffx_gd.so (the default on Linux)
 # windows  rust/target/x86_64-pc-windows-msvc/release/ffx_gd.dll, cross-built
@@ -25,6 +28,13 @@
 # CARGO_TARGET_DIR  as with cargo (tools/export.sh builds into rust/target/export).
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/.." && pwd)"
+# cargo's --config, RUSTFLAGS and the C flags split on spaces
+for p in "$repo" "$HOME" "${FFX_RUST_DIR:-}" "${CARGO_TARGET_DIR:-}"; do
+    if [[ "$p" == *" "* ]]; then
+        echo "build-extension.sh: a path with spaces is not supported: '$p'" >&2
+        exit 2
+    fi
+done
 platform=linux
 [[ "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* ]] && platform=windows
 if [[ "${1:-}" == linux || "${1:-}" == windows ]]; then
@@ -32,7 +42,7 @@ if [[ "${1:-}" == linux || "${1:-}" == windows ]]; then
     shift
 fi
 cmd=build
-if [[ "${1:-}" == build || "${1:-}" == clippy || "${1:-}" == test ]]; then
+if [[ "${1:-}" == build || "${1:-}" == clippy || "${1:-}" == test || "${1:-}" == args ]]; then
     cmd=$1
     shift
 fi
@@ -48,6 +58,10 @@ case "${FFX_GD_FEATURES-}" in
     none) args+=(--no-default-features) ;;
     *) args+=(--no-default-features --features "$FFX_GD_FEATURES") ;;
 esac
+if [[ "$cmd" == args ]]; then
+    [[ ${#args[@]} -gt 1 ]] && printf '%s\n' "${args[@]:1}"
+    exit 0
+fi
 cd "$repo/rust"
 shims="$repo/rust/target/host-shims"
 mkdir -p "$shims"
