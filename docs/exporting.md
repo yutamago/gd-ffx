@@ -5,9 +5,14 @@ gd-ffx exports as a standalone program for Windows x86_64 and Linux x86_64
 but does need their own copy of the game.
 
 ```bash
-tools/export.sh [linux|windows|all]                     # a development export (see "Licences")
-FFX_GD_FEATURES=none tools/export.sh all                # an export without Unicorn
+tools/capped.sh tools/export.sh [linux|windows|all]     # a development export (see "Licences")
+FFX_GD_FEATURES=none tools/capped.sh tools/export.sh all   # an export without Unicorn
 ```
+
+Exports are heavy (two release builds of ffx-rust and Godot's export), so
+run them inside the shared memory cap (`tools/capped.sh`, docs/building.md,
+"Memory"), one at a time. Paths with spaces (the repository, the home folder,
+`FFX_RUST_DIR`) aren't supported: the scripts refuse them.
 
 ## What a player gets
 
@@ -60,7 +65,13 @@ FFX_GAME_DIR=/path/to/game ./build/linux/gd-ffx.x86_64 --headless -- --selftest 
 
 ## What tools/export.sh does
 
-For each platform:
+First, it refuses to export when `godot/` holds files git doesn't track
+(`git status --ignored`). The presets pack every resource under `godot/`,
+so an untracked or ignored file would end up in the export. Only Godot's
+`.godot/`, the generated `.sln`, a `.uid` file holding nothing but a uid,
+and `classic/` (which the presets exclude) are allowed.
+
+Then, for each platform:
 
 1. It builds the extension: a release build into `rust/target/export`
    (`CARGO_TARGET_DIR`), with every build path remapped
@@ -73,10 +84,17 @@ For each platform:
    <Linux|Windows> build/<platform>/<program>`. Godot exits 0 even when a
    step fails, so the script also fails on any `ERROR:` in the log.
 4. It adds `README.txt` and `licences/`.
-5. It checks the result (`tools/export-files.py check`): the files above are
-   there, there are no game files and no imported classic content, the user
-   name and home folder appear nowhere (ASCII or UTF-16), and Unicorn is only
-   in a development export.
+5. It checks the result (`tools/export-files.py check`):
+   - the files above are there;
+   - there are no game files by name (archives, `.bin`, `.dat`, sound banks,
+     saves, ...) and no imported classic content;
+   - nothing of the build machine appears, in ASCII or UTF-16 and
+     case-insensitively: the home folder, the Linux user name or the Windows
+     one (`%USERNAME%` via `cmd.exe` on WSL) as whole words, and any user
+     folder (`/home/<name>/`, `/mnt/c/Users/<name>/`, `\Users\<name>\`).
+     Generic names (Public, Default, and `runner`, the CI builder's home that
+     Godot's official templates carry) pass;
+   - Unicorn is only in a development export.
 
 ### How the extension gets into an export
 
