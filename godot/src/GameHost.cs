@@ -4,7 +4,7 @@ namespace GdFfx;
 
 /// <summary>
 /// The game, for the whole Godot project (an autoload: <c>/root/GameHost</c>).
-/// Boots ffx-rust from the player's game folder (<see cref="GameSettings"/>),
+/// Boots ffx-rust from the player's game folder (<see cref="GameSettings"/>) when <see cref="Start"/> is called (by the launcher, docs/launcher.md),
 /// passes it the window's events and the keyboard, mouse and pads, plays its
 /// sound (<c>FfxAudioOut</c>, unless muted), and
 /// refreshes <see cref="View"/> (the game-state API's snapshots, interpolated)
@@ -43,8 +43,35 @@ public partial class GameHost : Node
         ProcessPriority = -100;
     }
 
+    /// <summary>Whether <see cref="Start"/> ran (the game booted, or failed to).</summary>
+    public bool Started { get; private set; }
+
     public override void _Ready()
     {
+        // the launcher (the project's main scene) calls Start; any other scene run directly
+        // (scenes/main.tscn from the editor) gets the game once it is ready
+        CallDeferred(MethodName.StartUnlessLauncher);
+    }
+
+    private void StartUnlessLauncher()
+    {
+        if (!Started && GetTree().CurrentScene is not Launcher.Launcher)
+            Start();
+    }
+
+    /// <summary>
+    /// Mounts the mod packs (<see cref="Remake.ModLoader.MountAll"/>) and boots the game, once:
+    /// from <paramref name="gameDir"/> (the launcher's folder) or <see cref="GameSettings.GameDir"/>,
+    /// at developer save <paramref name="devsave"/> or <c>--devsave=N</c>. Call it before
+    /// <c>scenes/main.tscn</c> loads, so packs can replace its files. With <c>--no-game</c> the
+    /// game is not booted.
+    /// </summary>
+    public void Start(string? gameDir = null, int devsave = 0)
+    {
+        if (Started)
+            return;
+        Started = true;
+        Remake.ModLoader.MountAll();
         try
         {
             Game = new FfxGame();
@@ -65,12 +92,16 @@ public partial class GameHost : Node
         SendWindow();
         GetViewport().SizeChanged += SendWindow;
         if (GameSettings.Flag("no-game"))
+        {
+            GD.Print("ffx: started without the game (--no-game)");
             return;
-        var gameDir = GameSettings.GameDir();
+        }
+        if (string.IsNullOrEmpty(gameDir))
+            gameDir = GameSettings.GameDir();
         var documents = GameSettings.DocumentsDir();
         if (string.IsNullOrEmpty(gameDir))
         {
-            Fail("No game folder: set FFX_GAME_DIR, pass --game-dir=PATH after --, "
+            Fail("No game folder: choose one in the launcher, set FFX_GAME_DIR, pass --game-dir=PATH after --, "
                 + "or set ffx/game/game_dir in the project settings (docs/running.md).");
             return;
         }
@@ -87,7 +118,7 @@ public partial class GameHost : Node
                 GD.PrintErr($"ffx: no classic content: {Game.LastError}");
         }
         // --devsave=N: start at developer save N once the game runs an event
-        _devsave = GameSettings.Int("devsave", 0);
+        _devsave = devsave > 0 ? devsave : GameSettings.Int("devsave", 0);
         // --battle=FIELD,GROUP,FORMATION: a battle once the field has the control
         var battle = GameSettings.Arg("battle");
         if (!string.IsNullOrEmpty(battle))
