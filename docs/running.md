@@ -51,7 +51,19 @@ From the opening, B (Start) goes to the title: the map changes from `0x015d`
 to `0x0017`.
 
 The game's own picture is not drawn: it runs with ffx-rust's null graphics
-device and silent sound; what Godot shows comes from the game-state API.
+device; what Godot shows comes from the game-state API.
+
+## Sound
+
+The game's own mix (ffx-rust's FMOD mixer) plays through Godot's audio, on
+the Master bus, about a quarter of a second behind the game. To turn it off:
+
+- `--mute` on the command line, after `--`;
+- or the project setting `ffx/audio/enabled` = false.
+
+Muted, the game still mixes its sound on the wall clock (as ffx-rust does
+without a device) and drops it. The debug overlay's `sound` line shows the
+seconds played, the frames queued and the underruns.
 
 ## Headless (Linux, tests)
 
@@ -59,7 +71,8 @@ device and silent sound; what Godot shows comes from the game-state API.
 FFX_GAME_DIR=/path/to/game tools/selftest.sh [--timeout SECONDS]
 ```
 
-Godot runs headless (no window, no sound), boots the game, checks that the
+Godot runs headless (no window; its audio is the dummy driver, so the
+game's sound is fed and drained but never heard), boots the game, checks that the
 game-state API's snapshots come and decode, waits for the party at the fire
 in the opening (at least three party members shown, posed by their
 skeletons, and the camera), presses Start through Godot's input and

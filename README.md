@@ -46,7 +46,8 @@ More: [docs/architecture.md](docs/architecture.md).
 Nothing of the game's own art is drawn yet: Godot shows the game's camera
 and its characters as markers and skeletons, driven by the game-state API
 at the display's frame rate, with a debug overlay of the live state. Your
-keyboard, mouse and pads go to the game.
+keyboard, mouse and pads go to the game, and the game's own sound mix plays
+through Godot's audio.
 
 ## Building and running
 

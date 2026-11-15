@@ -27,7 +27,7 @@ goes through one trait, `ffx_host::platform::Platform` (ffx-rust's
 | window | windowed: the game's window procedure gets its `WM_CREATE`, then `WM_SIZE`, `WM_ACTIVATE` and `WM_CLOSE` from Godot's window events (queued on Godot's main thread, drained by the game's message pump). `WM_CLOSE` ends the run. |
 | graphics | ffx-rust's null device: the game's D3D11 calls are answered and dropped. No original picture is drawn in Godot. |
 | input | the system keyboard (DirectInput scan codes, from Godot's physical keys) and mouse (`DIMOUSESTATE2`), Godot's joypads as XInput pads (listed as game controllers with an XInput vendor and product, so the game adds them as XInput devices). Without the focus the keyboard and mouse fail with `DIERR_INPUTLOST`, as the original's foreground devices do. |
-| sound | silent (G3 sends the game's sound requests to Godot's audio). |
+| sound | the game's own mix, pulled by Godot (G3 step 1, below): `audio_push` appends ffx-rust's blocks to a queue in `Bridge`, `audio_queued` and `audio_underruns` report it, `audio_running` is true once the game started its output and Godot's player is attached. |
 | Steam | absent. |
 | documents | gd-ffx's own sandbox, passed to the boot. |
 
@@ -49,6 +49,39 @@ The start-up logos are the remaster's `OpeningScreen.swf`; their end comes
 from the Flash movie's `Finish` callback, which a build without Ruffle never
 gets. gd-ffx always sets ffx-rust's `Options::skip_opening`, which ends them
 on their first frame (Godot shows its own picture).
+
+## Sound (G3 step 1)
+
+The mix is ffx-rust's: its FMOD mixer, sample for sample, 48,000 Hz
+interleaved stereo f32 in blocks of 1,600 frames (ffx-rust's `docs/host.md`,
+"A Godot frontend", "Audio pull"). Godot only plays it.
+
+- **The queue** (`AudioQueue` in `rust/ffx-gd/src/platform.rs`, behind one
+  mutex) is kept as ffx-rust's WASAPI output keeps its own
+  (`rust_audio_out.rs`): at most half a second (24,000 frames), the oldest
+  dropped; nothing goes out until 4,800 frames (100 ms) are queued, and
+  again after an underrun.
+- **The feeder** (ffx-rust's, on the game's side) mixes a block whenever
+  `audio_queued` falls under 6,400 frames, while `audio_running` is true;
+  otherwise it follows the wall clock and the blocks are dropped. The
+  output runs only once Godot's player is attached, so a muted frontend
+  (or one without a player) never fills a queue nobody drains.
+- **The player** (`FfxAudioOut`, `rust/ffx-gd/src/audio.rs`, a node of the
+  extension) is an `AudioStreamPlayer` with an `AudioStreamGenerator`
+  (mix rate 48,000, Godot resamples to the output's rate). Each frame it
+  tops the generator's buffer up to 0.1 s (`get_frames_available`,
+  `push_buffer`); the queue counts an underrun when it has fewer frames
+  than the player asks for. The node runs while the tree is paused.
+  About a quarter of a second lies between the mixer and the speakers
+  (the queue's 6,400 frames and the generator's 4,800).
+- `GameHost` adds the player before it starts the game, unless muted
+  (`--mute`, or the project setting `ffx/audio/enabled` false). Headless,
+  Godot's audio is its dummy driver: the player is fed and drained at the
+  real rate and nothing is heard.
+
+The game's sound requests (G3's later steps: music and effects as Godot
+streams, positional sound) are not routed yet: Godot plays the finished
+mix.
 
 ## The game-state API (G1)
 
