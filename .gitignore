@@ -19,8 +19,13 @@
 # imported classic content (made from the player's copy on their machine)
 /godot/classic/
 
+# exports (tools/export.sh)
+/build/
+
 # Godot
 /godot/.godot/
+# made by the editor (or tools/export.sh: a .NET export needs one)
+/godot/*.sln
 /godot/android/
 *.pck
 *.tmp
