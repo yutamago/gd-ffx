@@ -47,7 +47,8 @@ Godot shows the game's own maps and characters, imported on your machine
 from your copy (docs/importer.md), posed and placed by the game through the
 game-state API at the display's frame rate, with the game's camera and a
 debug overlay of the live state. Your keyboard, mouse and pads go to the
-game. Menus, text boxes, effects and sound are still to come.
+game, and the game's own sound mix plays through Godot's audio. Menus, text
+boxes and effects are still to come.
 
 ## Building and running
 

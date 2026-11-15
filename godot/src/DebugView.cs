@@ -92,12 +92,12 @@ public partial class DebugView : Control
         if (s.Seconds - _lastLog >= 5.0)
         {
             _lastLog = s.Seconds;
-            GD.Print($"ffx: {OneLine(s, _rate)}  {SnapshotLine(host.View)}");
+            GD.Print($"ffx: {OneLine(s, _rate)}  {SnapshotLine(host.View)}  {AudioLine(s)}");
         }
         if (_test.Step(host.Game, s, host.View, delta) is { } pass)
         {
             GD.Print(pass ? $"ffx selftest: PASS ({_test.Note})" : $"ffx selftest: FAIL ({_test.Note})");
-            GD.Print($"ffx: {OneLine(s, _rate)}");
+            GD.Print($"ffx: {OneLine(s, _rate)}  {AudioLine(s)}");
             host.Game.Stop();
             GetTree().Quit(pass ? 0 : 1);
             _test = null;
@@ -110,6 +110,12 @@ public partial class DebugView : Control
         $"{s.Seconds,6:F1} s  updates {s.Updates} ({rate:F1}/s)  game time {s.GameTime:F2} s  "
         + $"map {Hex(s.Map, 4)} (from {Hex(s.PreviousMap, 4)}, entrance {s.Entrance})  "
         + $"story {s.Story}  event frame {s.EventFrame}";
+
+    public static string AudioLine(GameState s) =>
+        s.AudioRunning
+            ? $"audio {s.AudioPulled / 48000.0:F1} s played, {s.AudioQueued} frames queued, "
+                + $"{s.AudioUnderruns} underruns, {s.AudioSkips} skips"
+            : "audio off";
 
     public static string SnapshotLine(GameStateView v)
     {
@@ -134,6 +140,7 @@ public partial class DebugView : Control
         b.AppendLine($"game time      {s.GameTime:F3} s");
         b.AppendLine($"map            {Hex(s.Map, 4)}   {MapName(s.Map)}  (from {Hex(s.PreviousMap, 4)})");
         b.AppendLine($"story          {s.Story}");
+        b.AppendLine($"sound          {AudioLine(s)}");
         b.AppendLine($"focus          {(s.Focused ? "yes" : "no (the game reads no keys)")}");
         b.AppendLine($"keys held      {string.Join(" ", s.Keys.Select(k => k.ToString("x2")))}");
         foreach (var m in s.MessageBoxes)
@@ -174,7 +181,8 @@ public partial class DebugView : Control
 /// snapshots come and decode; at the campfire (the opening, its event a
 /// few seconds in) the party is shown, posed by their skeletons, and the
 /// camera is there; then a Start press through Godot's input reaches the
-/// game and it goes to the title.
+/// game and it goes to the title; unless muted, the game's sound has reached
+/// Godot's player by then.
 /// </summary>
 public interface ITest
 {
@@ -236,9 +244,12 @@ public sealed class SelfTest(double timeout) : ITest
                 Key(false);
                 Next(Phase.Title);
                 break;
+            // the game's sound reached Godot's player (unless muted)
+            case Phase.Title when s.Map == DebugView.MapTitle && GameSettings.AudioEnabled() && s.AudioPulled == 0:
+                return Done(false, $"at the title, but Godot's player got no sound ({DebugView.AudioLine(s)})");
             case Phase.Title when s.Map == DebugView.MapTitle:
-                return Done(true, $"{_fire}; the opening went to the title after {_presses} Start press(es); "
-                    + $"{s.Updates} updates in {s.Seconds:F1} s, {v.Decoded} snapshots decoded");
+                return Done(true,$"{_fire}; the opening went to the title after {_presses} Start press(es); "
+                    + $"{s.Updates} updates in {s.Seconds:F1} s, {v.Decoded} snapshots decoded; {DebugView.AudioLine(s)}");
             case Phase.Title when _phaseTime > 5 && _presses < 5:
                 Next(Phase.Press);
                 break;

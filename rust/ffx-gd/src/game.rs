@@ -31,6 +31,12 @@ fn classic() -> &'static crate::classic::Classic {
     C.get_or_init(crate::classic::Classic::default)
 }
 
+/// The process's bridge (made by whichever side comes first: the start,
+/// Godot's window events, the audio player).
+pub(crate) fn process_bridge() -> Arc<Bridge> {
+    Arc::clone(BRIDGE.get_or_init(|| Arc::new(Bridge::default())))
+}
+
 /// The game thread's stack (the game's main thread runs on it).
 const STACK: usize = 64 << 20;
 
@@ -63,6 +69,8 @@ impl Run {
             return;
         };
         self.bridge.close();
+        // the sound ends with the game (also when it is left running)
+        self.bridge.audio.stop();
         let until = Instant::now() + limit;
         let half = Instant::now() + limit / 2;
         let mut asked = false;
@@ -253,7 +261,7 @@ impl FfxGame {
         if let Err(e) = std::fs::create_dir_all(&documents) {
             return self.fail(&format!("documents folder {}: {e}", documents.display()));
         }
-        let bridge = Arc::clone(BRIDGE.get_or_init(|| Arc::new(Bridge::default())));
+        let bridge = process_bridge();
         let platform = GodotPlatform::new(Arc::clone(&bridge));
         if ffx_host::platform::install(Box::new(platform)).is_err()
             && ffx_host::platform::get().name() != "godot"
@@ -265,11 +273,14 @@ impl FfxGame {
         let boot = Boot { exe, documents };
         let thread = {
             let (shared, outcome) = (Arc::clone(&shared), Arc::clone(&outcome));
+            let bridge = Arc::clone(&bridge);
             std::thread::Builder::new()
                 .name("ffx-game".into())
                 .stack_size(STACK)
                 .spawn(move || {
                     let r = run_game(&boot, &shared, &outcome);
+                    // no stale tail, no underruns for the silence after
+                    bridge.audio.stop();
                     eprintln!("ffx: the game ended: {r}");
                     if let Ok(mut o) = outcome.lock() {
                         *o = Some(r);
@@ -316,7 +327,10 @@ impl FfxGame {
     /// `seconds` (wall time since the start), `updates`, `flips`,
     /// `game_time`, `map`, `previous_map`, `entrance`, `story`,
     /// `event_frame`, `keys` (the scan codes held), `focused`,
-    /// `message_boxes`.
+    /// `message_boxes`, and the sound's `audio_running`, `audio_queued`
+    /// (frames), `audio_underruns` (the queue ran dry), `audio_skips`
+    /// (Godot's player ran empty: gaps heard), `audio_pulled` (frames
+    /// played).
     #[func]
     fn state(&self) -> VarDictionary {
         let Some(run) = &self.run else {
@@ -329,6 +343,13 @@ impl FfxGame {
             "seconds" => run.started.elapsed().as_secs_f64(),
             "focused" => run.bridge.focused(),
         };
+        let audio = run.bridge.audio.stats();
+        let int = |v: u64| i64::try_from(v).unwrap_or(i64::MAX);
+        d.set("audio_running", audio.running);
+        d.set("audio_queued", int(audio.queued as u64));
+        d.set("audio_underruns", int(audio.underruns));
+        d.set("audio_skips", int(audio.skips));
+        d.set("audio_pulled", int(audio.pulled));
         if let Some(s) = run.shared() {
             let snap = crate::state::snapshot(&s);
             d.set("updates", i64::from(snap.updates));
@@ -551,7 +572,7 @@ impl FfxGame {
     fn bridge(&self) -> Arc<Bridge> {
         match &self.run {
             Some(run) => Arc::clone(&run.bridge),
-            None => Arc::clone(BRIDGE.get_or_init(|| Arc::new(Bridge::default()))),
+            None => process_bridge(),
         }
     }
 
