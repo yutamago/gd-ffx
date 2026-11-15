@@ -1,0 +1,15 @@
+Unicorn (development export only)
+==================================
+
+This export is a DEVELOPMENT build (tools/export.sh without
+FFX_GD_FEATURES=none): its extension library (libffx_gd.so / ffx_gd.dll)
+links the Unicorn CPU emulator (the unicorn-engine and unicorn-engine-sys
+crates, GPL-2.0; https://www.unicorn-engine.org), which runs the game code
+that ffx-rust has no Rust port of yet. Its licence, the GNU General Public
+License version 2, is in unicorn-COPYING beside this file; the source of the
+version linked here is the unicorn-engine-sys crate of the version named in
+THIRD-PARTY.txt, on crates.io.
+
+Because of the GPL, this export must not be distributed as gd-ffx
+(MIT OR Apache-2.0). An export for others is built with
+FFX_GD_FEATURES=none (docs/exporting.md).

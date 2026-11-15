@@ -109,7 +109,8 @@ cd godot
 
 A development build, for your own use (it contains Unicorn, GPL, for the
 game functions ffx-rust has not ported yet; a build to share comes with
-G5):
+G5). Without the editor: `tools/export.sh windows` builds a standalone
+program in `build/windows/` (docs/exporting.md).
 
 1. From WSL: `tools/build-extension.sh windows` (the DLL) and
    `cd godot && dotnet.exe build` (the C# assembly).

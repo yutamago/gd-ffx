@@ -1,7 +1,8 @@
 # gd-ffx
 
 Godot 4 (.NET/C#) frontend for ffx-rust. Plan: ffx-rust's `docs/godot-plan.md`;
-here: `docs/architecture.md`, `docs/building.md`, `docs/running.md`.
+here: `docs/architecture.md`, `docs/building.md`, `docs/running.md`,
+`docs/exporting.md`.
 
 ## Rules
 
@@ -32,4 +33,11 @@ FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/selftest.sh    # headless check (open
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-besaid --devsave=7)   # G2 check
 (cd godot && dotnet build)
 (cd rust && cargo run -p ffx-state-cs)                    # regenerate the C# state bindings after an ffx-state change
+tools/export.sh [linux|windows|all]                       # standalone program in build/<platform>/ (docs/exporting.md)
+FFX_GD_FEATURES=none tools/export.sh all                  # without Unicorn: the only kind to give to others
+FFX_GAME_DIR=... build/linux/gd-ffx.x86_64 --headless -- --selftest --documents=/tmp/gd-ffx-docs   # the export's check
 ```
+
+An export with the default features (dev-unicorn) contains Unicorn (GPL-2.0):
+never distribute it. Exports need Godot's .NET export templates
+(docs/exporting.md).
