@@ -86,3 +86,25 @@ Open `godot/project.godot` in the Godot .NET editor to work on it.
 
 To build a standalone program (Godot's export, with the extension and the
 .NET runtime), use `tools/export.sh`: see docs/exporting.md.
+
+## Memory
+
+Builds of ffx-rust, the game runs and the exports are heavy; on the
+development machine (WSL2) running out of memory and swap crashes the whole
+WSL instance. Heavy commands run through `tools/capped.sh`, inside one
+systemd user slice that caps them together:
+
+```ini
+# ~/.config/systemd/user/gdffx.slice
+[Unit]
+Description=gd-ffx / ffx-rust builds, tests and game runs (shared memory cap)
+
+[Slice]
+MemoryHigh=22G
+MemoryMax=24G
+MemorySwapMax=2G
+```
+
+`systemctl --user daemon-reload`, then `tools/capped.sh <command>`. The cap
+is about half of a 47 GB machine, leaving room for everything else (the
+machine stays under 80 %); scale it to yours.

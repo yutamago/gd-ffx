@@ -23,6 +23,13 @@ here: `docs/architecture.md`, `docs/building.md`, `docs/running.md`,
   unchanged.
 - Running the game counts as playing: headless/background only, no visible
   windows unless the user asks. Kill processes by exact PID.
+- Memory: never above 80 % of the machine's (WSL crashes when memory and
+  swap run out). Every heavy command (cargo builds and tests, Godot runs,
+  exports) goes through `tools/capped.sh`: one shared systemd user slice,
+  `gdffx.slice` (MemoryMax 24G, swap 2G; docs/building.md "Memory"), cargo
+  at 8 jobs. Run at most two heavy jobs at once.
+- Storage is limited: remove worktrees and branches once merged, downloads
+  once installed, temp folders after tests; never ones still in use.
 
 ## Commands
 
