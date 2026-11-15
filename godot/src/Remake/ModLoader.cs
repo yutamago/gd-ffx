@@ -92,6 +92,8 @@ public partial class ModLoader : Node
             GD.PrintErr($"ffx: mods: cannot load {file}");
             return false;
         }
+        // the pack may bring or replace convention files
+        RemakeRegistry.Invalidate();
         var fragment = $"res://mods/{name}/remake.json";
         var n = RemakeRegistry.LoadJson(fragment, name);
         Mounted.Add(new Pack(name, file, Math.Max(n, 0)));
@@ -102,15 +104,20 @@ public partial class ModLoader : Node
     /// <summary>
     /// The load order of a folder's packs: those named in <paramref name="loadOrder"/> (one
     /// file name a line; blank lines and <c>#</c> comments skipped; a name without
-    /// <c>.pck</c> gets it) in that order, then the others alphabetically (ordinal). Later
-    /// packs win. <paramref name="missing"/>: names listed but not there.
+    /// <c>.pck</c> gets it; names match in any case) in that order, then the others
+    /// alphabetically (ordinal). Later packs win. <paramref name="missing"/>: names listed but
+    /// not there.
     /// </summary>
     public static List<string> Order(IEnumerable<string> files, string? loadOrder, out List<string> missing)
     {
-        var packs = files
+        var all = files
             .Select(f => System.IO.Path.GetFileName(f))
             .Where(f => f.EndsWith(".pck", StringComparison.OrdinalIgnoreCase))
-            .ToHashSet(StringComparer.Ordinal);
+            .ToList();
+        // a listed name → the file (the first in ordinal order when two differ only in case)
+        var byName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var f in all.OrderBy(f => f, StringComparer.Ordinal))
+            byName.TryAdd(f, f);
         var result = new List<string>();
         missing = new List<string>();
         foreach (var raw in (loadOrder ?? "").Split('\n'))
@@ -120,14 +127,12 @@ public partial class ModLoader : Node
                 continue;
             if (!line.EndsWith(".pck", StringComparison.OrdinalIgnoreCase))
                 line += ".pck";
-            if (result.Contains(line))
-                continue;
-            if (packs.Contains(line))
-                result.Add(line);
-            else
+            if (!byName.TryGetValue(line, out var file))
                 missing.Add(line);
+            else if (!result.Contains(file))
+                result.Add(file);
         }
-        result.AddRange(packs.Where(p => !result.Contains(p)).OrderBy(p => p, StringComparer.Ordinal));
+        result.AddRange(all.Where(p => !result.Contains(p)).OrderBy(p => p, StringComparer.Ordinal));
         return result;
     }
 }

@@ -44,6 +44,9 @@ public static class RemakeRegistry
         Cache.Clear();
     }
 
+    /// <summary>Forgets the convention's lookups (files under <c>res://</c> changed: a pack was mounted).</summary>
+    internal static void Invalidate() => Cache.Clear();
+
     /// <summary>Removes the explicit entry for an id (the convention applies again).</summary>
     public static void Unregister(string kind, string id)
     {
@@ -112,9 +115,13 @@ public static class RemakeRegistry
         }
     }
 
-    /// <summary>Applies a registry's text (see <see cref="LoadJson"/>); the entries read.</summary>
+    /// <summary>
+    /// Applies a registry's text (see <see cref="LoadJson"/>); the entries read. All or
+    /// nothing: a bad entry throws before any is registered.
+    /// </summary>
     public static int ApplyJson(string text, string source)
     {
+        var entries = new List<(string Kind, string Id, string Scene)>();
         using var doc = JsonDocument.Parse(text, new JsonDocumentOptions
         {
             CommentHandling = JsonCommentHandling.Skip,
@@ -122,7 +129,6 @@ public static class RemakeRegistry
         });
         if (doc.RootElement.ValueKind != JsonValueKind.Object)
             throw new JsonException("the registry is not an object of kinds");
-        int n = 0;
         foreach (var kind in doc.RootElement.EnumerateObject())
         {
             if (kind.Value.ValueKind != JsonValueKind.Object)
@@ -135,10 +141,11 @@ public static class RemakeRegistry
                     JsonValueKind.Null => "",
                     _ => throw new JsonException($"{kind.Name} {id.Name}: not a scene path"),
                 };
-                Register(kind.Name, id.Name, scene, source);
-                n++;
+                entries.Add((kind.Name, id.Name, scene));
             }
         }
-        return n;
+        foreach (var (kind, id, scene) in entries)
+            Register(kind, id, scene, source);
+        return entries.Count;
     }
 }

@@ -126,7 +126,7 @@ public partial class StateView3D : Node3D
         _wantedLevel = level;
         if (ContentResolver.Resolve(lib, "map", level) is not { } content)
             return;
-        var map = content.Load();
+        var map = content.Node;
         _map?.QueueFree();
         _map = map;
         _mapLevel = level;
@@ -203,7 +203,7 @@ public partial class StateView3D : Node3D
     private static void AttachModel(ActorNode n, string name, Content content)
     {
         n.ModelName = name;
-        var model = content.Load();
+        var model = content.Node;
         if (model == null)
             return;
         model.Name = "Model";

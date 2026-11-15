@@ -31,9 +31,9 @@ public static class ModSelfTest
         // 1. the order alone
         var order = ModLoader.Order(
             ["gamma.pck", "alpha.pck", "beta.pck", "notes.txt", "Zeta.PCK"],
-            "# mine first\nbeta\n\nalpha.pck\nmissing.pck\nbeta.pck\n", out var missing);
+            "# mine first\nBETA\n\nalpha.pck\nmissing.pck\nbeta.pck\nzeta.pck\n", out var missing);
         Check(order.SequenceEqual(["beta.pck", "alpha.pck", "Zeta.PCK", "gamma.pck"]),
-            $"load order: {string.Join(", ", order)} (listed first, then the rest alphabetically)");
+            $"load order: {string.Join(", ", order)} (listed first, names in any case, then the rest alphabetically)");
         Check(missing.SequenceEqual(["missing.pck"]), $"listed but missing: {string.Join(", ", missing)}");
         var none = ModLoader.Order(["b.pck", "a.pck"], null, out _);
         Check(none.SequenceEqual(["a.pck", "b.pck"]), $"without load_order.txt: {string.Join(", ", none)}");
@@ -55,11 +55,18 @@ public static class ModSelfTest
                 return p;
             }
             var sceneSrc = Src("stand_in.tscn", scene);
+            const string rootLine = "[node name=\"StandInCharacter\" type=\"Node3D\"";
+            var at = scene.IndexOf('\n', scene.IndexOf(rootLine, System.StringComparison.Ordinal));
+            var movedSrc = Src("moved.tscn", scene.Insert(at + 1, "transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -5, 0)\n"));
             Build(System.IO.Path.Combine(mods, "alpha.pck"), new()
             {
                 ["res://mods/alpha/remake.json"] = Src("alpha.json",
-                    "{ \"chr\": { \"c999\": \"res://mods/alpha/stand_in.tscn\" },\n  \"map\": { \"/map/zzzz/zzzz00/\": \"res://mods/alpha/stand_in.tscn\" } }"),
+                    "{ \"chr\": { \"c999\": \"res://mods/alpha/stand_in.tscn\", \"c995\": \"res://mods/alpha/moved.tscn\",\n"
+                    + "    \"c994\": \"res://mods/alpha/control.tscn\", \"c993\": \"res://mods/alpha/remake.json\" },\n"
+                    + "  \"map\": { \"/map/zzzz/zzzz00/\": \"res://mods/alpha/stand_in.tscn\" } }"),
                 ["res://mods/alpha/stand_in.tscn"] = sceneSrc,
+                ["res://mods/alpha/moved.tscn"] = movedSrc,
+                ["res://mods/alpha/control.tscn"] = Src("control.tscn", "[gd_scene format=3]\n\n[node name=\"NotA3DScene\" type=\"Control\"]\n"),
                 ["res://mods/selftest_shared.txt"] = Src("alpha.txt", "alpha"),
             });
             Build(System.IO.Path.Combine(mods, "beta.pck"), new()
@@ -74,7 +81,7 @@ public static class ModSelfTest
             {
                 ["res://remake/chr/c998.tscn"] = sceneSrc,
             });
-            System.IO.File.WriteAllText(System.IO.Path.Combine(mods, ModLoader.LoadOrderFile), "beta.pck\nalpha.pck\n");
+            System.IO.File.WriteAllText(System.IO.Path.Combine(mods, ModLoader.LoadOrderFile), "Beta.PCK\nalpha\n");
 
             var mounted = ModLoader.LoadDir(mods);
             Check(mounted == 3, $"{mounted} packs mounted from a --mods folder");
@@ -99,13 +106,37 @@ public static class ModSelfTest
             foreach (var id in new[] { "c999", "c998" })
             {
                 var content = ContentResolver.Resolve(null, "chr", id);
-                var inst = content?.Load();
+                var inst = content?.Node;
                 var skel = inst?.FindChildren("*", nameof(Skeleton3D), true, false).FirstOrDefault() as Skeleton3D;
                 Check(content is { Remade: true } && inst != null && skel != null && skel.FindBone("SkeletonNode_0") >= 0
                     && inst.GetMeta("ffx_source").AsString() == "remade",
                     $"chr {id} resolves to a remade scene with a SkeletonNode_ skeleton ({content?.Path})");
                 inst?.Free();
             }
+
+            // the scene's root keeps its own transform inside the wrapper
+            var moved = ContentResolver.Resolve(null, "chr", "c995");
+            var movedRoot = moved?.Node?.GetChildOrNull<Node3D>(0);
+            Check(moved is { Remade: true } && movedRoot != null && Mathf.IsEqualApprox(movedRoot.Position.Y, -5f),
+                $"a remade scene comes wrapped, its root's transform kept ({movedRoot?.Position})");
+            moved?.Node?.Free();
+            // bad entries fall back to classic (none here), without an exception
+            foreach (var id in new[] { "c994", "c993" })
+            {
+                var bad = ContentResolver.Resolve(null, "chr", id);
+                Check(bad == null, $"chr {id} ({RemakeRegistry.Find("chr", id)}) does not load: classic instead");
+            }
+            // a registry file applies whole or not at all
+            int before = RemakeRegistry.Entries.Count;
+            try
+            {
+                RemakeRegistry.ApplyJson("{ \"chr\": { \"c990\": \"res://x.tscn\", \"c991\": 5 } }", "selftest");
+            }
+            catch (System.Text.Json.JsonException)
+            {
+            }
+            Check(RemakeRegistry.Entries.Count == before && RemakeRegistry.Find("chr", "c990") == null,
+                "a registry file with a bad entry registers nothing");
             notes.Add($"{mounted} packs built with PckPacker and mounted");
         }
         catch (System.Exception e)
