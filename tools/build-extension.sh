@@ -9,14 +9,20 @@
 #          from Linux/WSL with cargo-xwin, as ffx-rust builds ffx-rust.exe
 #          (its tools/build-host.sh): Unicorn's cmake build needs cmake, ninja,
 #          llvm-lib, llvm-ml64 and a toolchain file without
-#          CMAKE_MSVC_RUNTIME_LIBRARY; FFX_RUST_DIR must name an ffx-rust
-#          checkout for its tools/shims and tools/xwin-env.sh.
+#          CMAKE_MSVC_RUNTIME_LIBRARY; ffx-rust's tools/shims and
+#          tools/xwin-env.sh come from FFX_RUST_DIR, else from cargo's checkout
+#          of the ffx-rust revision in rust/Cargo.lock.
 #
 # FFX_RUST_DIR  an ffx-rust checkout to build against instead of the git
 #               dependency (a branch not merged yet, local changes): passed to
 #               cargo as [patch] entries.
 # FFX_GD_FEATURES  cargo features (default: the crate's, i.e. dev-unicorn);
 #               "none" for none (a build without Unicorn: see docs/building.md).
+# FFX_GD_RUSTFLAGS  added to RUSTFLAGS (tools/export.sh: --remap-path-prefix,
+#               so no path of the build machine ends up in an export).
+# FFX_GD_CFLAGS  added to the target's C and C++ flags (the same for C code's
+#               __FILE__: Unicorn's, in a dev-unicorn build).
+# CARGO_TARGET_DIR  as with cargo (tools/export.sh builds into rust/target/export).
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 platform=linux
@@ -43,7 +49,23 @@ case "${FFX_GD_FEATURES-}" in
     *) args+=(--no-default-features --features "$FFX_GD_FEATURES") ;;
 esac
 cd "$repo/rust"
+shims="$repo/rust/target/host-shims"
+mkdir -p "$shims"
+if ! cmake --version >/dev/null 2>&1; then
+    printf '#!/bin/bash\nexec uvx --from cmake cmake "$@"\n' >"$shims/cmake"
+    chmod +x "$shims/cmake"
+fi
 if [[ "$platform" == linux ]]; then
+    # cmake for Unicorn's own build (dev-unicorn, when no prebuilt library is
+    # found through pkg-config: UNICORN_NO_PKG_CONFIG=1, as tools/export.sh sets)
+    export PATH="$shims:$PATH"
+    if [[ -n "${FFX_GD_RUSTFLAGS:-}" ]]; then
+        export RUSTFLAGS="${RUSTFLAGS:-} $FFX_GD_RUSTFLAGS"
+    fi
+    if [[ -n "${FFX_GD_CFLAGS:-}" ]]; then
+        export CFLAGS_x86_64_unknown_linux_gnu="${CFLAGS_x86_64_unknown_linux_gnu:-} $FFX_GD_CFLAGS"
+        export CXXFLAGS_x86_64_unknown_linux_gnu="${CXXFLAGS_x86_64_unknown_linux_gnu:-} $FFX_GD_CFLAGS"
+    fi
     cargo "$cmd" "${args[@]}" "$@"
     [[ "$cmd" == build ]] && echo "built: ${CARGO_TARGET_DIR:-$repo/rust/target}/release/libffx_gd.so"
     exit 0
@@ -51,13 +73,19 @@ fi
 
 # ---- windows: cargo-xwin, as ffx-rust's tools/build-host.sh -------------------
 target=x86_64-pc-windows-msvc
-: "${FFX_RUST_DIR:?the Windows build needs FFX_RUST_DIR (an ffx-rust checkout: its tools/shims and tools/xwin-env.sh)}"
-shims="$repo/rust/target/host-shims"
-mkdir -p "$shims"
-if ! cmake --version >/dev/null 2>&1; then
-    printf '#!/bin/bash\nexec uvx --from cmake cmake "$@"\n' >"$shims/cmake"
-    chmod +x "$shims/cmake"
+# ffx-rust's tools/shims and tools/xwin-env.sh: FFX_RUST_DIR's, else those of
+# cargo's checkout of the locked ffx-rust revision (where ffx-host comes from)
+if [[ -z "${ffx:-}" ]]; then
+    ffx="$(cargo metadata -q --format-version 1 | python3 -I -c '
+import json, pathlib, sys
+m = json.load(sys.stdin)
+p = [p for p in m["packages"] if p["name"] == "ffx-host"]
+print(pathlib.Path(p[0]["manifest_path"]).parents[2] if p else "")')"
 fi
+[[ -x "${ffx:-}/tools/xwin-env.sh" ]] || {
+    echo "build-extension.sh: no ffx-rust tools/xwin-env.sh (${ffx:-ffx-rust not found}); set FFX_RUST_DIR" >&2
+    exit 2
+}
 if ! command -v ninja >/dev/null; then
     printf '#!/bin/bash\nexec uvx --from ninja ninja "$@"\n' >"$shims/ninja"
     chmod +x "$shims/ninja"
@@ -75,6 +103,14 @@ export XWIN_ARCH=x86,x86_64
 toolchain_env=()
 xwin_toolchain="${XDG_CACHE_HOME:-$HOME/.cache}/cargo-xwin/cmake/clang-cl/$target-toolchain.cmake"
 eval "$("$ffx/tools/xwin-env.sh" "$target")"
+# cargo-xwin sets RUSTFLAGS (empty), which wins over the target's rustflags
+if [[ -n "${FFX_GD_RUSTFLAGS:-}" ]]; then
+    export RUSTFLAGS="${RUSTFLAGS:-} $FFX_GD_RUSTFLAGS"
+fi
+if [[ -n "${FFX_GD_CFLAGS:-}" ]]; then
+    export CFLAGS_x86_64_pc_windows_msvc="${CFLAGS_x86_64_pc_windows_msvc:-} $FFX_GD_CFLAGS"
+    export CXXFLAGS_x86_64_pc_windows_msvc="${CXXFLAGS_x86_64_pc_windows_msvc:-} $FFX_GD_CFLAGS"
+fi
 if [[ -f "$xwin_toolchain" ]]; then
     toolchain="$shims/$target-toolchain.cmake"
     grep -v CMAKE_MSVC_RUNTIME_LIBRARY "$xwin_toolchain" |

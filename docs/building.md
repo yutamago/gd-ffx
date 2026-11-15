@@ -50,8 +50,10 @@ tools/build-extension.sh linux test
 ```
 
 The Windows build is cross-built from Linux/WSL with cargo-xwin, the way
-ffx-rust builds `ffx-rust.exe` (its `tools/build-host.sh`); it needs
-`FFX_RUST_DIR` for ffx-rust's toolchain shims.
+ffx-rust builds `ffx-rust.exe` (its `tools/build-host.sh`). It takes
+ffx-rust's toolchain shims (`tools/shims`, `tools/xwin-env.sh`) from
+`FFX_RUST_DIR` when that is set, otherwise from cargo's checkout of the
+ffx-rust revision in `rust/Cargo.lock`.
 
 Always a release build: the game runs inside the extension, and ffx-rust's
 executor is far too slow unoptimised (`rust/Cargo.toml` optimises the
@@ -81,3 +83,6 @@ after that first registration (seen on Linux, no harm: the import is done);
 later runs exit cleanly.
 
 Open `godot/project.godot` in the Godot .NET editor to work on it.
+
+To build a standalone program (Godot's export, with the extension and the
+.NET runtime), use `tools/export.sh`: see docs/exporting.md.
