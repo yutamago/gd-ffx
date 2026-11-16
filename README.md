@@ -38,17 +38,18 @@ More: [docs/architecture.md](docs/architecture.md).
 | G0 | ffx-rust as a GDExtension; `GodotPlatform` (window, input); the game runs headless inside Godot at 30 updates a second; a debug view of the state | done |
 | G1 | The game-state API: world, camera, actors, input; snapshots and interpolation; C# bindings | done |
 | G2 | The classic importer (maps, models, textures, animations, cameras) and the first playable map | done: Besaid beach from the archive, characters posed by the game, walkable to the next map |
-| G3 | Sound through Godot's audio engine; effects; battles with classic content | in progress: the game's mix through Godot; battles start (`--battle`), with the classic battle map and characters; effects not yet |
-| G4 | Native Godot UI for the menus | in progress: native message boxes (dialogue, subtitles, choices) and the battle command menu (the game's names and cursor); the field menu and save screens drawn as simple panels |
-| G5 | The whole game with classic content on Windows, Linux, the Steam Deck, macOS | |
-| G6 | Remake tooling: replacement by id, editor workflow, mod packs, launcher | in progress: remade maps and characters replace classic ones by the game's ids, mod packs in a load order (docs/remake.md); the launcher: game folder, packs switched and ordered, cache (docs/launcher.md) |
+| G3 | Sound through Godot's audio engine; effects; battles with classic content | mostly done: the game's mix through Godot (about 0.11 s behind); battles with the classic battle map, a HUD (HP/MP, turn order, damage numbers); the game's own effects drawn from the geometry it builds each frame, the map's glow; the screen distortion (heat shimmer) in progress |
+| G4 | Native Godot UI for the menus | done for the field: message boxes, the battle command menu, the main menu with the party, items, status, abilities, overdrive and the sphere grid screens, the save and load lists with place names (the game keeps the logic, Godot draws it) |
+| G5 | The whole game with classic content on Windows, Linux, the Steam Deck, macOS | Linux and Windows exports run (Windows checked headless), a Steam Deck quality preset (docs/exporting.md); macOS not built (no Mac toolchain) |
+| G6 | Remake tooling: replacement by id, editor workflow, mod packs, launcher | done as a base: remade maps, characters and effects replace classic ones by the game's ids, mod packs in a load order (docs/remake.md), the launcher (docs/launcher.md); a remade Besaid beach and effect as examples |
 
 Godot shows the game's own maps and characters, imported on your machine
-from your copy (docs/importer.md), posed and placed by the game through the
-game-state API at the display's frame rate, with the game's camera and a
-debug overlay of the live state. Your keyboard, mouse and pads go to the
-game, and the game's own sound mix plays through Godot's audio. Menus, text
-boxes and effects are still to come.
+from your copy (docs/importer.md), lit and coloured with the game's own
+shader math (fog, water, the map's lights and glow), posed and placed by the
+game through the game-state API at the display's frame rate, with the
+game's camera, its moving map objects and its effects. Your keyboard, mouse
+and pads go to the game, the game's own sound mix plays through Godot's
+audio, and the game's text boxes and menus are drawn as native Godot UI.
 
 ## Building and running
 
