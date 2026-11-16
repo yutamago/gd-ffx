@@ -15,8 +15,8 @@ here: `docs/architecture.md`, `docs/building.md`, `docs/running.md`,
 - Commit as Yutamago <12561505+yutamago@users.noreply.github.com>. No real
   names, user names or user paths in commits, code or docs. The second
   machine is "PC2" in docs.
-- Push only to github.com/yutamago/gd-ffx (private until a first playable
-  map). Never `git push --all`, never force-push main.
+- Push only to github.com/yutamago/gd-ffx (public since 2026-11-16:
+  everything pushed is published). Never `git push --all`, never force-push main.
 - Changes gd-ffx needs in ffx-rust: a branch in its own worktree, a PR on
   ffx-rust, reviewed, merged; keep its gates green (fmt, clippy
   `-D warnings` in both ffx-host feature sets, ffx-host tests,
