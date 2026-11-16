@@ -225,6 +225,19 @@ pedestal). Its glowing orb is an effect, not part of the model.
 
 ## Effects and the battle HUD (G3)
 
+- **The screen distortion** (`DistortionView`): the field's ripple
+  (`yiScreff_draw`, script native 0x01e2), from the same capture (FXDR
+  version 2): a grid of 81 vertices (positions and UVs in normalised
+  screen space, a colour each) drawn over the screen, sampling the picture
+  at its UVs times its colour. Besaid runs it (the self-check reports it:
+  81 vertices, copy alpha 0.8); there it is nearly the identity (the
+  picture against the original: 14.0 with it, 13.8 without). The game's
+  smear (its buffer blends 80 % of each new frame over the last) is
+  opt-in (`FFX_DISTORTION_SMEAR=1`): it renders the 3D scene a second time
+  from the main camera into a viewport of its own and blends that clean
+  picture into a buffer kept across frames (the shown frame, which holds
+  the grid's own output, fed back into a cyan swirl); 14.0 at Besaid too.
+
 - **The game's own effects** (`EffectDrawView`): ffx-rust's effect-draw
   capture (`ffx_host::vfx`, switched on at boot; `FFX_NO_VFX` leaves it
   off) records every draw of `PhyreScene_DrawMostVFX`: positions in render
@@ -238,8 +251,7 @@ pedestal). Its glowing orb is an effect, not part of the model.
   (`FfxGame.runtime_texture`). At Besaid: 30 draws, 28 textured, 6
   textures; the save sphere's orb (field program 15) and the shore's sea
   strips (which gave the shallow water its cyan) come from here. Not drawn
-  yet: the draw events (buffer copies, fades, character draws) and the
-  other VFX lists; the orb's sparkles show a pink the original does not
+  yet: the draw events (fades, character draws) and the other VFX lists; the orb's sparkles show a pink the original does not
   (the blend mapping is from examples, effects-draw.md's open question 2).
 
 - **Effects as events** (`EffectView`, under the 3D view): each effect

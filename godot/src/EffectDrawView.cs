@@ -53,7 +53,17 @@ void fragment() {
     /// <summary>Blend from the VSP flags: 2 subtract, 1 add, 0 alpha.</summary>
     public static int Blend(uint flags) => (flags & 0x10) != 0 ? 2 : (flags & 0x2) != 0 ? 1 : 0;
 
-    /// <summary>Decodes a frame (<c>FXDR</c>, version 1); null when it is not one.</summary>
+    /// <summary>The screen distortion of a frame (FXDR version 2; ffx-rust's <c>vfx::Distortion</c>).</summary>
+    public sealed record Distortion(bool Skipped, bool Reset, float Blur, float[] Positions, float[] Uvs, float[] Colours, int[] Indices)
+    {
+        /// <summary>The copy's alpha, <c>min(blur, 0.8)</c> (a plain copy on <see cref="Reset"/>).</summary>
+        public float CopyAlpha => Reset ? 1f : Mathf.Min(Blur, 0.8f);
+    }
+
+    /// <summary>The distortion of the last decoded frame (null: the pass is off).</summary>
+    public static Distortion? LastDistortion { get; private set; }
+
+    /// <summary>Decodes a frame (<c>FXDR</c>, version 1 or 2); null when it is not one.</summary>
     public static (uint Update, List<Draw> Draws)? Decode(byte[] b)
     {
         if (b.Length < 24 || b[0] != (byte)'F' || b[1] != (byte)'X' || b[2] != (byte)'D' || b[3] != (byte)'R')
@@ -62,7 +72,8 @@ void fragment() {
         ushort U16() { var v = System.BitConverter.ToUInt16(b, at); at += 2; return v; }
         uint U32() { var v = System.BitConverter.ToUInt32(b, at); at += 4; return v; }
         float F() { var v = System.BitConverter.ToSingle(b, at); at += 4; return v; }
-        if (U16() != 1)
+        var version = U16();
+        if (version is not (1 or 2))
             return null;
         U16();
         var update = U32();
@@ -92,6 +103,21 @@ void fragment() {
             var idx = new int[n];
             for (int i = 0; i < n; i++) idx[i] = U16();
             draws.Add(new Draw(hi << 32 | lo, flags, texture, pos, col, uv, idx));
+        }
+        LastDistortion = null;
+        if (version >= 2 && at + 16 <= b.Length)
+        {
+            var bits = U32();
+            var blur = F();
+            int dn = (int)U32(), di = (int)U32();
+            if ((bits & 1) != 0 && at + dn * 32 + di * 2 <= b.Length)
+            {
+                var p = new float[2 * dn]; for (int i = 0; i < p.Length; i++) p[i] = F();
+                var u = new float[2 * dn]; for (int i = 0; i < u.Length; i++) u[i] = F();
+                var c = new float[4 * dn]; for (int i = 0; i < c.Length; i++) c[i] = F();
+                var ix = new int[di]; for (int i = 0; i < di; i++) ix[i] = U16();
+                LastDistortion = new Distortion((bits & 2) != 0, (bits & 4) != 0, blur, p, u, c, ix);
+            }
         }
         return (update, draws);
     }
@@ -136,6 +162,15 @@ void fragment() {
             return;
         _update = s.Update;
         var frame = Decode(host.Game.EffectDraws(s.Update));
+        // the screen distortion of the same frame (DistortionView, in the overlay)
+        if (GetTree().Root.FindChild("DistortionView", true, false) is DistortionView dv)
+        {
+            var d = LastDistortion;
+            if (d == null || d.Skipped)
+                dv.Show(false, [], [], [], [], 0f);
+            else
+                dv.Show(true, d.Positions, d.Uvs, d.Colours, d.Indices, d.CopyAlpha);
+        }
         if (frame == null || frame.Value.Draws.Count == 0)
         {
             Mesh = null;
