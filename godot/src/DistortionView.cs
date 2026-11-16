@@ -12,16 +12,19 @@ namespace GdFfx;
 /// Here the grid is a 2D mesh over the screen (positions and UVs in normalised screen space, y
 /// down) sampling this frame's picture (the screen texture) times the vertex colour: the game's
 /// copy is 80 % the new frame, so the smear is small. The smear itself (a buffer kept across
-/// frames, <see cref="Smear"/>, <c>FFX_DISTORTION_SMEAR=1</c>) is experimental: its input here is
-/// the last shown frame, which already holds the grid's own output, and that feeds back (at
-/// Besaid it ran away into a cyan swirl); a correct one needs the picture before the grid as a
-/// pass of its own. Hidden while the game has the pass off.
+/// frames, <see cref="Smear"/>, <c>FFX_DISTORTION_SMEAR=1</c>) renders the 3D scene a second time
+/// from the main camera into a viewport of its own (the clean picture, without the grid, which
+/// fed back into itself when the shown frame was used) and blends it into the buffer at the copy's
+/// alpha; it costs a second render while the pass is on, so it is opt-in. Hidden while the game has
+/// the pass off.
 /// </summary>
 public partial class DistortionView : Control
 {
     private MeshInstance2D _grid = null!;
     private SubViewport _buffer = null!;
     private TextureRect _feed = null!;
+    private SubViewport _clean = null!;
+    private Camera3D _cleanCamera = null!;
 
     /// <summary>
     /// Whether the buffer kept across frames (the smear) is used; off, the grid samples this
@@ -65,6 +68,17 @@ void fragment() {
         _feed.SetAnchorsPreset(LayoutPreset.FullRect);
         _buffer.AddChild(_feed);
         AddChild(_buffer);
+        // the clean picture (the 3D scene before any overlay): a second camera on the same world,
+        // following the main one, so the buffer is not fed its own output
+        _clean = new SubViewport
+        {
+            Name = "DistortionClean",
+            RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled,
+            TransparentBg = false,
+        };
+        _cleanCamera = new Camera3D();
+        _clean.AddChild(_cleanCamera);
+        AddChild(_clean);
         var mat = new ShaderMaterial { Shader = GridShader };
         mat.SetShaderParameter("buffer", _buffer.GetTexture());
         mat.SetShaderParameter("smear", Smear);
@@ -85,20 +99,36 @@ void fragment() {
         {
             _grid.Visible = false;
             _buffer.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled;
+            _clean.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled;
             Shown = (false, 0, 0f);
             return;
         }
         var size = GetViewportRect().Size;
         var px = new Vector2I(Mathf.Max(1, (int)size.X), Mathf.Max(1, (int)size.Y));
-        if (_buffer.Size != px)
+        if (Smear)
         {
-            _buffer.Size = px;
-            alpha = 1f; // a new buffer starts from the frame
+            if (_buffer.Size != px)
+            {
+                _buffer.Size = px;
+                _clean.Size = px;
+                alpha = 1f; // a new buffer starts from the frame
+            }
+            // the clean picture from the main camera's place, blended into the buffer at the copy's alpha
+            if (GetViewport().GetCamera3D() is { } main)
+            {
+                _clean.World3D = GetViewport().FindWorld3D();
+                _cleanCamera.GlobalTransform = main.GlobalTransform;
+                _cleanCamera.Fov = main.Fov;
+                _cleanCamera.Near = main.Near;
+                _cleanCamera.Far = main.Far;
+                _cleanCamera.Environment = main.Environment;
+                _cleanCamera.Current = true;
+            }
+            _feed.Texture = _clean.GetTexture();
+            _feed.Modulate = new Color(1, 1, 1, Mathf.Clamp(alpha, 0f, 1f));
+            _clean.RenderTargetUpdateMode = SubViewport.UpdateMode.Always;
+            _buffer.RenderTargetUpdateMode = SubViewport.UpdateMode.Always;
         }
-        // the buffer: the last frame blended in at the copy's alpha
-        _feed.Texture = GetViewport().GetTexture();
-        _feed.Modulate = new Color(1, 1, 1, Mathf.Clamp(alpha, 0f, 1f));
-        _buffer.RenderTargetUpdateMode = Smear ? SubViewport.UpdateMode.Always : SubViewport.UpdateMode.Disabled;
         var pos = new Vector2[n];
         var uv = new Vector2[n];
         var col = new Color[n];

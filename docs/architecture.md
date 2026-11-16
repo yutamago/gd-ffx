@@ -232,9 +232,11 @@ pedestal). Its glowing orb is an effect, not part of the model.
   at its UVs times its colour. Besaid runs it (the self-check reports it:
   81 vertices, copy alpha 0.8); there it is nearly the identity (the
   picture against the original: 14.0 with it, 13.8 without). The game's
-  smear (its buffer blends 80 % of each new frame over the last) is left
-  out by default: fed from the shown frame it feeds back
-  (`FFX_DISTORTION_SMEAR=1` tries it).
+  smear (its buffer blends 80 % of each new frame over the last) is
+  opt-in (`FFX_DISTORTION_SMEAR=1`): it renders the 3D scene a second time
+  from the main camera into a viewport of its own and blends that clean
+  picture into a buffer kept across frames (the shown frame, which holds
+  the grid's own output, fed back into a cyan swirl); 14.0 at Besaid too.
 
 - **The game's own effects** (`EffectDrawView`): ffx-rust's effect-draw
   capture (`ffx_host::vfx`, switched on at boot; `FFX_NO_VFX` leaves it
