@@ -209,7 +209,7 @@ public partial class StateView3D : Node3D
 
     // ---- the map's objects ------------------------------------------------------
 
-    /// <summary>The classic map's mesh nodes by object id and mesh index (<c>N_kShape</c>).</summary>
+    /// <summary>The classic map's mesh nodes by object id and mesh index (the import's object ids, else the names <c>N_kShape</c>).</summary>
     private Dictionary<(uint Id, int K), Node3D>? _objectNodes;
 
     /// <summary>The classic map's morphing meshes (<see cref="MapObjects"/>).</summary>
@@ -221,6 +221,9 @@ public partial class StateView3D : Node3D
 
     /// <summary>Objects placed by the game this frame (for tests).</summary>
     public int ObjectsPlaced { get; private set; }
+
+    /// <summary>The snapshot's object meshes with no mesh node in the classic map this frame (for tests).</summary>
+    public int ObjectsUnmatched { get; private set; }
 
     /// <summary>Morphing meshes the game drives, and how many have a weight other than 0 this frame (for tests).</summary>
     public (int Meshes, int Moved) Morphed { get; private set; }
@@ -269,18 +272,53 @@ public partial class StateView3D : Node3D
     /// </summary>
     private static MapObjects ObjectIndex(Node3D map)
     {
-        var index = new Dictionary<(uint Id, int K), Node3D>();
+        var byName = new Dictionary<(uint Id, int K), Node3D>();
+        // by the import's object id (extras ffx_obj_id, the instance's m_objID): each object's
+        // meshes in instance order (ffx_instance), as the game lists them
+        var byId = new Dictionary<uint, List<(long Instance, Node3D Node)>>();
         var morphs = new List<Morph>();
         foreach (var n in map.FindChildren("*", nameof(Node3D), true, false))
         {
             if (n is not Node3D n3)
                 continue;
             if (MeshName.Match(FbxName(n3.Name)) is { Success: true } m)
-                index.TryAdd((uint.Parse(m.Groups[1].Value), int.Parse(m.Groups[2].Value)), n3);
-            if (n3 is MeshInstance3D { Mesh: { } mesh } mi && MorphOf(mi, mesh) is { } morph)
+                byName.TryAdd((uint.Parse(m.Groups[1].Value), int.Parse(m.Groups[2].Value)), n3);
+            if (n3 is not MeshInstance3D { Mesh: { } mesh } mi)
+                continue;
+            if (ObjectOf(mesh) is { } o)
+            {
+                if (!byId.TryGetValue(o.Id, out var list))
+                    byId[o.Id] = list = new();
+                list.Add((o.Instance, n3));
+            }
+            if (MorphOf(mi, mesh) is { } morph)
                 morphs.Add(morph);
         }
+        // an import without the object ids (format 2 and older): by the meshes' names
+        if (byId.Count == 0)
+            return new MapObjects(byName, morphs);
+        var index = new Dictionary<(uint Id, int K), Node3D>();
+        foreach (var (id, list) in byId)
+        {
+            list.Sort((a, b) => a.Instance.CompareTo(b.Instance));
+            for (int k = 0; k < list.Count; k++)
+                index[(id, k)] = list[k].Node;
+        }
         return new MapObjects(index, morphs);
+    }
+
+    /// <summary>
+    /// A map mesh's object id and instance (the import's mesh extras <c>ffx_obj_id</c>,
+    /// <c>ffx_instance</c>); null for an import without them. The game's scene lists an object's
+    /// meshes by the instances' <c>m_objID</c> (<c>PhyreScene_rebuildMapObjects</c>), not by
+    /// their names: at Besaid a mesh named for object 6 belongs to object 5.
+    /// </summary>
+    private static (uint Id, long Instance)? ObjectOf(Mesh mesh)
+    {
+        if (!mesh.HasMeta("extras") || mesh.GetMeta("extras").AsGodotDictionary() is not { } x
+            || !x.TryGetValue("ffx_obj_id", out var id) || !x.TryGetValue("ffx_instance", out var instance))
+            return null;
+        return ((uint)id.AsInt64(), instance.AsInt64());
     }
 
     private static Morph? MorphOf(MeshInstance3D mi, Mesh mesh)
@@ -363,13 +401,14 @@ public partial class StateView3D : Node3D
 
     /// <summary>
     /// The map's objects where the game has them (API 8's <c>Snapshot.objects</c>): mesh k of
-    /// object N (the node <c>N_kShape</c>) at its live world matrix, interpolated between the
+    /// object N (the k-th mesh of object id N, <see cref="ObjectIndex"/>) at its live world matrix, interpolated between the
     /// last two snapshots, shown while the game draws it. Scripts move objects this way, e.g.
     /// Besaid's birds, which the file places at the origin.
     /// </summary>
     private void UpdateObjects(GameStateView view)
     {
         ObjectsPlaced = 0;
+        ObjectsUnmatched = 0;
         var s = view.Current;
         if (s == null || _map == null)
             return;
@@ -394,7 +433,10 @@ public partial class StateView3D : Node3D
             for (int k = 0; k < o.Meshes.Count; k++)
             {
                 if (!_objectNodes.TryGetValue((o.Id, k), out var node))
+                {
+                    ObjectsUnmatched++;
                     continue;
+                }
                 var m = o.Meshes[k];
                 var t = GameStateView.CameraTransform(m.World);
                 if (prev != null && prev.TryGetValue(o.Id, out var po) && k < po.Meshes.Count)

@@ -303,11 +303,16 @@ Scripts move map objects (`graphicObjectSetTranslation`/`Rotation`) and
 show or hide their meshes (the layer mask); the file only has where they
 start. API 8's `Snapshot.objects` gives each object id's meshes with their
 live world matrices and whether they are drawn. `StateView3D` finds the
-classic map's mesh nodes by name (`N_kShape`, FBX's `FBXASCnnn` escapes
-decoded: mesh k of object N) and places each at its matrix (interpolated
+classic map's mesh nodes by the object id the import gives each mesh
+(`extras.ffx_obj_id`, the instance's `m_objID`, by which
+`PhyreScene_rebuildMapObjects` lists an object's meshes; mesh k of object
+N is the k-th of those meshes in instance order, `ffx_instance`), and by
+name (`N_kShape`, FBX's `FBXASCnnn` escapes decoded) for an import without
+the ids. The names are not always the ids: at Besaid the mesh named
+`6_0Shape` is object 5's. Each is placed at its matrix (interpolated
 between the last two snapshots), shown while the game draws it. Besaid's
 birds (objects 18..32, at the origin in the file) fly where the game has
-them; the Besaid check counts the meshes placed (45).
+them; the Besaid check counts the meshes placed.
 
 Some map meshes morph (docs/importer.md, "Morphing meshes"): the import
 gives a mesh its instance's `m_objID`, `m_animCt`, `m_mimeCt` and

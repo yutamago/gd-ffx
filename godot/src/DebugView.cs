@@ -395,7 +395,7 @@ public sealed class BesaidTest(double timeout, string? shot) : ITest
             case Phase.Beach when view != null && view.MapLevel == v.Current!.World.Level && view.Posed.Models > 0
                 && view.Posed.PosedBones > 40:
                 _seen = $"{v.Current.World.Level} shown, {view.Posed.Models} character model(s) posed ({view.Posed.PosedBones} bones), "
-                    + $"{view.ObjectsPlaced} object mesh(es) placed by the game";
+                    + $"{view.ObjectsPlaced} object mesh(es) placed by the game ({view.ObjectsUnmatched} without a mesh)";
                 if (view.ObjectsPlaced == 0)
                     return Done(false, $"no map object placed by the game ({v.Current.Objects.Count} in the snapshot)");
                 // the beach's morphing meshes (the shore, the birds: docs/importer.md, "Morphing meshes")
@@ -552,7 +552,7 @@ public sealed class MapTest(double timeout, string? shot) : ITest
             GD.Print($"ffx selftest: picture {shot}");
         }
         return Done(true, $"{(c.World.Battle ? "battle" : "field")} {c.World.Level} (map {c.World.Map:x}): {view.Posed.Models} models "
-            + $"({view.Posed.PosedBones} bones), {view.ObjectsPlaced} objects, {view.Morphed.Meshes} morphing ({view.Morphed.Moved} with a weight), {fx?.Shown.Draws ?? 0} effect draws "
+            + $"({view.Posed.PosedBones} bones), {view.ObjectsPlaced} objects ({view.ObjectsUnmatched} without a mesh), {view.Morphed.Meshes} morphing ({view.Morphed.Moved} with a weight), {fx?.Shown.Draws ?? 0} effect draws "
             + $"({fx?.Shown.Textured ?? 0} textured), distortion {(dv?.Shown.On == true ? "on" : "off")}{Layers(view)}, {Characters(c)}, "
             + $"global time {view.GlobalTime:F2} s, at {_total:F0} s");
     }
