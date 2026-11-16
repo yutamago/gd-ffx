@@ -351,9 +351,9 @@ public partial class Launcher : Control
         }
     }
 
-    /// <summary>The cache's folders the launcher may clear: the importer's <c>map/</c> and <c>chr/</c>.</summary>
+    /// <summary>The cache's folders the launcher may clear: the importer's <c>map/</c>, <c>map2d/</c> and <c>chr/</c>.</summary>
     private IEnumerable<string> CacheDirs() =>
-        new[] { "map", "chr" }.Select(k => System.IO.Path.Combine(ClassicDir, k)).Where(System.IO.Directory.Exists);
+        new[] { "map", "map2d", "chr" }.Select(k => System.IO.Path.Combine(ClassicDir, k)).Where(System.IO.Directory.Exists);
 
     /// <summary>The bytes of the classic cache's imports.</summary>
     public long CacheBytes()
@@ -374,7 +374,7 @@ public partial class Launcher : Control
     }
 
     /// <summary>
-    /// Deletes the classic cache's imports (its <c>map/</c> and <c>chr/</c> folders, nothing
+    /// Deletes the classic cache's imports (its <c>map/</c>, <c>map2d/</c> and <c>chr/</c> folders, nothing
     /// else), only when the folder is safe to clear (<see cref="ClassicLibrary.WhyNotClearable"/>);
     /// false when refused.
     /// </summary>

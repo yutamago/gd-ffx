@@ -2,9 +2,11 @@
 //!
 //! ```text
 //! ffx-import --game-dir DIR --out DIR map <level>...     # /map/znkd/znkd06/, bsil0000
+//! ffx-import --game-dir DIR --out DIR map2d <level>...   # a map's 2D layers (/map/kami/kami01/)
 //! ffx-import --game-dir DIR --out DIR chr <model>...     # c001, m009, w041
 //! ffx-import --game-dir DIR devsaves                     # the developers' saves: map, entrance, scenario
 //! ffx-import --game-dir DIR list <text>...               # archive paths containing the text
+//! ffx-import --game-dir DIR model <path or level>...     # a model's nodes, instances, materials
 //! ```
 //!
 //! `--game-dir` defaults to `FFX_GAME_DIR`. Only reads the game; writes only
@@ -42,6 +44,17 @@ fn main() -> ExitCode {
     if what == "devsaves" {
         return devsaves(&imp);
     }
+    if what == "model" {
+        let mut ok = true;
+        for n in names {
+            ok &= model(&imp, n);
+        }
+        return if ok {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        };
+    }
     if what == "list" {
         for n in names {
             for p in imp.list(n) {
@@ -58,9 +71,10 @@ fn main() -> ExitCode {
     for n in names {
         let r = match what {
             "map" => imp.import_map(n, &out),
+            "map2d" => imp.import_map_layers(n, &out),
             "chr" => imp.import_character(n, &out),
             other => {
-                eprintln!("unknown command {other} (map, chr, devsaves)");
+                eprintln!("unknown command {other} (map, map2d, chr, devsaves, list, model)");
                 return ExitCode::FAILURE;
             }
         };
@@ -77,6 +91,88 @@ fn main() -> ExitCode {
     } else {
         ExitCode::FAILURE
     }
+}
+
+/// Prints the model at archive path `path` (or a level's map model): its
+/// nodes, instances with the bounds of their segments' positions, and
+/// materials (effect, textures, parameters).
+fn model(imp: &ffx_import::Importer, path: &str) -> bool {
+    let path = if path.contains(".dae.phyre") {
+        path.to_string()
+    } else if let Some(p) = imp.map_model(path).or_else(|| imp.map_layers_model(path)) {
+        p
+    } else {
+        eprintln!("{path}: not a model or level");
+        return false;
+    };
+    let m = match imp
+        .read(&path)
+        .map_err(|e| e.to_string())
+        .and_then(|b| ffx_phyre::Model::parse(&b).map_err(|e| e.to_string()))
+    {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("{path}: {e}");
+            return false;
+        }
+    };
+    println!("{path}");
+    for (i, n) in m.nodes.iter().enumerate() {
+        let t = &n.local;
+        println!(
+            "node {i} {:?} parent {:?} diag ({}, {}, {}) t ({}, {}, {})",
+            n.name, n.parent, t[0], t[5], t[10], t[12], t[13], t[14]
+        );
+    }
+    for (i, inst) in m.instances.iter().enumerate() {
+        println!("instance {i} {:?} node {:?}", inst.name, inst.node);
+        for &(s, mat) in &inst.segments {
+            let seg = &m.segments[s];
+            let mut lo = [f32::MAX; 3];
+            let mut hi = [f32::MIN; 3];
+            for p in &seg.positions {
+                for k in 0..3 {
+                    lo[k] = lo[k].min(p[k]);
+                    hi[k] = hi[k].max(p[k]);
+                }
+            }
+            let (mut ulo, mut uhi) = ([f32::MAX; 2], [f32::MIN; 2]);
+            for uv in &seg.uvs {
+                for k in 0..2 {
+                    ulo[k] = ulo[k].min(uv[k]);
+                    uhi[k] = uhi[k].max(uv[k]);
+                }
+            }
+            let mut colours: Vec<[u8; 4]> = seg.colors.clone();
+            colours.sort_unstable();
+            colours.dedup();
+            colours.truncate(4);
+            println!(
+                "  segment {s} material {mat:?} verts {} tris {} pos {lo:?}..{hi:?} uv {ulo:?}..{uhi:?} colours {colours:?}",
+                seg.positions.len(),
+                seg.indices.len() / 3,
+            );
+        }
+    }
+    for (i, mat) in m.materials.iter().enumerate() {
+        println!("material {i} effect {:?}", mat.effect);
+        for t in &mat.textures {
+            println!(
+                "  {} {} ({})",
+                t.sampler,
+                t.path,
+                if imp.has(&t.archive_path()) {
+                    "found"
+                } else {
+                    "missing"
+                }
+            );
+        }
+        for p in &mat.parameters {
+            println!("  {} {:?}", p.name, p.values);
+        }
+    }
+    true
 }
 
 /// The developers' saves (`savesforviewer/1..110`): the save data block at

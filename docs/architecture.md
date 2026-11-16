@@ -223,6 +223,73 @@ leaves 4 at the base. The pairing is inferred from f001, not read from the
 game; the picture then matches the original's (the ring floating above the
 pedestal). Its glowing orb is an effect, not part of the model.
 
+## The 2D layers (G5)
+
+Many rooms are painted backgrounds: the remaster's 2D layers (ffx-rust's
+`docs/formats/scene-maps.md`, "The `YNSC` layer record" and "How the game
+draws the 2D layers"). 146 maps have a 2D model,
+`map/<area>/<map>/2d/mdl/d3d11/<map>.dae.phyre` (textures in `2d/tex/`):
+some only that (`ptkl14`, `mihn03`, `guad01`, `kami01`, `maca01`, `bvyt04`,
+`mcfr11`, `nagi07`, `sins00`, the title's `titl00`/`titl02`), some beside a
+3D model (`bsil00`).
+
+- **Import.** `ffx-import`'s `import_map_layers` writes it to
+  `<cache>/map2d/<map>.glb` (Godot's kind `map2d`); `import_map` takes only
+  the 3D model. A level without one of the two answers `none: ...`, which
+  is no fault and is not logged (`znkd06`'s 2D model has no meshes and
+  counts as none).
+- **Meshes.** One quad per layer, `scene<s>layer<l>Shape`, its vertices
+  the layer's PS2 screen pixels (x, y on the 512 x 448 screen, y down) at
+  its depth z (the `YNSC` record's `+0x14` on most layers).
+- **Drawing** (`MapLayers`, under `StateView3D`; the shader in
+  `ClassicMaterials`): the layer shader writes clip space itself. x and y
+  as the game's orthographic layer camera puts them: the 512 columns across
+  the window, `(x - 256) / 256`, and 336 of the 448 rows (16:9),
+  `-(y - 224) / 224 x 4/3 + 1/3 - 2b`, b the pan; before that the window's
+  shift (scene `+0xfa34`, `+0xfa38`); not squeezed while scene `+0xf9c7`
+  or `g_PhyreScene3D` is set. The depth is the main camera's (Godot's
+  projection, the game's camera) at view distance 10 z, so the characters,
+  drawn as before with the game's camera, go behind nearer layers. The
+  colour is the texture x the vertex colour, as it is (no fog, no tone
+  curve). The blend comes from the material's effect variant (its switches,
+  read from the archive by `FfxGame.ClassicEffectSwitches`; all ten
+  `phyreprerenderedshader` variants' D3D11 states checked): every variant
+  blends, source alpha over the picture or added (`ADDITIVE_BLENDING`,
+  kami01's lamp glows), writes depth unless `MASK_DEPTH`, tests
+  `LESS_EQUAL`. The maps' pass, `preTransparentATC`, adds alpha to coverage,
+  taken as a cut at alpha 0.5 for the layers that write depth; on maps
+  `0xa0`, `0xa1`, `0x101`, `0x16c` the pass is `preTransparent` (no cut).
+  The layers are drawn after the opaque world, farther first (render
+  priority by depth).
+- **What the game decides at run time** is read from its memory each
+  frame with `FfxGame.Peek` (scene = `*0x00ccb9d8`, `g_PhyreScene`): the 2D
+  scene shown (`+0x11d8`; a map starts on scene 0, scripts change it with
+  `PhyreScene_change2DSceneNum`), the layers' shown flags
+  (`PhyreScene_show2DLayer`'s table at `+0x1140`, `+0x1138` entries of 8
+  bytes: shown, scene, layer id (i16), mesh), the pan b (`+0xf9bc`, f32),
+  the shift (`+0xfa34`, `+0xfa38`), `+0xf9c7`, `g_PhyreScene3D`
+  (`0x00ccb9c0`), and whether the pass runs (the 2D level loaded,
+  `+0x93c`, and `+0x93d` clear; bsil00's one layer, at depth 0.01, is not
+  drawn). These belong in the game-state API (ffx-state); until then they
+  are a developer's read. The map check (`--selftest-map`) reports
+  `2D layers shown/loaded (scene, pan)`.
+
+Measured (`tools/compare-shot.sh`, Xvfb): developer save 52 (kami01) against
+the game's screenshot of kami0100 (another moment of the same room) 11.9/255
+(before: 101.7, a black screen); the picture lines up with the game's (the
+counter, the walls, the floor), the characters on it; the back door is open
+because the game hides its closed layer at that moment of the save (the
+shown flags). Saves 14
+(ptkl14) and 34 (mihn03) show their rooms with the characters behind the
+foreground (before: grey planes, black). The sweep's 2D saves (14, 34, 35,
+50, 52, 56, 71, 80, 83, 108) pass with no errors.
+
+Not done yet: the layers' texture animation (`textureanimation.ags`, the
+`_<frame>` textures), `PhyreScene_changeLayerOffset`/`Scale` (scripts moving
+or scaling a layer), the order against the 3D world by `+0xd4` (drawn before
+the 3D world when set; here by depth only), and the depth order of the cut-outs
+the game gets from `ViewProjection2` (traced only as the main camera's).
+
 ## Effects and the battle HUD (G3)
 
 - **The screen distortion** (`DistortionView`): the field's ripple

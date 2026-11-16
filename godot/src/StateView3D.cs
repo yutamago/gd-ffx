@@ -20,6 +20,7 @@ public partial class StateView3D : Node3D
     private readonly Dictionary<ushort, ActorNode> _actors = new();
     private SphereMesh _boneMesh = null!;
     private Node3D? _map;
+    private MapLayers _layers = null!;
     private string _mapLevel = "";
     private string _wantedLevel = "";
 
@@ -28,6 +29,9 @@ public partial class StateView3D : Node3D
 
     /// <summary>The level whose map is shown ("" none yet).</summary>
     public string MapLevel => _mapLevel;
+
+    /// <summary>The map's 2D layers.</summary>
+    public MapLayers Layers => _layers;
 
     /// <summary>Characters drawn with their classic model, and how many of their bones are posed.</summary>
     public (int Models, int PosedBones) Posed { get; private set; }
@@ -76,6 +80,8 @@ public partial class StateView3D : Node3D
             },
         };
         AddChild(_env);
+        _layers = new MapLayers { Name = "MapLayers" };
+        AddChild(_layers);
         AddChild(new EffectView { Name = "EffectView" });
         AddChild(new EffectDrawView { Name = "EffectDrawView" });
         AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-55, 30, 0), LightEnergy = 0.8f });
@@ -136,6 +142,7 @@ public partial class StateView3D : Node3D
             ApplyGlow(look);
         }
         UpdateMap(host.Classic, view.Current);
+        _layers.Tick(host.Game, view.Current?.World.Map ?? -1, _camera.Far);
         UpdateObjects(view);
         UpdateActors(host.Classic, view);
     }
@@ -237,11 +244,25 @@ public partial class StateView3D : Node3D
         var level = s?.World.Level ?? "";
         if (level.Length == 0 || !(level.StartsWith("/map/") || level.StartsWith("/btlmap/")))
             return;
+        // the 2D layers, also on a map that has a 3D model (MapLayers)
+        if (level.StartsWith("/map/"))
+            _layers.Load(lib, level, s!.World.Map);
         if (level == _mapLevel)
             return;
         _wantedLevel = level;
         if (ContentResolver.Resolve(lib, "map", level) is not { } content)
+        {
+            // a map of 2D layers only has no 3D model: shown once its layers are
+            if (lib?.Failed("map", level) == true && _layers.Level == level)
+            {
+                _map?.QueueFree();
+                _map = null;
+                _objectNodes = null;
+                _mapLevel = level;
+                GD.Print($"ffx: map {level} shown (2D layers only)");
+            }
             return;
+        }
         var map = content.Node;
         _map?.QueueFree();
         _map = map;

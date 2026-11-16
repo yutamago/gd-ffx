@@ -54,7 +54,7 @@ public sealed class ClassicLibrary
     }
 
     /// <summary>
-    /// Why the launcher must not clear <paramref name="dir"/>'s <c>map/</c> and <c>chr/</c>, or
+    /// Why the launcher must not clear <paramref name="dir"/>'s <c>map/</c>, <c>map2d/</c> and <c>chr/</c>, or
     /// null when it may: the folder is absolute, not a filesystem root, the home folder or
     /// gd-ffx's user data folder itself, and lies inside gd-ffx's user data folder
     /// (<c>user://</c>) or holds the <see cref="Marker"/> that gd-ffx writes into a cache it used.
@@ -94,7 +94,9 @@ public sealed class ClassicLibrary
             else
             {
                 _errors[key] = d["error"].AsString();
-                GD.PrintErr($"ffx: classic {key.Item1} {key.Item2}: {_errors[key]}");
+                // "none: ..." is no fault: a map of 2D layers only has no 3D model, most maps no 2D layers
+                if (!_errors[key].StartsWith("none: ", System.StringComparison.Ordinal))
+                    GD.PrintErr($"ffx: classic {key.Item1} {key.Item2}: {_errors[key]}");
             }
         }
     }

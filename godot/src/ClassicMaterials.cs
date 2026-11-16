@@ -14,6 +14,8 @@ namespace GdFfx;
 /// vertex colour x (1 + emissiveness), then the game's tone curve.</item>
 /// <item><b>water</b> (<c>PhyreWaterShader</c>): the game's math with the cube map's mean colour
 /// for its reflection (the cube map is not imported yet; see <c>WaterBody</c>).</item>
+/// <item><b>2D layers</b> (<c>PhyrePrerenderedShader</c>): the painted backgrounds, placed on the
+/// screen in PS2 pixels at the main camera's depth (<see cref="MapLayers"/>).</item>
 /// <item><b>characters</b> (<c>PhyreChrLitShader</c>): texture x MaterialColour x
 /// VertexColorOrigin (not the vertex colour stream) x the game's half-Lambert
 /// squared lights plus ambient.</item>
@@ -147,6 +149,43 @@ void fragment() {
 }
 ";
 
+    // The 2D layers (phyreprerenderedshader; ffx-rust's docs/formats/scene-maps.md, "How the
+    // game draws the 2D layers"). A layer's vertices are its PS2 screen pixels (x, y on the
+    // 512 x 448 screen, y down) at its depth z. The game draws them through an orthographic
+    // camera that puts the 512 columns across the window and, squeezed for 16:9, 336 of the
+    // 448 rows from 112 - 336 b down (b the pan, scene +0xf9bc): clip x = (x - 256) / 256,
+    // clip y = (-(y - 224) / 224) x 4/3 + 1/3 - 2b, after a shift (scene +0xfa34, +0xfa38).
+    // The depth is the main camera's at view distance 10 z (the shader takes (x, y, -10 z, 1)
+    // and its depth from the main projection), so the characters drawn with that camera go
+    // behind nearer layers. The colour is the texture x the vertex colour, as it is.
+    // Every variant blends (D3D11 blend states of all ten variants): source alpha over the
+    // picture, or added (SRC_ALPHA, ONE) with ADDITIVE_BLENDING; it writes depth unless
+    // MASK_DEPTH; depth test LESS_EQUAL. The pass the maps use, preTransparentATC, adds
+    // alpha to coverage: taken here as a cut at alpha 0.5 for the layers that write depth
+    // (cut_alpha), so the cut-outs' holes leave the depth alone.
+    // ffx_layer_window: (y offset, y scale, x shift, y shift); ffx_layer_far: the farthest
+    // view distance to draw at (inside the camera's far plane).
+    private const string LayerBody = @"
+uniform sampler2D tex : filter_linear_mipmap, repeat_disable;
+uniform vec4 material_colour = vec4(1.0);
+uniform float cut_alpha = 0.5;
+global uniform vec4 ffx_layer_window;
+global uniform float ffx_layer_far;
+void vertex() {
+	float x = (VERTEX.x - 256.0) / 256.0 + ffx_layer_window.z;
+	float y = (-(VERTEX.y - 224.0) / 224.0 + ffx_layer_window.w) * ffx_layer_window.y + ffx_layer_window.x;
+	vec4 d = PROJECTION_MATRIX * vec4(0.0, 0.0, -min(10.0 * VERTEX.z, ffx_layer_far), 1.0);
+	// the renderer's own clip-space conventions (y flip, depth range) come with its projection
+	POSITION = vec4(x * sign(PROJECTION_MATRIX[0][0]), y * sign(PROJECTION_MATRIX[1][1]), d.z / d.w, 1.0);
+}
+void fragment() {
+	vec4 c = texture(tex, UV) * material_colour * COLOR;
+	if (c.a < cut_alpha) { discard; }
+	ALBEDO = ffx_out(c.rgb);
+	ALPHA = c.a;
+}
+";
+
     /// <summary>Which way the game's light directions point for the shader's dot(L, N): +1 or -1.</summary>
     public static float LightSign = System.Environment.GetEnvironmentVariable("FFX_LIGHT_SIGN") == "1" ? 1f : -1f;
 
@@ -167,6 +206,8 @@ void fragment() {
         Add("ffx_light_colours", RenderingServer.GlobalShaderParameterType.Mat3,
             new Basis(new Vector3(0.75f, 0.75f, 0.75f), Vector3.Zero, Vector3.Zero));
         Add("ffx_light_sign", RenderingServer.GlobalShaderParameterType.Float, LightSign);
+        Add("ffx_layer_window", RenderingServer.GlobalShaderParameterType.Vec4, new Vector4(1f / 3f - 2f * 0.035f, 4f / 3f, 0, 0));
+        Add("ffx_layer_far", RenderingServer.GlobalShaderParameterType.Float, 19000f);
         return true;
     }
 
@@ -203,9 +244,44 @@ void fragment() {
     private static readonly Shader MapOpaqueTwoSided = MakeShader("unshaded, cull_disabled, depth_draw_opaque", MapOpaqueBody);
     private static readonly Shader Char = MakeShader("unshaded, cull_back", CharBody);
     private static readonly Shader Water = MakeShader("unshaded, cull_disabled, blend_mix, depth_draw_never", WaterBody);
+    private static readonly Shader[] LayerShaders =
+    [
+        MakeShader("unshaded, cull_disabled, blend_mix, depth_draw_always, shadows_disabled", LayerBody),
+        MakeShader("unshaded, cull_disabled, blend_mix, depth_draw_never, shadows_disabled", LayerBody),
+        MakeShader("unshaded, cull_disabled, blend_add, depth_draw_always, shadows_disabled", LayerBody),
+        MakeShader("unshaded, cull_disabled, blend_add, depth_draw_never, shadows_disabled", LayerBody),
+    ];
+
+    /// <summary>The effect variant switches the layers' look depends on.</summary>
+    private static readonly string[] LayerSwitches = ["MASK_DEPTH", "ADDITIVE_BLENDING"];
+
+    /// <summary>Whether <paramref name="m"/> is a 2D layer's material (made by <see cref="Apply"/>).</summary>
+    public static bool IsLayer(Material? m) => m is ShaderMaterial s && System.Array.IndexOf(LayerShaders, s.Shader) >= 0;
+
+    /// <summary>
+    /// A 2D layer's material for the pass: in <c>preTransparentATC</c> (<paramref name="atc"/>)
+    /// the layers that write depth cut at alpha 0.5; in <c>preTransparent</c> nothing is cut.
+    /// </summary>
+    public static void LayerPass(ShaderMaterial m, bool atc)
+    {
+        bool writes = m.Shader == LayerShaders[0] || m.Shader == LayerShaders[2];
+        m.SetShaderParameter("cut_alpha", atc && writes ? 0.5f : 0f);
+    }
+
+    private static readonly System.Collections.Generic.Dictionary<string, string[]> Switches = new();
+
+    /// <summary>The layer shader for the material's effect variant (its blend and depth write).</summary>
+    private static Shader LayerShader(string effect)
+    {
+        if (!Switches.TryGetValue(effect, out var on))
+            Switches[effect] = on = GameHost.Instance?.Game?.ClassicEffectSwitches(effect, LayerSwitches) ?? [];
+        bool add = System.Array.IndexOf(on, "ADDITIVE_BLENDING") >= 0;
+        bool noDepth = System.Array.IndexOf(on, "MASK_DEPTH") >= 0;
+        return LayerShaders[(add ? 2 : 0) + (noDepth ? 1 : 0)];
+    }
 
     /// <summary>Materials made, by kind (for tests and the overlay).</summary>
-    public static (int Map, int Blend, int Char) Made;
+    public static (int Map, int Blend, int Char, int Layer) Made;
 
     private static float[] Floats(Dictionary p, string name, float[] fallback)
     {
@@ -241,7 +317,13 @@ void fragment() {
             var colour = Floats(p, "MaterialColour", [1, 1, 1, 1]);
             var threshold = Floats(p, "AlphaThreshold", [0])[0];
             ShaderMaterial s;
-            if (effect.Contains("chrlit") || (effect.Length == 0 && p.ContainsKey("VertexColorOrigin")))
+            if (effect.Contains("prerendered"))
+            {
+                s = new ShaderMaterial { Shader = LayerShader(extras["ffx_effect"].AsString()) };
+                LayerPass(s, true);
+                Made.Layer++;
+            }
+            else if (effect.Contains("chrlit") || (effect.Length == 0 && p.ContainsKey("VertexColorOrigin")))
             {
                 s = new ShaderMaterial { Shader = Char };
                 s.SetShaderParameter("vertex_colour", ToColor(Floats(p, "VertexColorOrigin", [1, 1, 1, 1])));

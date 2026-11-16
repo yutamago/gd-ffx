@@ -517,13 +517,33 @@ impl FfxGame {
     fn runtime_texture(&self, name: GString) -> PackedByteArray {
         classic()
             .runtime_texture_png(&name.to_string())
-            .map_or_else(PackedByteArray::new, |b| PackedByteArray::from(b.as_slice()))
+            .map_or_else(PackedByteArray::new, |b| {
+                PackedByteArray::from(b.as_slice())
+            })
     }
 
     /// Whether the material texture at `path` is a cube map.
     #[func]
     fn classic_texture_is_cube(&self, path: GString) -> bool {
         classic().texture_is_cube(&path.to_string())
+    }
+
+    /// Which of `names` the material effect variant `effect` (a glTF
+    /// material's `extras.ffx_effect`) switches on (`MASK_DEPTH`,
+    /// `ADDITIVE_BLENDING`...); empty without the archive.
+    #[func]
+    fn classic_effect_switches(
+        &self,
+        effect: GString,
+        names: PackedStringArray,
+    ) -> PackedStringArray {
+        let names: Vec<String> = names.as_slice().iter().map(GString::to_string).collect();
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        classic()
+            .effect_switches(&effect.to_string(), &names)
+            .iter()
+            .map(GString::from)
+            .collect()
     }
 
     /// The effects' draws of the frame that drew update `update` (the
