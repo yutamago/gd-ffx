@@ -508,6 +508,12 @@ public sealed partial class Menus
     /// The PC menu (Esc, Flash) is up (`g_FFEscMenu`).
     /// </summary>
     public bool EscMenu;
+    /// <summary>
+    /// The PS2 menus' windows in use (`g_TkMenuWindows`, 32 of `0x98`
+    /// bytes, `+0x40` set; docs/formats/menu.md "Windows"): each
+    /// screen's lists and cursors.
+    /// </summary>
+    public List<MenuWindow> Windows = new();
 
     /// <summary>Reads one from the encoding.</summary>
     public static Menus Read(ref StateReader r)
@@ -533,6 +539,12 @@ public sealed partial class Menus
         o.SaveRows = r.I32();
         o.SaveFiles = r.I32();
         o.EscMenu = r.Bool();
+        {
+            int n = r.U16();
+            o.Windows = new List<MenuWindow>(n);
+            for (int i = 0; i < n; i++)
+                o.Windows.Add(MenuWindow.Read(ref r));
+        }
         return o;
     }
 }
@@ -964,6 +976,55 @@ public sealed partial class Light
         o.Level = r.F32();
         o.Pitch = r.F32();
         o.Yaw = r.F32();
+        return o;
+    }
+}
+
+/// <summary>
+/// One PS2 menu window in use (docs/formats/menu.md, "Windows").
+/// </summary>
+public sealed partial class MenuWindow
+{
+    /// <summary>
+    /// Its record (0..31).
+    /// </summary>
+    public byte Slot;
+    /// <summary>
+    /// Its state (`+0x28`, 0 idle).
+    /// </summary>
+    public uint State;
+    /// <summary>
+    /// Its row count (`+0x30`) and the first row shown (`+0x32`).
+    /// </summary>
+    public ushort Rows;
+    public short First;
+    /// <summary>
+    /// The cursor (`+0x48`; the row is `cursor &gt;&gt; 1` in two-column
+    /// lists).
+    /// </summary>
+    public short Cursor;
+    /// <summary>
+    /// The list kind of an item window (`+0x43`: 0 items, 1 key items,
+    /// 2 commands).
+    /// </summary>
+    public byte Kind;
+    /// <summary>
+    /// The opener's five words (`+0x58`..`+0x6b`: kind, character,
+    /// index, ...), `u32` little-endian each.
+    /// </summary>
+    public byte[] Args = [];
+
+    /// <summary>Reads one from the encoding.</summary>
+    public static MenuWindow Read(ref StateReader r)
+    {
+        var o = new MenuWindow();
+        o.Slot = r.U8();
+        o.State = r.U32();
+        o.Rows = r.U16();
+        o.First = r.I16();
+        o.Cursor = r.I16();
+        o.Kind = r.U8();
+        o.Args = r.Bytes();
         return o;
     }
 }

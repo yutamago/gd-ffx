@@ -228,7 +228,12 @@ stats' order); the abilities screen each member's own learnt commands
 (`PartyMember.commands`, `0x3000 + i`, named from the kernel's command
 table; the shared ones from `0x3060` are summons and aeons' commands and
 stay out), and the overdrive screen each member's mode, the modes obtained
-and the gauge (`--menu-screen=abilities|overdrive|status`). Which member
+and the gauge (`--menu-screen=abilities|overdrive|status`). API 8's
+`menus.windows` (`g_TkMenuWindows` in use) gives the screens' lists and
+cursors: on the item screen the list is the window of kind 0 with 56 rows,
+its cursor taken as the inventory slot and marked (0 at the start, 1 after
+one Down: measured; whether the game's own picture marks that entry or a
+row of two is not checked, as gd-ffx does not draw the game's menu). Which member
 the game shows, the sphere grid's contents and the screens' cursors are not
 in the API yet.
 

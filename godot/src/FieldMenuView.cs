@@ -13,7 +13,7 @@ namespace GdFfx;
 /// only draws it. While the game's item screen is open (menu slot 3, <see cref="ItemsMask"/>,
 /// measured: Items in the main menu opens it), the inventory instead: each used slot in the
 /// game's order, the item named from the kernel tables (as the battle commands), and its
-/// count, in two columns. While the status screen is open (slot 6), every party member's
+/// count, in two columns, the one under the game's cursor marked (<see cref="ItemList"/>). While the status screen is open (slot 6), every party member's
 /// HP, MP, the 8 stats, AP, sphere levels and overdrive gauge side by side (which member
 /// the game shows is not in the API yet). The abilities screen (slot 2): each member's
 /// own learnt commands (<see cref="Learnt"/>, without the shared ones) named from the kernel's
@@ -84,8 +84,19 @@ public partial class FieldMenuView : Control
     private GridContainer _itemGrid = null!;
     private readonly Dictionary<(ushort Id, string Lang), string> _itemNames = new();
 
-    /// <summary>The item rows shown now (for tests).</summary>
+    /// <summary>The item rows shown now (for tests), and the one under the game's cursor ("" none).</summary>
     public List<string> Items { get; } = new();
+    public string ItemAtCursor { get; private set; } = "";
+
+    /// <summary>
+    /// The item screen's list window (<c>Menus.Windows</c>): the open one listing items (kind 0)
+    /// with the most rows (the inventory's 0x70 slots, two a row; measured: 56 rows). Its
+    /// cursor is taken as the slot: it starts at 0 and one Down makes it 1 (measured). ffx-rust's
+    /// menu.md has row = cursor >> 1 in two-column lists, where Down would add 2; which entry
+    /// the game's own picture highlights is not checked.
+    /// </summary>
+    public static GdFfx.Api.MenuWindow? ItemList(GdFfx.Api.Snapshot s) =>
+        s.Menus.Windows.Where(w => w.State != 0 && w.Kind == 0 && w.Rows >= 8).OrderByDescending(w => w.Rows).FirstOrDefault();
 
     private PanelContainer _panel = null!;
     private VBoxContainer _rows = null!;
@@ -256,6 +267,9 @@ public partial class FieldMenuView : Control
             }
             Items.Add($"{n,-16} {it.Count,3}");
         }
+        var list = ItemList(s);
+        int at = list == null ? -1 : s.Save.Items.FindIndex(it => it.Slot == list.Cursor);
+        ItemAtCursor = at >= 0 ? Items[at] : "";
         while (_itemGrid.GetChildCount() < Items.Count)
         {
             var l = new Label();
@@ -268,7 +282,10 @@ public partial class FieldMenuView : Control
             var l = (Label)_itemGrid.GetChild(i);
             l.Visible = i < Items.Count;
             if (i < Items.Count)
-                l.Text = Items[i];
+            {
+                l.Text = (i == at ? "▶ " : "   ") + Items[i];
+                l.AddThemeColorOverride("font_color", i == at ? new Color(1f, 0.95f, 0.6f) : new Color(0.92f, 0.94f, 1f));
+            }
         }
         _itemsPanel.Visible = true;
         var view = GetViewportRect().Size;

@@ -612,6 +612,8 @@ public sealed class MenuTest(double timeout, string? shot) : ITest
     private double _open = -1;
     private double _probe;
     private string _main = "";
+    private double _listAt = -1;
+    private string _first = "";
 
     public string Note { get; private set; } = "";
 
@@ -687,7 +689,20 @@ public sealed class MenuTest(double timeout, string? shot) : ITest
                 return Done(false, $"the item screen did not come (mask {c.Menus.MainMask:x}, cursor {c.Menus.MainCursor}); {_main}");
             return null;
         }
-        return Done(true, $"{_main}; the items: [{string.Join(" | ", panel.Items.Take(4))}{(panel.Items.Count > 4 ? " | ..." : "")}] ({panel.Items.Count})");
+        // in the list: the cursor starts on slot 0; one down moves it to slot 1 (measured)
+        if (_listAt < 0)
+            _listAt = _probe;
+        double l = _probe - _listAt, lw = l - delta;
+        if (lw < 0.8 && l >= 0.8)
+            _first = panel.ItemAtCursor;
+        if (lw < 1.0 && l >= 1.0) Press(Key.Down, true);
+        if (lw < 1.3 && l >= 1.3) Press(Key.Down, false);
+        if (l < 2.5)
+            return null;
+        var cur = FieldMenuView.ItemList(c)?.Cursor ?? -1;
+        if (cur != 1 || _first.Length == 0 || panel.ItemAtCursor.Length == 0 || panel.ItemAtCursor == _first)
+            return Done(false, $"the item cursor: [{_first}] then [{panel.ItemAtCursor}] (slot {cur}, not 1)");
+        return Done(true, $"{_main}; the cursor on [{_first}], one down on [{panel.ItemAtCursor}]; the items: [{string.Join(" | ", panel.Items.Take(4))}{(panel.Items.Count > 4 ? " | ..." : "")}] ({panel.Items.Count})");
     }
 
     private void Tap(bool down)
