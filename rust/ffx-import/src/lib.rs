@@ -136,6 +136,8 @@ pub struct Importer {
     archive: ffx_vbf::Archive,
     /// Kernel tables read so far, by archive path.
     kernel: std::sync::Mutex<HashMap<String, Option<std::sync::Arc<ffx_kernel::Table>>>>,
+    /// Localisation kits read so far ([`Importer::loc_text`]), by archive path.
+    lockit: std::sync::Mutex<HashMap<String, Option<std::sync::Arc<Vec<u8>>>>>,
     /// Effect variants read so far ([`effect::variant_extras`]), by import id.
     effects: std::sync::Mutex<HashMap<String, Option<Value>>>,
 }
@@ -160,6 +162,7 @@ impl Importer {
         Ok(Self {
             archive,
             kernel: std::sync::Mutex::default(),
+            lockit: std::sync::Mutex::default(),
             effects: std::sync::Mutex::default(),
         })
     }
@@ -228,24 +231,86 @@ impl Importer {
             6 => "monmagic2",
             _ => return None,
         };
+        let t = self.kernel_table(language, table)?;
+        t.string(id & 0x0fff, 0).map(<[u8]>::to_vec)
+    }
+
+    /// The kernel table `table` (`item`, `w_name`...) of `language`, read
+    /// once; `None` without it.
+    fn kernel_table(
+        &self,
+        language: &str,
+        table: &str,
+    ) -> Option<std::sync::Arc<ffx_kernel::Table>> {
         let lang = ffx_text::Language::from_code(language)?;
         let path = format!("{}{table}.bin", lang.kernel_dir());
-        let t = {
+        let mut cache = self
+            .kernel
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        cache
+            .entry(path.clone())
+            .or_insert_with(|| {
+                self.read(&path)
+                    .ok()
+                    .and_then(|b| ffx_kernel::Table::parse(&b).ok())
+                    .map(std::sync::Arc::new)
+            })
+            .clone()
+    }
+
+    /// The name of a piece of gear in `language`, encoded, as
+    /// `MsGetSaveWeaponName` gives it: `MsWeaponName(name, character,
+    /// kana)` (`0x007a0c50`) on the gear's equipment record (`+0` the
+    /// `w_name` record, chosen when the gear is made; `+4` its character,
+    /// 0..6 the party): string `character` of the kernel's `w_name.bin`
+    /// record `name & 0xfff`, or string `7 + character` (`+0x1c + 4 k`, the
+    /// hiragana form) with `kana` (the config's hiragana bit, save
+    /// `+0x3d0c` bit 3). A record outside the table is the first record,
+    /// as `MsGetExcelData` gives it. `None` without the table.
+    #[must_use]
+    pub fn weapon_name(
+        &self,
+        language: &str,
+        name: u16,
+        character: u8,
+        kana: bool,
+    ) -> Option<Vec<u8>> {
+        let t = self.kernel_table(language, "w_name")?;
+        let id = name & 0x0fff;
+        let id = if t.record(id).is_some() {
+            id
+        } else {
+            t.ids().next()?
+        };
+        let field = usize::from(character) + if kana { 7 } else { 0 };
+        t.string(id, field).map(<[u8]>::to_vec)
+    }
+
+    /// Line `index` of the remaster's localisation kit for `language`
+    /// (`LocalizationManager_getText`, `0x006db1f0`; `SaveDataGetLoc`):
+    /// `FFX_Data/GameData/PS3Data/LocKit/FFX_LOC_KIT_PS3_<LANG>.BIN`
+    /// (`LocalizationManager_readLocalizationKit`), lines ending at `\n`,
+    /// `\r` dropped, past the last line the last one. The bytes as stored
+    /// (the game's encoding for most lines); `None` without the file.
+    #[must_use]
+    pub fn loc_text(&self, language: &str, index: u32) -> Option<Vec<u8>> {
+        let lang = ffx_text::Language::from_code(language)?;
+        let path = format!(
+            "ffx_data/gamedata/ps3data/lockit/ffx_loc_kit_ps3_{}.bin",
+            lang.code()
+        );
+        let b = {
             let mut cache = self
-                .kernel
+                .lockit
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             cache
                 .entry(path.clone())
-                .or_insert_with(|| {
-                    self.read(&path)
-                        .ok()
-                        .and_then(|b| ffx_kernel::Table::parse(&b).ok())
-                        .map(std::sync::Arc::new)
-                })
+                .or_insert_with(|| self.read(&path).ok().map(std::sync::Arc::new))
                 .clone()?
         };
-        t.string(id & 0x0fff, 0).map(<[u8]>::to_vec)
+        Some(loc_line(&b, index))
     }
 
     /// The name of sphere grid node kind `kind` (a node's `+6`) in
@@ -1410,6 +1475,20 @@ mod tests {
         // the first battle command is Attack
         let attack = imp.kernel_name("us", 0x3000).unwrap();
         assert_eq!(cs.decode(&attack), "Attack");
+        // gear names (MsWeaponName): w_name record 0 is each character's
+        // strongest weapon; string k is character k's
+        let w = |name, chr| cs.decode(&imp.weapon_name("us", name, chr, false).unwrap());
+        assert_eq!(w(0, 0), "Caladbolg");
+        assert_eq!(w(0, 6), "Godhand");
+        assert_eq!(w(1, 0), "Brotherhood");
+        assert_eq!(w(0x1000, 0), "Caladbolg", "the low 12 bits");
+        assert_eq!(w(0xfff, 1), w(0, 1), "a record past the table: the first");
+        // the localisation kit: the config's PC row (title 0x1cd, options
+        // 0x1d0 - 2 k)
+        let loc = |i| cs.decode(&imp.loc_text("us", i).unwrap());
+        assert_eq!(loc(0x1cd), "Music");
+        assert_eq!(loc(0x1d0), "Arranged");
+        assert_eq!(loc(0x1ce), "Original");
         let map = imp.import_map("/map/znkd/znkd06/", &cache).unwrap();
         // a map of 2D layers only, a 2D model without meshes
         assert!(matches!(
@@ -1490,6 +1569,34 @@ mod tests {
     }
 }
 
+/// Line `index` of a localisation kit's bytes, as
+/// `LocalizationManager_getText` takes it: lines end at `\n`, `\r` is
+/// dropped, an index past the last line gives the last one (the text after
+/// the last `\n`, which may be empty).
+#[must_use]
+pub fn loc_line(kit: &[u8], index: u32) -> Vec<u8> {
+    let mut line = Vec::new();
+    let mut seen = 0u32;
+    for &c in kit {
+        match c {
+            b'\n' => {
+                if seen == index {
+                    break;
+                }
+                seen += 1;
+                line.clear();
+            }
+            b'\r' => {}
+            _ => line.push(c),
+        }
+    }
+    // the original copies up to the first NUL
+    if let Some(end) = line.iter().position(|&c| c == 0) {
+        line.truncate(end);
+    }
+    line
+}
+
 /// [`Importer::place_name`] on the dictionary's bytes.
 #[must_use]
 pub fn place_name_in(dic: &[u8], index: u16) -> Option<Vec<u8>> {
@@ -1517,7 +1624,23 @@ pub fn place_name_in(dic: &[u8], index: u16) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod place_tests {
-    use super::place_name_in;
+    use super::{loc_line, place_name_in};
+
+    /// The localisation kit's lines: `\r` dropped, past the end the last.
+    #[test]
+    fn loc_lines_are_counted_by_newlines() {
+        let kit = b"zero\r\none\n\nthree";
+        assert_eq!(loc_line(kit, 0), b"zero");
+        assert_eq!(loc_line(kit, 1), b"one");
+        assert_eq!(loc_line(kit, 2), b"");
+        assert_eq!(loc_line(kit, 3), b"three");
+        assert_eq!(loc_line(kit, 9), b"three", "past the end: the last line");
+        assert_eq!(
+            loc_line(b"a\n", 5),
+            b"",
+            "a kit ending in a newline: an empty last line"
+        );
+    }
 
     /// A made-up dictionary: section 11 with two entries (each a name and
     /// its hiragana form).

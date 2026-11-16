@@ -28,11 +28,13 @@ public partial class FfxGame : RefCounted
         public static readonly StringName effect_draws = "effect_draws";
         public static readonly StringName effect_draws_address = "effect_draws_address";
         public static readonly StringName effect_draws_held = "effect_draws_held";
+        public static readonly StringName gear_record = "gear_record";
         public static readonly StringName grid_node_name = "grid_node_name";
         public static readonly StringName is_running = "is_running";
         public static readonly StringName kernel_name = "kernel_name";
         public static readonly StringName key_input = "key_input";
         public static readonly StringName last_error = "last_error";
+        public static readonly StringName loc_text = "loc_text";
         public static readonly StringName mouse_exited = "mouse_exited";
         public static readonly StringName mouse_input = "mouse_input";
         public static readonly StringName peek = "peek";
@@ -48,6 +50,7 @@ public partial class FfxGame : RefCounted
         public static readonly StringName snapshots = "snapshots";
         public static readonly StringName snapshots_held = "snapshots_held";
         public static readonly StringName start = "start";
+        public static readonly StringName weapon_name = "weapon_name";
         public static readonly StringName state = "state";
         public static readonly StringName stop = "stop";
         public static readonly StringName texture_now = "texture_now";
@@ -110,6 +113,19 @@ public partial class FfxGame : RefCounted
 
     /// <summary>A battle command's, item's or monster ability's name (the battle menu's ids) in <paramref name="language"/>.</summary>
     public string KernelName(int id, string language) => Node.Call(M.kernel_name, id, language).AsString();
+
+    /// <summary>
+    /// What names gear <paramref name="id"/> (a battle spoil's or inventory slot's id,
+    /// <c>MsGetSaveWeapon</c>'s), read from the game now: its <c>w_name</c> record, its character
+    /// <c>&lt;&lt; 16</c> and the config's hiragana <c>&lt;&lt; 24</c>; -1 for none or a record not in use.
+    /// </summary>
+    public long GearRecord(int id) => Node.Call(M.gear_record, id).AsInt64();
+
+    /// <summary>A piece of gear's name (<see cref="GearRecord"/>'s value) in <paramref name="language"/>; empty without the archive.</summary>
+    public string WeaponName(long record, string language) => Node.Call(M.weapon_name, record, language).AsString();
+
+    /// <summary>Line <paramref name="index"/> of the remaster's localisation kit in <paramref name="language"/>, decoded; empty without the archive.</summary>
+    public string LocText(int index, string language) => Node.Call(M.loc_text, index, language).AsString();
 
     /// <summary>A developer's look at <paramref name="len"/> bytes of game memory (read only; empty while no game runs).</summary>
     public byte[] Peek(long address, int len) => Node.Call(M.peek, address, len).AsByteArray();

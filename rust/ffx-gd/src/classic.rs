@@ -145,6 +145,30 @@ impl Classic {
         self.decode(language, &name)
     }
 
+    /// A piece of gear's name in `language`, decoded
+    /// (`ffx_import::Importer::weapon_name`).
+    #[must_use]
+    pub fn weapon_name(
+        &self,
+        language: &str,
+        name: u16,
+        character: u8,
+        kana: bool,
+    ) -> Option<String> {
+        let open = lock(&self.open).clone()?;
+        let text = open.importer.weapon_name(language, name, character, kana)?;
+        self.decode(language, &text)
+    }
+
+    /// Line `index` of the localisation kit in `language`, decoded
+    /// (`ffx_import::Importer::loc_text`).
+    #[must_use]
+    pub fn loc_text(&self, language: &str, index: u32) -> Option<String> {
+        let open = lock(&self.open).clone()?;
+        let text = open.importer.loc_text(language, index)?;
+        self.decode(language, &text)
+    }
+
     /// A material texture's face as PNG (`ffx_import::Importer::texture_png`).
     #[must_use]
     pub fn texture_png(&self, path: &str, face: usize) -> Option<Vec<u8>> {

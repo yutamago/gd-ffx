@@ -66,6 +66,44 @@ pub fn peek(shared: &Shared, at: u32, len: usize) -> Vec<u8> {
         .collect()
 }
 
+/// `g_Equipment` (`0x01130f2c`): the inventory's 200 gear records of 22
+/// bytes (ffx-rust docs/formats/kernel.md, "Equipment").
+const EQUIPMENT: u32 = 0x0113_0f2c;
+/// The 8 records of the `0x7000` ids and of the `0xb000` ids (the battle's
+/// spoils), as `MsGetSaveWeapon` (`0x007abbd0`) finds them.
+const EQUIPMENT_7000: u32 = 0x0231_0f9e;
+const EQUIPMENT_B000: u32 = 0x0231_0dde;
+const EQUIPMENT_SIZE: u32 = 22;
+/// `g_SaveMenu` (save `+0x3d0c`): bit 3 the config's hiragana.
+const SAVE_MENU: u32 = 0x0113_079c;
+
+/// What names gear `id` (a `MsGetSaveWeapon` id: `0x7000 + i`, `0xb000 +
+/// i`, else an inventory slot; an index out of range is slot 0): its
+/// record's `w_name` record (`+0`), its character (`+4`) and the config's
+/// hiragana bit, as `MsGetSaveWeaponName` (`0x007abdf0`) reads them;
+/// `None` for id `0xff`, a record not in use (`+2` 0: the battle results
+/// do not draw it) or a game not started. The state API does not carry
+/// the records (yet): read from the game's memory now.
+#[must_use]
+pub fn gear(shared: &Shared, id: u16) -> Option<(u16, u8, bool)> {
+    if id == 0xff {
+        return None;
+    }
+    let arena = shared.arena();
+    let i = u32::from(id & 0x0fff);
+    let (base, n) = match id >> 12 {
+        7 => (EQUIPMENT_7000, 8),
+        0xb => (EQUIPMENT_B000, 8),
+        _ => (EQUIPMENT, 200),
+    };
+    let slot = base + EQUIPMENT_SIZE * if i < n { i } else { 0 };
+    if !arena.is_mapped(slot, EQUIPMENT_SIZE as usize) || read::<u8>(arena, slot + 2) == 0 {
+        return None;
+    }
+    let kana = (read::<u32>(arena, SAVE_MENU) >> 3) & 1 != 0;
+    Some((read(arena, slot), read(arena, slot + 4), kana))
+}
+
 /// The values now.
 #[must_use]
 pub fn snapshot(shared: &Shared) -> Snapshot {

@@ -878,6 +878,31 @@ public sealed class MenuTest(double timeout, string? shot) : ITest
     private double _probe;
     private string _main = "";
     private double _listAt = -1;
+
+    /// <summary>
+    /// The joined party's weapons named as the game names gear (<c>MsGetSaveWeaponName</c>: the
+    /// record read from the game, <see cref="FfxGame.GearRecord"/>, then <see cref="FfxGame.WeaponName"/>):
+    /// the self-check's look at the gear names the results screen shows.
+    /// </summary>
+    private static string Weapons(GdFfx.Api.Snapshot s)
+    {
+        var game = GameHost.Instance?.Game;
+        if (game == null)
+            return "weapons: no game";
+        var lang = MessageView.LanguageCode(s.World.Language);
+        var names = new System.Collections.Generic.List<string>();
+        for (int i = 0; i < s.Save.Members.Count && i < 7; i++)
+        {
+            var m = s.Save.Members[i];
+            if (!m.Joined || m.Weapon == 0xff)
+                continue;
+            var record = game.GearRecord(m.Weapon);
+            var n = record < 0 ? "" : MessageView.Clean(game.WeaponName(record, lang));
+            names.Add($"{FieldMenuView.MemberName(game, s, i)} {(n.Length > 0 ? n : $"slot {m.Weapon}: no name")}");
+        }
+        return $"weapons: [{string.Join(" | ", names)}]";
+    }
+
     private string _first = "";
 
     public string Note { get; private set; } = "";
@@ -916,7 +941,7 @@ public sealed class MenuTest(double timeout, string? shot) : ITest
         {
             if (!panel.Footer.Contains("Gil"))
                 return Done(false, $"no gil line ({panel.Footer})");
-            _main = $"the menu: [{string.Join(" | ", options.Shown)}]; the party: [{string.Join(" | ", panel.Shown)}]; {panel.Footer}";
+            _main = $"the menu: [{string.Join(" | ", options.Shown)}]; the party: [{string.Join(" | ", panel.Shown)}]; {panel.Footer}; {Weapons(c)}";
             if (shot != null && DisplayServer.GetName() != "headless")
                 root!.GetViewport().GetTexture().GetImage().SavePng(shot);
         }

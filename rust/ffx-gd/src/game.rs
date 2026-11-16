@@ -733,6 +733,52 @@ impl FfxGame {
             .map_or_else(GString::new, |s| GString::from(s.as_str()))
     }
 
+    /// What names gear `id` (a battle spoil's or an inventory slot's id,
+    /// `MsGetSaveWeapon`'s), read from the game now: its `w_name` record,
+    /// plus its character `<< 16`, plus `1 << 24` with the config's
+    /// hiragana; -1 without a game, for id `0xff` or a record not in use.
+    /// `weapon_name` names it.
+    #[func]
+    fn gear_record(&self, id: i64) -> i64 {
+        let (Some(shared), Ok(id)) = (self.run.as_ref().and_then(Run::shared), u16::try_from(id))
+        else {
+            return -1;
+        };
+        crate::state::gear(&shared, id).map_or(-1, |(name, chr, kana)| {
+            i64::from(name) | i64::from(chr) << 16 | i64::from(kana) << 24
+        })
+    }
+
+    /// The name of a piece of gear (`gear_record`'s value) in `language`
+    /// (`MsWeaponName`: the kernel's `w_name`); empty without the archive
+    /// or such a record.
+    #[func]
+    fn weapon_name(&self, record: i64, language: GString) -> GString {
+        let (Ok(name), Ok(chr)) = (
+            u16::try_from(record & 0xffff),
+            u8::try_from(record >> 16 & 0xff),
+        ) else {
+            return GString::new();
+        };
+        if record < 0 {
+            return GString::new();
+        }
+        classic()
+            .weapon_name(&language.to_string(), name, chr, record >> 24 & 1 != 0)
+            .map_or_else(GString::new, |s| GString::from(s.as_str()))
+    }
+
+    /// Line `index` of the remaster's localisation kit in `language`
+    /// (`LocalizationManager_getText`; the config's PC row, the save
+    /// descriptions), decoded; empty without the archive.
+    #[func]
+    fn loc_text(&self, index: i64, language: GString) -> GString {
+        u32::try_from(index)
+            .ok()
+            .and_then(|i| classic().loc_text(&language.to_string(), i))
+            .map_or_else(GString::new, |s| GString::from(s.as_str()))
+    }
+
     /// Asks the game to start a battle (`field` the battle field's record,
     /// its `group` and `formation`) as a random encounter would; refused
     /// while one runs. `request_results` reports it.

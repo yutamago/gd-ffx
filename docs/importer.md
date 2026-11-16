@@ -146,8 +146,15 @@ cargo run --release -p ffx-import -- --game-dir <game> effects /map/bsil/bsil00/
 cargo run --release -p ffx-import -- --game-dir <game> effect --wgsl TransparentNoMSAA 'PS3Data/Shaders/PhyreDefaultLitShader.fx#DE71...'  # a variant's programs as WGSL (ffx-dxbc)
 ```
 
-The WGSL is a reading aid printed from the player's own files; keep it out
-of git.
+```bash
+cargo run --release -p ffx-import -- --game-dir <game> loc us 0x1cd 0x1d0 0x1ce   # localisation kit lines (the config's PC row)
+cargo run --release -p ffx-import -- --game-dir <game> wname jp [kana]            # every w_name record's gear names, per character
+cargo run --release -p ffx-import -- --game-dir <game> devnames 7                 # a developer save's 18 names, decoded in jp and us
+cargo run --release -p ffx-import -- --game-dir <game> cat <archive path> > /tmp/x # a file's raw bytes
+```
+
+The WGSL, the texts and the files are reading aids printed from the
+player's own files; keep them out of git.
 
 `--game-dir` defaults to `FFX_GAME_DIR`.
 
