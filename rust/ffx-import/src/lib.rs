@@ -36,6 +36,9 @@ pub enum Error {
     Archive(String),
     /// No such model in the archive.
     Missing(String),
+    /// The level has no model of that kind, as many do: a map of 2D layers
+    /// only has no 3D model, most 3D maps have no 2D layers.
+    None(String),
     /// A model that does not parse.
     Model(String),
 }
@@ -46,6 +49,7 @@ impl std::fmt::Display for Error {
             Self::Io(e) => write!(f, "io: {e}"),
             Self::Archive(e) => write!(f, "archive: {e}"),
             Self::Missing(p) => write!(f, "not in the archive: {p}"),
+            Self::None(p) => write!(f, "none: {p}"),
             Self::Model(e) => write!(f, "model: {e}"),
         }
     }
@@ -287,6 +291,29 @@ impl Importer {
             .is_some_and(|t| t.kind.faces() == 6)
     }
 
+    /// Which of `names` a material's effect variant switches on
+    /// (`extras.ffx_effect`, e.g.
+    /// `PS3Data/Shaders/PhyrePrerenderedShader.fx#987968AD...`; the
+    /// switches such as `MASK_DEPTH`, `ADDITIVE_BLENDING`). A variant's
+    /// cluster names the switches it has on (`PEffectVariant.m_switches`)
+    /// and no others, so the name's bytes in the cluster tell: on all ten
+    /// `phyreprerenderedshader` variants this agrees with ffx-rust's
+    /// `ffx_scene::effect::EffectVariant` (not a dependency of gd-ffx).
+    /// Empty when the variant is not in the archive.
+    #[must_use]
+    pub fn effect_switches<'n>(&self, effect: &str, names: &[&'n str]) -> Vec<&'n str> {
+        let lower = effect.to_ascii_lowercase();
+        let (dir, file) = lower.rsplit_once('/').unwrap_or(("", &lower));
+        let Ok(bytes) = self.read(&format!("ffx_data/gamedata/{dir}/d3d11/{file}.phyre")) else {
+            return Vec::new();
+        };
+        names
+            .iter()
+            .filter(|n| bytes.windows(n.len()).any(|w| w == n.as_bytes()))
+            .copied()
+            .collect()
+    }
+
     /// The model at `path` as a glTF binary with its base colour textures
     /// embedded (PNG), as stored (no axis change: see the module's doc).
     ///
@@ -337,29 +364,57 @@ impl Importer {
     /// (`<cache>/map/<map>.glb`).
     ///
     /// # Errors
-    /// When `level` names no map, or as [`Importer::import`].
+    /// When `level` names no map, [`Error::None`] when it is a map of 2D
+    /// layers only ([`Importer::map_layers_model`]), or as
+    /// [`Importer::import`].
     pub fn import_map(&self, level: &str, cache: &Path) -> Result<PathBuf> {
-        let path = self
-            .map_model(level)
-            .ok_or_else(|| Error::Missing(level.to_string()))?;
+        let path = map_model_path(level).ok_or_else(|| Error::Missing(level.to_string()))?;
+        if !self.has(&path) && self.map_layers_model(level).is_some() {
+            return Err(Error::None(format!("{level} has 2D layers only")));
+        }
         let name = file_stem(&path);
         self.import(&path, &cache.join("map").join(format!("{name}.glb")))
     }
 
-    /// The archive path of `level`'s map model: [`map_model_path`], or for
-    /// the maps the remaster keeps under `2d/` (`.../<map>/2d/mdl/d3d11/`,
-    /// with `2d/tex/`: `ptkl14`, `mihn03`, `guad01`, `kami01`, `maca01`,
-    /// `bvyt04`, `mcfr11`, `nagi07`, `sins00`, found by gd-ffx's sweep of
-    /// the developer saves) that one
-    /// when the first is not in the archive.
+    /// The archive path of `level`'s map model ([`map_model_path`]) when
+    /// the archive has it.
     #[must_use]
     pub fn map_model(&self, level: &str) -> Option<String> {
-        let path = map_model_path(level)?;
-        if self.has(&path) {
-            return Some(path);
+        map_model_path(level).filter(|p| self.has(p))
+    }
+
+    /// The archive path of `level`'s 2D layers when it has them:
+    /// `.../map/<area>/<map>/2d/mdl/d3d11/<map>.dae.phyre`, with the
+    /// textures in `2d/tex/`. The meshes `scene<s>layer<l>` hold each layer
+    /// as a quad in PS2 screen pixels (x, y; 512 x 448) at its depth (z);
+    /// ffx-rust's docs/formats/scene-maps.md, "How the game draws the 2D
+    /// layers". Maps of 2D layers only (`ptkl14`, `mihn03`, `kami01`...)
+    /// have no 3D model; 3D maps may have them too (`bsil00`).
+    #[must_use]
+    pub fn map_layers_model(&self, level: &str) -> Option<String> {
+        let path = map_model_path(level)?.replacen("/mdl/d3d11/", "/2d/mdl/d3d11/", 1);
+        self.has(&path).then_some(path)
+    }
+
+    /// `level`'s 2D layers ([`Importer::map_layers_model`]) imported under
+    /// `cache` (`<cache>/map2d/<map>.glb`).
+    ///
+    /// # Errors
+    /// When `level` names no map, [`Error::None`] when it has no 2D
+    /// layers, or as [`Importer::import`].
+    pub fn import_map_layers(&self, level: &str, cache: &Path) -> Result<PathBuf> {
+        map_model_path(level).ok_or_else(|| Error::Missing(level.to_string()))?;
+        let path = self
+            .map_layers_model(level)
+            .ok_or_else(|| Error::None(format!("{level} has no 2D layers")))?;
+        let name = file_stem(&path);
+        match self.import(&path, &cache.join("map2d").join(format!("{name}.glb"))) {
+            // a 2D model without meshes (`znkd06`)
+            Err(Error::Model(e)) if e.contains("no PMeshSegment") => {
+                Err(Error::None(format!("{level}'s 2D model has no layers")))
+            }
+            r => r,
         }
-        let flat = path.replacen("/mdl/d3d11/", "/2d/mdl/d3d11/", 1);
-        Some(if self.has(&flat) { flat } else { path })
     }
 
     /// The character model `model` imported under `cache`
@@ -433,8 +488,30 @@ mod tests {
         let attack = imp.kernel_name("us", 0x3000).unwrap();
         assert_eq!(cs.decode(&attack), "Attack");
         let map = imp.import_map("/map/znkd/znkd06/", &cache).unwrap();
+        // a map of 2D layers only, a 2D model without meshes
+        assert!(matches!(
+            imp.import_map("/map/kami/kami01/", &cache),
+            Err(Error::None(_))
+        ));
+        let layers = imp.import_map_layers("/map/kami/kami01/", &cache).unwrap();
+        // kami01's lamp glows (layers 7..10) add and write no depth; its pictures do neither
+        let names = ["MASK_DEPTH", "ADDITIVE_BLENDING"];
+        let fx = "PS3Data/Shaders/PhyrePrerenderedShader.fx#";
+        assert_eq!(
+            imp.effect_switches(&format!("{fx}76FCBCF8ED1839AC14A6288F177585D7"), &names),
+            names
+        );
+        assert!(
+            imp.effect_switches(&format!("{fx}987968ADFCEDE47EA4871B4290C3ED1B"), &names)
+                .is_empty()
+        );
+        assert!(layers.ends_with("map2d/kami01.glb"), "{}", layers.display());
+        assert!(matches!(
+            imp.import_map_layers("/map/znkd/znkd06/", &cache),
+            Err(Error::None(_))
+        ));
         let chr = imp.import_character("c001", &cache).unwrap();
-        for p in [&map, &chr] {
+        for p in [&map, &chr, &layers] {
             let b = std::fs::read(p).unwrap();
             assert_eq!(&b[0..4], b"glTF", "{}", p.display());
             assert!(b.len() > 10_000, "{}: {} bytes", p.display(), b.len());

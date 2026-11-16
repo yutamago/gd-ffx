@@ -13,6 +13,10 @@ ships with gd-ffx or goes into git.
   (`Model::to_glb_with`) with its base colour textures embedded as PNG.
   - **Maps** by the level the game's renderer loaded (the game-state API's
     `World.level`, e.g. `/map/bsil/bsil00/`): `.../map/<area>/<map>/mdl/d3d11/<map>.dae.phyre`.
+  - **A map's 2D layers** (kind `map2d`): `.../map/<area>/<map>/2d/mdl/d3d11/<map>.dae.phyre`,
+    drawn by `MapLayers` (docs/architecture.md, "The 2D layers"). A map of 2D
+    layers only has no 3D model, most 3D maps have no 2D layers: the import
+    answers `none: ...`, which is not logged.
   - **Characters** by model name (`Actor.model`, e.g. `c001`): `.../chr/<kind>/<name>/mdl/d3d11/<name>.dae.phyre`
     (`c` party, `m` monsters, `n` NPCs, `s` aeons, `w` weapons, `f` objects).
 - `rust/ffx-gd` runs the imports on background threads
@@ -48,16 +52,17 @@ ships with gd-ffx or goes into git.
 cd rust
 cargo run --release -p ffx-import -- --game-dir <game> --out <dir> map /map/bsil/bsil00/
 cargo run --release -p ffx-import -- --game-dir <game> --out <dir> chr c001 w041
+cargo run --release -p ffx-import -- --game-dir <game> --out <dir> map2d /map/kami/kami01/
 cargo run --release -p ffx-import -- --game-dir <game> devsaves      # the developers' saves: map, entrance, scenario
+cargo run --release -p ffx-import -- --game-dir <game> model /map/kami/kami01/   # a model's nodes, instances, materials
 ```
 
 `--game-dir` defaults to `FFX_GAME_DIR`.
 
 ## Not yet
 
-- Maps whose level is not a 3D map model in the archive (the title's
-  `/map/titl/...`) show nothing; the 2D layer maps and the PS2 map camera
-  file are not read.
+- The PS2 map camera file is not read; the 2D layers' texture animation is
+  not played.
 - No collision mesh (the game does the walking), no lights or fog from the
   files, no water, morphing meshes, texture animation or effects; the
   materials are base colour only.

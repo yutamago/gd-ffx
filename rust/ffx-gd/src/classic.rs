@@ -15,6 +15,8 @@ use ffx_import::Importer;
 pub enum Kind {
     /// A map model, by the scene's level name (`/map/bsil/bsil00/`).
     Map,
+    /// A map's 2D layers, by the level name (`/map/kami/kami01/`).
+    MapLayers,
     /// A character model, by its name (`c001`).
     Character,
 }
@@ -25,6 +27,7 @@ impl Kind {
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "map" => Some(Self::Map),
+            "map2d" => Some(Self::MapLayers),
             "chr" => Some(Self::Character),
             _ => None,
         }
@@ -35,6 +38,7 @@ impl Kind {
     pub fn name(self) -> &'static str {
         match self {
             Self::Map => "map",
+            Self::MapLayers => "map2d",
             Self::Character => "chr",
         }
     }
@@ -148,6 +152,19 @@ impl Classic {
             .is_some_and(|o| o.importer.texture_is_cube(path))
     }
 
+    /// Which of `names` an effect variant switches on
+    /// (`ffx_import::Importer::effect_switches`).
+    #[must_use]
+    pub fn effect_switches(&self, effect: &str, names: &[&str]) -> Vec<String> {
+        lock(&self.open).clone().map_or_else(Vec::new, |o| {
+            o.importer
+                .effect_switches(effect, names)
+                .into_iter()
+                .map(str::to_string)
+                .collect()
+        })
+    }
+
     /// Whether the archive is open.
     #[must_use]
     pub fn is_open(&self) -> bool {
@@ -171,6 +188,7 @@ impl Classic {
             .spawn(move || {
                 let r = match kind {
                     Kind::Map => open.importer.import_map(&name, &open.cache),
+                    Kind::MapLayers => open.importer.import_map_layers(&name, &open.cache),
                     Kind::Character => open.importer.import_character(&name, &open.cache),
                 };
                 lock(&done).push(Done {

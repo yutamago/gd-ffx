@@ -52,7 +52,7 @@ public partial class FfxGame : RefCounted
     public bool ClassicOpen(string gameDir, string cacheDir) =>
         Node.Call("classic_open", gameDir, cacheDir).AsBool();
 
-    /// <summary>Imports a map (<c>map</c>, by level name) or character (<c>chr</c>, by model name) in the background.</summary>
+    /// <summary>Imports a map (<c>map</c>, by level name), a map's 2D layers (<c>map2d</c>) or a character (<c>chr</c>, by model name) in the background.</summary>
     public bool ClassicRequest(string kind, string name) =>
         Node.Call("classic_request", kind, name).AsBool();
 
@@ -81,6 +81,10 @@ public partial class FfxGame : RefCounted
 
     /// <summary>Whether the material texture at <paramref name="path"/> is a cube map.</summary>
     public bool ClassicTextureIsCube(string path) => Node.Call("classic_texture_is_cube", path).AsBool();
+
+    /// <summary>Which of <paramref name="names"/> a material's effect variant (<c>extras.ffx_effect</c>) switches on; empty without the archive.</summary>
+    public string[] ClassicEffectSwitches(string effect, string[] names) =>
+        Node.Call("classic_effect_switches", effect, names).AsStringArray();
 
     /// <summary>Sphere grid node kind <paramref name="kind"/>'s name, decoded; empty without the archive.</summary>
     public string GridNodeName(int kind, string language) => Node.Call("grid_node_name", kind, language).AsString();

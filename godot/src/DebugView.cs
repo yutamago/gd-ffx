@@ -515,7 +515,14 @@ public sealed class MapTest(double timeout, string? shot) : ITest
         }
         return Done(true, $"{(c.World.Battle ? "battle" : "field")} {c.World.Level} (map {c.World.Map:x}): {view.Posed.Models} models "
             + $"({view.Posed.PosedBones} bones), {view.ObjectsPlaced} objects, {fx?.Shown.Draws ?? 0} effect draws "
-            + $"({fx?.Shown.Textured ?? 0} textured), distortion {(dv?.Shown.On == true ? "on" : "off")}, at {_total:F0} s");
+            + $"({fx?.Shown.Textured ?? 0} textured), distortion {(dv?.Shown.On == true ? "on" : "off")}{Layers(view)}, at {_total:F0} s");
+    }
+
+    /// <summary>The 2D layers, when the map has any: loaded, shown, the 2D scene and the pan (read from the game, or "not read").</summary>
+    private static string Layers(StateView3D view)
+    {
+        var l = view.Layers.State;
+        return l.Layers == 0 ? "" : $", 2D layers {l.Shown}/{l.Layers} (scene {l.Scene}, pan {(l.Live ? l.Pan.ToString("F3") : "not read")})";
     }
 
     private bool Done(bool pass, string note)

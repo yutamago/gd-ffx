@@ -23,7 +23,7 @@ hands over to the game (`scenes/main.tscn`).
   the file in `DIR`); nothing is written when nothing changed, Start
   included.
 - **The classic cache** (`user://classic`, or `--classic=PATH`): its size,
-  and "Clear cache", which deletes its `map/` and `chr/` folders (the
+  and "Clear cache", which deletes its `map/`, `map2d/` and `chr/` folders (the
   importer's output, made from your copy; imported again when needed) and
   nothing else. It is only offered for a safe folder: an absolute path,
   not a filesystem root, the home folder or gd-ffx's user data folder
@@ -130,7 +130,7 @@ a pack is switched off and another moved up, and `load_order.txt` says so
 (and reads back the same); the language shows German; clearing is refused
 for an empty or relative path, `/`, the home folder, the user data folder
 itself, and the test's cache (outside `user://`) until it has the marker,
-then the cache is cleared (a file beside `map/` and `chr/` is kept); Start
+then the cache is cleared (a file beside `map/`, `map2d/` and `chr/` is kept); Start
 leaves `load_order.txt` untouched and hands over to `scenes/main.tscn`
 with the enabled packs mounted in the chosen order and the disabled one
 not, and, with `--no-game`, no game booted. It deletes its folder and
