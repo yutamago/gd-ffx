@@ -355,7 +355,22 @@ void fragment() {
         if (host?.Game == null || s == null || s.Update == _update)
             return;
         _update = s.Update;
+        var t0 = Perf.Start();
         var frame = Decode(host.Game.EffectDraws(s.Update));
+        Perf.End(Perf.Section.EffectDecode, t0);
+        t0 = Perf.Start();
+        try
+        {
+            Build(host.Game, s, frame);
+        }
+        finally
+        {
+            Perf.End(Perf.Section.EffectMesh, t0);
+        }
+    }
+
+    private void Build(FfxGame game, GdFfx.Api.Snapshot s, (uint Update, List<Draw> Draws)? frame)
+    {
         // the screen distortion of the same frame (DistortionView, in the overlay)
         if (GetTree().Root.FindChild("DistortionView", true, false) is DistortionView dv)
         {
@@ -421,7 +436,7 @@ void fragment() {
             arrays[(int)Mesh.ArrayType.TexUV] = uv.ToArray();
             arrays[(int)Mesh.ArrayType.Index] = idx.ToArray();
             mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays);
-            var mat = Material(host.Game, tex, look);
+            var mat = Material(game, tex, look);
             mesh.SurfaceSetMaterial(mesh.GetSurfaceCount() - 1, mat);
             if (tex == FrameBufferName || _textures.TryGetValue(tex, out var t) && t != null)
             {

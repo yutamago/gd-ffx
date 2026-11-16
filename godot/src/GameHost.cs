@@ -173,7 +173,10 @@ public partial class GameHost : Node
     {
         if (Game == null)
             return;
+        var t0 = Perf.Start();
         View.Refresh(Game);
+        Perf.End(Perf.Section.Snapshots, t0);
+        var t1 = Perf.Start();
         Classic?.Poll();
         // the developer save once an event runs (the opening is the first)
         if (_devsave > 0 && View.Current is { } s && s.World.Event.Length > 0 && s.Update > 30)
@@ -191,6 +194,7 @@ public partial class GameHost : Node
         }
         foreach (var r in Game.RequestResults())
             GD.Print($"ffx: request: {r}");
+        Perf.End(Perf.Section.Host, t1);
     }
 
     public override void _Notification(int what)

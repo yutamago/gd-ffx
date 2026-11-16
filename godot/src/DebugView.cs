@@ -63,6 +63,8 @@ public partial class DebugView : Control
             _test = new SelfTest(timeout);
         else if (GameSettings.Flag("selftest-menu"))
             _test = new MenuTest(timeout, GameSettings.Arg("shot"));
+        else if (GameSettings.Flag("bench"))
+            _test = new BenchTest(timeout);
         else if (GameSettings.Flag("selftest-map"))
             _test = new MapTest(timeout, GameSettings.Arg("shot"));
         else if (GameSettings.Flag("selftest-besaid"))
@@ -84,6 +86,13 @@ public partial class DebugView : Control
     }
 
     public override void _Process(double delta)
+    {
+        var t0 = Perf.Start();
+        Tick(delta);
+        Perf.End(Perf.Section.Debug, t0);
+    }
+
+    private void Tick(double delta)
     {
         var host = GameHost.Instance;
         if (host?.Game == null)

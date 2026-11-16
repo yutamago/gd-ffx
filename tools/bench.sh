@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# G5's benchmark (docs/running.md, "Benchmark"): Godot headless (the CPU side:
+# the dummy renderer draws nothing) at developer saves, one run at a time
+# through tools/capped.sh, each recording --bench-seconds of frames once the
+# scene is shown and printing the `ffx bench:` lines (frame times, each view's
+# CPU time, allocations and GC, the game's updates) and the game thread's
+# hitches (ffx-host's `hitch:` lines, here over FFX_HOST_HITCH_MS, 50 ms by
+# default).
+#
+#   FFX_GAME_DIR=<game folder> tools/bench.sh [SCENE...] [-- GODOT_ARGS...]
+#
+# SCENE: besaid (save 7), besaid-walk (save 7, walking off the beach),
+# lchb (save 22, 13 models), battle (save 7, battle 3,0,0); default: besaid
+# lchb battle. Logs in $BENCH_OUT (default /tmp/gd-ffx-bench), removed with
+# the documents unless BENCH_KEEP=1.
+set -euo pipefail
+repo="$(cd "$(dirname "$0")/.." && pwd)"
+godot="${GODOT:-$HOME/tools/Godot_v4.7.2-stable_mono_linux_x86_64/godot}"
+: "${FFX_GAME_DIR:?set FFX_GAME_DIR to the game folder (the one with FFX.exe)}"
+scenes=()
+while [[ $# -gt 0 && "$1" != -- ]]; do
+    scenes+=("$1")
+    shift
+done
+[[ "${1:-}" == -- ]] && shift
+[[ ${#scenes[@]} -gt 0 ]] || scenes=(besaid lchb battle)
+out="${BENCH_OUT:-/tmp/gd-ffx-bench}"
+mkdir -p "$out"
+cd "$repo/godot"
+dotnet build -nologo -v quiet gd-ffx.csproj >/dev/null
+[[ -f .godot/extension_list.cfg ]] || "$godot" --headless --editor --quit --path . >/dev/null 2>&1 || true
+docs="$(mktemp -d -t gd-ffx-bench.XXXXXX)"
+trap 'rm -rf "$docs"; [[ "${BENCH_KEEP:-0}" == 1 ]] || rm -rf "$out"' EXIT
+status=0
+for scene in "${scenes[@]}"; do
+    case "$scene" in
+        besaid) args=(--devsave=7) ;;
+        besaid-walk) args=(--devsave=7 --bench-walk) ;;
+        lchb) args=(--devsave=22) ;;
+        battle) args=(--devsave=7 --battle=3,0,0) ;;
+        *) echo "bench: unknown scene $scene" >&2; exit 2 ;;
+    esac
+    echo "== $scene"
+    set +e
+    FFX_HOST_HITCH_MS="${FFX_HOST_HITCH_MS:-50}" timeout 400 "$repo/tools/capped.sh" "$godot" --headless --path . -- \
+        --bench "${args[@]}" --selftest-timeout=300 --documents="$docs" "$@" >"$out/$scene.log" 2>&1
+    s=$?
+    set -e
+    [[ $s -eq 0 ]] || status=$s
+    grep -E '^ffx bench|^ffx selftest|hitch|SCRIPT ERROR|panicked' "$out/$scene.log" | cut -c1-400
+done
+exit "$status"

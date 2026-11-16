@@ -20,6 +20,13 @@ public partial class ScreenFilterView : ColorRect
 
     public override void _Process(double delta)
     {
+        var t0 = Perf.Start();
+        Tick(delta);
+        Perf.End(Perf.Section.Filter, t0);
+    }
+
+    private void Tick(double delta)
+    {
         var e = GameHost.Instance?.View.Current?.Effects;
         var c = new Color(0, 0, 0, 0);
         if (e != null)

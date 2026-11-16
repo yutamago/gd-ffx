@@ -116,6 +116,7 @@ public partial class StateView3D : Node3D
         if (host == null)
             return;
         var view = host.View;
+        var t0 = Perf.Start();
         if (view.Camera() is { } cam)
         {
             _camera.GlobalTransform = cam.Transform;
@@ -136,8 +137,13 @@ public partial class StateView3D : Node3D
             ApplyGlow(look);
         }
         UpdateMap(host.Classic, view.Current);
+        Perf.End(Perf.Section.View3D, t0);
+        t0 = Perf.Start();
         UpdateObjects(view);
+        Perf.End(Perf.Section.Objects, t0);
+        t0 = Perf.Start();
         UpdateActors(host.Classic, view);
+        Perf.End(Perf.Section.Actors, t0);
     }
 
     // ---- the map ----------------------------------------------------------------

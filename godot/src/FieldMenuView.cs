@@ -302,6 +302,13 @@ public partial class FieldMenuView : Control
 
     public override void _Process(double delta)
     {
+        var t0 = Perf.Start();
+        Tick(delta);
+        Perf.End(Perf.Section.FieldMenu, t0);
+    }
+
+    private void Tick(double delta)
+    {
         var host = GameHost.Instance;
         var s = host?.View.Current;
         Shown.Clear();
