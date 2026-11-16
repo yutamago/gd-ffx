@@ -27,6 +27,7 @@ public static class TextureFetcher
     private static readonly ConcurrentQueue<(string Kind, string Name, int Face, TaskCompletionSource<Pixels?> Done)> Asked = new();
     private static readonly Dictionary<long, TaskCompletionSource<Pixels?>> Waiting = new();
     private static long _next;
+    private static volatile bool _closed;
 
     /// <summary>How long a worker waits for an answer (the game may have gone).</summary>
     private const int TimeoutMs = 30000;
@@ -36,8 +37,13 @@ public static class TextureFetcher
     /// <summary>Asks for a texture face (<paramref name="kind"/> <c>face</c> or <c>runtime</c>) from any thread.</summary>
     public static Task<Pixels?> Request(string kind, string name, int face = 0)
     {
+        if (_closed)
+            return Task.FromResult<Pixels?>(null);
         var done = new TaskCompletionSource<Pixels?>(TaskCreationOptions.RunContinuationsAsynchronously);
         Asked.Enqueue((kind, name, face, done));
+        // closed meanwhile: no poll will come
+        if (_closed)
+            done.TrySetResult(null);
         return done.Task;
     }
 
@@ -68,6 +74,20 @@ public static class TextureFetcher
         for (int i = 0; i < faces.Length; i++)
             r[i] = tasks[i].Result;
         return r;
+    }
+
+    /// <summary>
+    /// The end (Godot quits; the main thread): every ask waiting and every later one is answered
+    /// "none", so no worker waits for a frame that will not come.
+    /// </summary>
+    public static void Close()
+    {
+        _closed = true;
+        while (Asked.TryDequeue(out var a))
+            a.Done.TrySetResult(null);
+        foreach (var done in Waiting.Values)
+            done.TrySetResult(null);
+        Waiting.Clear();
     }
 
     /// <summary>Passes the queued asks to the extension and hands back what it read (the main thread, once a frame).</summary>

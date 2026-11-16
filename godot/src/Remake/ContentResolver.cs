@@ -91,6 +91,22 @@ public static class ContentResolver
     }
 
     /// <summary>
+    /// Waits up to <paramref name="ms"/> for the classic loads under way (Godot quits: a worker
+    /// still building a scene while the engine goes away crashed it). Call
+    /// <see cref="TextureFetcher.Close"/> first.
+    /// </summary>
+    public static void WaitPending(int ms)
+    {
+        var tasks = new List<System.Threading.Tasks.Task>(Loading.Values);
+        if (tasks.Count > 0)
+            System.Threading.Tasks.Task.WaitAll(tasks.ToArray(), ms);
+        foreach (var t in Loading.Values)
+            if (t.IsCompletedSuccessfully && t.Result.Node is { } n)
+                n.Free();
+        Loading.Clear();
+    }
+
+    /// <summary>
     /// Gives up on a classic load no longer wanted (the scene moved on before it was done): its
     /// node is freed once loaded.
     /// </summary>

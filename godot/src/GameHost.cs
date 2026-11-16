@@ -201,6 +201,14 @@ public partial class GameHost : Node
         Perf.End(Perf.Section.Host, t1);
     }
 
+    public override void _ExitTree()
+    {
+        // the background loads end before the engine does
+        TextureFetcher.Close();
+        Remake.ContentResolver.WaitPending(10000);
+        EffectDrawView.WaitPending(10000);
+    }
+
     public override void _Notification(int what)
     {
         switch ((long)what)

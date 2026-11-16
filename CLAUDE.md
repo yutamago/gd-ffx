@@ -38,6 +38,7 @@ here: `docs/architecture.md`, `docs/building.md`, `docs/running.md`,
 export FFX_RUST_DIR=/path/to/ffx-rust            # optional: a local ffx-rust
 tools/build-extension.sh [linux|windows] [build|clippy|test]
 FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/selftest.sh    # headless check (opening, snapshots, Start)
+FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/bench.sh [besaid besaid-walk lchb battle]  # G5: frame times, views' CPU, GC, hitches (docs/running.md "Benchmark")
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-besaid --check-autosave --devsave=7)  # G4: a real autosave read back by the save list
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-besaid --devsave=7)   # G2 check
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-remake --devsave=7)  # G6: a remade c001 posed by the game

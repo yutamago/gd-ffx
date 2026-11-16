@@ -13,6 +13,10 @@
 # lchb (save 22, 13 models), battle (save 7, battle 3,0,0); default: besaid
 # lchb battle. Logs in $BENCH_OUT (default /tmp/gd-ffx-bench), removed with
 # the documents unless BENCH_KEEP=1.
+#
+# BENCH_RENDER=1 renders offscreen instead (Xvfb, OpenGL; nothing on screen,
+# vsync off): Godot's draw calls and objects per frame. Without a GPU (WSL:
+# llvmpipe on the CPU) its frame times say nothing about a real machine.
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 godot="${GODOT:-$HOME/tools/Godot_v4.7.2-stable_mono_linux_x86_64/godot}"
@@ -42,7 +46,14 @@ for scene in "${scenes[@]}"; do
     esac
     echo "== $scene"
     set +e
-    FFX_HOST_HITCH_MS="${FFX_HOST_HITCH_MS:-50}" timeout 400 "$repo/tools/capped.sh" "$godot" --headless --path . -- \
+    if [[ "${BENCH_RENDER:-0}" == 1 ]]; then
+        run=(env -u WAYLAND_DISPLAY -u DISPLAY "$repo/tools/capped.sh" xvfb-run -a -s "-screen 0 1280x720x24"
+            "$godot" --display-driver x11 --rendering-driver opengl3 --audio-driver Dummy --path .)
+        args+=(--no-vsync)
+    else
+        run=("$repo/tools/capped.sh" "$godot" --headless --path .)
+    fi
+    FFX_HOST_HITCH_MS="${FFX_HOST_HITCH_MS:-50}" timeout 400 "${run[@]}" -- \
         --bench "${args[@]}" --selftest-timeout=300 --documents="$docs" "$@" >"$out/$scene.log" 2>&1
     s=$?
     set -e

@@ -381,8 +381,20 @@ void fragment() {
     /// <summary>The texture name of draws that sample the frame copy (the DTT pass).</summary>
     public const string FrameBufferName = "FrameBuffer";
 
-    /// <summary>Textures being read on worker threads (their image: PNG decoded, mipmaps made).</summary>
+    /// <summary>Textures being read on worker threads (their image, mipmaps made).</summary>
     private readonly Dictionary<string, System.Threading.Tasks.Task<Image?>> _loading = new();
+
+    /// <summary>Every view's texture reads under way (<see cref="WaitPending"/>).</summary>
+    private static readonly List<System.Threading.Tasks.Task> Reads = new();
+
+    /// <summary>Waits up to <paramref name="ms"/> for the texture reads under way (Godot quits).</summary>
+    public static void WaitPending(int ms)
+    {
+        Reads.RemoveAll(t => t.IsCompleted);
+        if (Reads.Count > 0)
+            System.Threading.Tasks.Task.WaitAll(Reads.ToArray(), ms);
+        Reads.Clear();
+    }
 
     /// <summary>
     /// A draw's texture: true with it (null: none or not in the archive) once read; false while it
@@ -399,7 +411,11 @@ void fragment() {
             return true;
         }
         if (!_loading.TryGetValue(name, out var task))
+        {
             _loading[name] = task = System.Threading.Tasks.Task.Run(() => ReadImage(name));
+            Reads.RemoveAll(r => r.IsCompleted);
+            Reads.Add(task);
+        }
         if (!task.IsCompleted)
             return false;
         _loading.Remove(name);
