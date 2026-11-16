@@ -3,27 +3,45 @@ using Godot;
 namespace GdFfx;
 
 /// <summary>
-/// G3: the game's screen distortion (heat shimmer, spell ripples; docs/formats/postfx.md in
-/// ffx-rust, "Distortion"): the game copies the frame into a distortion buffer and draws it back
-/// through a grid whose vertices it moves (<c>Distortion_updateDistortionVertex</c>). Here the
-/// grid is a 2D mesh over the screen whose fragments read the screen texture at the grid's UVs:
-/// vertex k at <c>positions[k]</c> (normalised screen, 0..1, y down) shows the frame at
-/// <c>uvs[k]</c>. Fed per frame by <see cref="Show"/>; hidden while the game has the pass off.
-/// (The copy's blend over the previous copy, a short smear, is not reproduced yet.)
+/// G3: the game's screen distortion (the field's ripple, <c>yiScreff_draw</c>, turned on by script
+/// native 0x01e2; docs/formats/postfx.md in ffx-rust, "Distortion"), from ffx-rust's effect capture
+/// (FXDR version 2, <see cref="EffectDrawView.Distortion"/>). The game keeps a buffer across frames:
+/// each frame the colour is blended into it, <c>buffer = colour × a + buffer × (1 − a)</c>
+/// (<c>a = min(blur, 0.8)</c>; a plain copy on a reset), then a grid of 81 vertices that samples the
+/// buffer replaces the screen: per pixel <c>buffer(uv) × vertex colour</c>.
+/// Here the grid is a 2D mesh over the screen (positions and UVs in normalised screen space, y
+/// down) sampling this frame's picture (the screen texture) times the vertex colour: the game's
+/// copy is 80 % the new frame, so the smear is small. The smear itself (a buffer kept across
+/// frames, <see cref="Smear"/>, <c>FFX_DISTORTION_SMEAR=1</c>) is experimental: its input here is
+/// the last shown frame, which already holds the grid's own output, and that feeds back (at
+/// Besaid it ran away into a cyan swirl); a correct one needs the picture before the grid as a
+/// pass of its own. Hidden while the game has the pass off.
 /// </summary>
 public partial class DistortionView : Control
 {
     private MeshInstance2D _grid = null!;
+    private SubViewport _buffer = null!;
+    private TextureRect _feed = null!;
 
-    /// <summary>Whether a grid was shown in the last frame, and its vertex count (for tests).</summary>
-    public (bool On, int Vertices) Shown { get; private set; }
+    /// <summary>
+    /// Whether the buffer kept across frames (the smear) is used; off, the grid samples this
+    /// frame's picture (the game's copy is 80 % the new frame).
+    /// </summary>
+    public static bool Smear = System.Environment.GetEnvironmentVariable("FFX_DISTORTION_SMEAR") == "1";
+
+    /// <summary>Whether a grid was shown in the last frame, its vertex count and the copy's alpha (for tests).</summary>
+    public (bool On, int Vertices, float Alpha) Shown { get; private set; }
 
     private static readonly Shader GridShader = new()
     {
         Code = @"shader_type canvas_item;
+render_mode blend_disabled;
+uniform sampler2D buffer : filter_linear;
 uniform sampler2D screen : hint_screen_texture, filter_linear;
+uniform bool smear = false;
 void fragment() {
-	COLOR = vec4(texture(screen, UV).rgb, 1.0);
+	vec3 c = smear ? texture(buffer, UV).rgb : texture(screen, UV).rgb;
+	COLOR = vec4(c * COLOR.rgb, 1.0);
 }
 ",
     };
@@ -32,40 +50,76 @@ void fragment() {
     {
         SetAnchorsPreset(LayoutPreset.FullRect);
         MouseFilter = MouseFilterEnum.Ignore;
-        _grid = new MeshInstance2D { Material = new ShaderMaterial { Shader = GridShader }, Visible = false };
+        _buffer = new SubViewport
+        {
+            Name = "DistortionBuffer",
+            RenderTargetClearMode = SubViewport.ClearMode.Never,
+            RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled,
+            TransparentBg = false,
+        };
+        _feed = new TextureRect
+        {
+            ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+            StretchMode = TextureRect.StretchModeEnum.Scale,
+        };
+        _feed.SetAnchorsPreset(LayoutPreset.FullRect);
+        _buffer.AddChild(_feed);
+        AddChild(_buffer);
+        var mat = new ShaderMaterial { Shader = GridShader };
+        mat.SetShaderParameter("buffer", _buffer.GetTexture());
+        mat.SetShaderParameter("smear", Smear);
+        _grid = new MeshInstance2D { Material = mat, Visible = false };
         AddChild(_grid);
     }
 
     /// <summary>
     /// The grid this frame: <paramref name="positions"/> and <paramref name="uvs"/> two floats a
-    /// vertex (normalised screen, y down), <paramref name="indices"/> a triangle list; off hides it.
+    /// vertex (normalised screen, y down), <paramref name="colours"/> four a vertex,
+    /// <paramref name="indices"/> a triangle list, <paramref name="alpha"/> the copy's alpha; off
+    /// hides it.
     /// </summary>
-    public void Show(bool on, float[] positions, float[] uvs, int[] indices)
+    public void Show(bool on, float[] positions, float[] uvs, float[] colours, int[] indices, float alpha)
     {
         int n = positions.Length / 2;
         if (!on || n < 3 || uvs.Length < 2 * n || indices.Length < 3)
         {
             _grid.Visible = false;
-            Shown = (false, 0);
+            _buffer.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled;
+            Shown = (false, 0, 0f);
             return;
         }
         var size = GetViewportRect().Size;
+        var px = new Vector2I(Mathf.Max(1, (int)size.X), Mathf.Max(1, (int)size.Y));
+        if (_buffer.Size != px)
+        {
+            _buffer.Size = px;
+            alpha = 1f; // a new buffer starts from the frame
+        }
+        // the buffer: the last frame blended in at the copy's alpha
+        _feed.Texture = GetViewport().GetTexture();
+        _feed.Modulate = new Color(1, 1, 1, Mathf.Clamp(alpha, 0f, 1f));
+        _buffer.RenderTargetUpdateMode = Smear ? SubViewport.UpdateMode.Always : SubViewport.UpdateMode.Disabled;
         var pos = new Vector2[n];
         var uv = new Vector2[n];
+        var col = new Color[n];
         for (int k = 0; k < n; k++)
         {
             pos[k] = new Vector2(positions[2 * k] * size.X, positions[2 * k + 1] * size.Y);
             uv[k] = new Vector2(uvs[2 * k], uvs[2 * k + 1]);
+            col[k] = 4 * k + 3 < colours.Length
+                ? new Color(colours[4 * k], colours[4 * k + 1], colours[4 * k + 2], 1f)
+                : Colors.White;
         }
         var arrays = new Godot.Collections.Array();
         arrays.Resize((int)Mesh.ArrayType.Max);
         arrays[(int)Mesh.ArrayType.Vertex] = pos;
         arrays[(int)Mesh.ArrayType.TexUV] = uv;
+        arrays[(int)Mesh.ArrayType.Color] = col;
         arrays[(int)Mesh.ArrayType.Index] = indices;
         var mesh = new ArrayMesh();
         mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays);
         _grid.Mesh = mesh;
         _grid.Visible = true;
-        Shown = (true, n);
+        Shown = (true, n, alpha);
     }
 }

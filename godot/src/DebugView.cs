@@ -377,6 +377,8 @@ public sealed class BesaidTest(double timeout, string? shot) : ITest
                     if (fx == null || fx.Shown.Draws == 0 || fx.Shown.Textured == 0)
                         return Done(false, $"no effect draws shown ({fx?.Shown})");
                     _seen += $", {fx.Shown.Draws} effect draws ({fx.Shown.Textured} textured, {fx.Textures.Count} textures)";
+                    var dv = view.GetTree().Root.FindChild("DistortionView", true, false) as DistortionView;
+                    _seen += dv?.Shown.On == true ? $", the screen distortion on ({dv.Shown.Vertices} vertices, copy alpha {dv.Shown.Alpha:F2})" : ", no screen distortion";
                 }
                 GD.Print($"ffx selftest: look {SelfTest.LookLine(v.Current.Look)}");
                 GD.Print($"ffx selftest: save {SelfTest.SaveLine(game, v.Current)}");
