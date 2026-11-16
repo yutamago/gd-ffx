@@ -165,6 +165,21 @@ remake registry and, from `GameHost.Start`, mounts the mod packs
 classic models posed by the game (docs/importer.md), markers until they
 are imported; `DebugView` is the overlay (F1).
 
+## Water
+
+`ClassicMaterials`' water shader is `PhyreWaterShader`'s math as its
+bytecode has it (both of Besaid's variants): the colour the cube map's
+reflection x `SpecularShininess` x `SpecularColor` x the vertex colour (the
+teal is in the vertex colours), then the fog, the colour scale and the tone
+curve; alpha (`SpecularShininess` + `MultiTexBlendFactor` x
+`MaterialColour.a`) x the vertex alpha (the cube maps are DXT1, alpha 1);
+blended over the scene, double-sided, no depth write. The beach sea's
+refraction variant mixes the same colour over the scene behind it by the
+same alpha (its small distortion is left out). The cube map is not imported
+yet: its mean colour stands in for the reflection (Besaid's `reflection3`:
+0.56, 0.70, 0.80), so the scrolling normal maps, which only bend the
+reflection's lookup, drop out. Besaid against the original: 14.4 -> 13.9.
+
 ## The map's objects
 
 Scripts move map objects (`graphicObjectSetTranslation`/`Rotation`) and

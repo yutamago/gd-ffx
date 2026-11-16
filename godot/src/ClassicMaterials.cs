@@ -12,8 +12,8 @@ namespace GdFfx;
 /// <item><b>maps</b> (<c>PhyreDefaultLitShader</c>, <c>PhyreUVAnimationShader</c>): not lit at
 /// all, the lighting is baked into the vertex colours; texture x MaterialColour x
 /// vertex colour x (1 + emissiveness), then the game's tone curve.</item>
-/// <item><b>water</b> (<c>PhyreWaterShader</c>): alpha blended; for now its base texture
-/// (the scrolling normal maps and the cube map come later).</item>
+/// <item><b>water</b> (<c>PhyreWaterShader</c>): the game's math with the cube map's mean colour
+/// for its reflection (the cube map is not imported yet; see <c>WaterBody</c>).</item>
 /// <item><b>characters</b> (<c>PhyreChrLitShader</c>): texture x MaterialColour x
 /// VertexColorOrigin (not the vertex colour stream) x the game's half-Lambert
 /// squared lights plus ambient.</item>
@@ -53,20 +53,6 @@ vec3 ffx_fog_apply(vec3 c, float depth) {
     private static Shader MakeShader(string modes, string body) =>
         new() { Code = "shader_type spatial;\nrender_mode " + modes + ";\n" + Curve + body };
 
-    private const string MapBody = @"
-uniform sampler2D tex : filter_linear_mipmap_anisotropic, repeat_enable;
-uniform vec4 material_colour = vec4(1.0);
-uniform vec3 emissiveness = vec3(0.0);
-uniform float alpha_threshold = 0.0;
-void fragment() {
-	vec4 c = texture(tex, UV) * material_colour * COLOR;
-	c.rgb *= vec3(1.0) + emissiveness;
-	if (alpha_threshold > 0.0 && c.a < alpha_threshold) { discard; }
-	ALBEDO = ffx_out(ffx_curve(ffx_fog_apply(c.rgb, -VERTEX.z) * ffx_colour_scale));
-	ALPHA = c.a;
-}
-";
-
     private const string MapOpaqueBody = @"
 uniform sampler2D tex : filter_linear_mipmap_anisotropic, repeat_enable;
 uniform vec4 material_colour = vec4(1.0);
@@ -77,6 +63,32 @@ void fragment() {
 	c.rgb *= vec3(1.0) + emissiveness;
 	if (alpha_threshold > 0.0 && texture(tex, UV).a < alpha_threshold) { discard; }
 	ALBEDO = ffx_out(ffx_curve(ffx_fog_apply(c.rgb, -VERTEX.z) * ffx_colour_scale));
+}
+";
+
+    // PhyreWaterShader (both bsil00 variants, read from the bytecode): the colour is the cube
+    // map's reflection x SpecularShininess x SpecularColor x the vertex colour, then the fog,
+    // clrScaleFactor and the tone curve; alpha (cube alpha x SpecularShininess +
+    // MultiTexBlendFactor x MaterialColour.a x cube alpha) x the vertex alpha; blended
+    // SRC_ALPHA / INV_SRC_ALPHA, double-sided, no depth write. The cube map is not imported
+    // yet: its mean colour (env_colour) stands in for the reflection, so the normal maps,
+    // which only bend the reflection's lookup, drop out. The refraction variant (the beach
+    // sea) mixes the same colour over the scene behind it by the same alpha.
+    private const string WaterBody = @"
+uniform vec4 material_colour = vec4(1.0);
+uniform vec3 specular_colour = vec3(0.65);
+uniform float shininess = 0.59;
+uniform float multitex_blend = 0.128;
+uniform vec3 env_colour = vec3(0.56, 0.70, 0.80);
+void fragment() {
+	vec4 c;
+	c.rgb = env_colour * shininess * specular_colour;
+	c.a = shininess + multitex_blend * material_colour.a;
+	c *= COLOR;
+	c.rgb = ffx_fog_apply(c.rgb, -VERTEX.z);
+	c = clamp(c * vec4(ffx_colour_scale, 1.0), 0.0, 1.0);
+	ALBEDO = ffx_out(ffx_curve(c.rgb));
+	ALPHA = c.a;
 }
 ";
 
@@ -161,8 +173,8 @@ void fragment() {
 
     private static readonly Shader MapOpaque = MakeShader("unshaded, cull_back, depth_draw_opaque", MapOpaqueBody);
     private static readonly Shader MapOpaqueTwoSided = MakeShader("unshaded, cull_disabled, depth_draw_opaque", MapOpaqueBody);
-    private static readonly Shader MapBlend = MakeShader("unshaded, cull_disabled, blend_mix, depth_draw_always", MapBody);
     private static readonly Shader Char = MakeShader("unshaded, cull_back", CharBody);
+    private static readonly Shader Water = MakeShader("unshaded, cull_disabled, blend_mix, depth_draw_never", WaterBody);
 
     /// <summary>Materials made, by kind (for tests and the overlay).</summary>
     public static (int Map, int Blend, int Char) Made;
@@ -212,7 +224,14 @@ void fragment() {
             {
                 var masked = m.TryGetValue("alphaMode", out var am) && am.AsString() == "MASK";
                 var water = effect.Contains("water");
-                s = new ShaderMaterial { Shader = water ? MapBlend : masked ? MapOpaqueTwoSided : MapOpaque };
+                s = new ShaderMaterial { Shader = water ? Water : masked ? MapOpaqueTwoSided : MapOpaque };
+                if (water)
+                {
+                    var sc = Floats(p, "SpecularColor", [0.65f, 0.65f, 0.65f]);
+                    s.SetShaderParameter("specular_colour", new Vector3(sc[0], sc[1], sc[2]));
+                    s.SetShaderParameter("shininess", Floats(p, "SpecularShininess", [0.59f])[0]);
+                    s.SetShaderParameter("multitex_blend", Floats(p, "MultiTexBlendFactor", [0.128f])[0]);
+                }
                 var e = Floats(p, "MaterialEmissiveness", [0, 0, 0, 0]);
                 s.SetShaderParameter("emissiveness", new Vector3(e[0], e[1], e[2]));
                 s.SetShaderParameter("alpha_threshold", masked ? threshold : 0f);
