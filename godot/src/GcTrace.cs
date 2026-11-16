@@ -101,6 +101,9 @@ public sealed class GcTrace : EventListener
     private static readonly System.Reflection.PropertyInfo? Tracked = typeof(Godot.GodotObject).Assembly
         .GetType("Godot.DisposablesTracker")?.GetProperty("OtherInstances",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+    private static readonly System.Reflection.PropertyInfo? TrackedObjects = typeof(Godot.GodotObject).Assembly
+        .GetType("Godot.DisposablesTracker")?.GetProperty("GodotObjectInstances",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
     private HashSet<object> _seen = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<string, int> _made = new();
     private readonly ConcurrentQueue<string> _loads = new();
@@ -112,30 +115,36 @@ public sealed class GcTrace : EventListener
 
     /// <summary>
     /// Runs a background load (<paramref name="load"/>, on its worker thread) and, when tracing,
-    /// notes the Godot disposables it left registered when it ended, by kind: those still
-    /// alive or waiting for their finalizers (a collection during the load finalizes some,
-    /// so it is a lower bound). Other threads' count too; the main thread makes almost none.
+    /// notes the Godot disposables (variants, collections, names) and object wrappers it left
+    /// registered when it ended, all finalizable: those a collection during the load found dead
+    /// are not counted (a lower bound). Other threads' count too; the main thread makes almost none.
     /// </summary>
     public static T Load<T>(string what, Func<T> load)
     {
-        if (Current is not { } trace || Tracked?.GetValue(null) is not System.Collections.IDictionary d)
+        if (Current is not { } trace || Tracked?.GetValue(null) is not System.Collections.IDictionary d
+            || TrackedObjects?.GetValue(null) is not System.Collections.IDictionary o)
             return load();
         var before = new HashSet<object>(ReferenceEqualityComparer.Instance);
         foreach (var key in d.Keys)
+            before.Add(key);
+        foreach (var key in o.Keys)
             before.Add(key);
         var t0 = System.Diagnostics.Stopwatch.GetTimestamp();
         var result = load();
         var ms = System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds;
         var kinds = new Dictionary<string, int>();
-        int n = 0;
+        int n = 0, objects = 0;
         foreach (var key in d.Keys)
             if (!before.Contains(key) && key is WeakReference<IDisposable> w && w.TryGetTarget(out var t))
             {
                 n++;
                 kinds[Kind(t)] = kinds.GetValueOrDefault(Kind(t)) + 1;
             }
+        foreach (var key in o.Keys)
+            if (!before.Contains(key) && key is WeakReference<Godot.GodotObject> w && w.TryGetTarget(out _))
+                objects++;
         var top = string.Join(", ", kinds.OrderByDescending(kv => kv.Value).Take(6).Select(kv => $"{kv.Key} {kv.Value}"));
-        trace._loads.Enqueue($"{what} ({ms:F0} ms): {n} godot disposables ({top})");
+        trace._loads.Enqueue($"{what} ({ms:F0} ms): {n} godot disposables ({top}), {objects} object wrappers");
         return result;
     }
 
