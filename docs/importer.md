@@ -29,6 +29,40 @@ ships with gd-ffx or goes into git.
   one is registered for the id (docs/remake.md); then the classic import is
   never asked for.
 
+## Material states
+
+The export (`Model::to_glb_with`) keeps each material's parameters and
+textures (`extras.ffx_parameters`, `ffx_textures`, `ffx_effect`). The
+importer adds what the game draws the material with, read from its effect
+variant (`PMaterial.m_effectVariant`, the cluster
+`shaders/d3d11/<effect>.fx#<md5>.phyre`) with ffx-rust's `ffx-scene`
+(`EffectVariant::parse`), once per variant:
+
+- `ffx_switches`: the variant's switches (`ALPHA_ENABLED`, `DOUBLE_SIDED`,
+  `MASK_DEPTH`, `IGNORE_FOG`, `TEXTURE_ENABLED`, `REFRACTION_ENABLED`, ...);
+- `ffx_passes`: per render pass (`Opaque`, `OpaqueNoMSAA`, `ZPrePass`,
+  `Transparent`, `TransparentNoMSAA`, `postOpaque`, `postTransparent`) its
+  D3D11 states: `cull` (`NONE`/`FRONT`/`BACK`), `front_ccw`, `depth_test`,
+  `depth_write`, `depth_func`, `alpha_to_coverage`, `blend` (render target
+  0: `src`, `dst`, `op` and the alpha ones; `null` when it does not blend),
+  and `ps_reads`, the constants its pixel program reads (its DXBC
+  reflection: `AlphaThreshold` means an alpha test, `fgEff` fog);
+- `ffx_inputs`, `ffx_input_types`: the vertex program's inputs
+  (`TEXCOORD4`, ...) and the stream type each reads;
+- `ffx_texcoords`: which glTF `TEXCOORD_n` each `TEXCOORD` input reads (the
+  instance's segment context binds the water's `TEXCOORD4/6/7` to stream
+  sets: `PMeshInstanceSegmentStreamBinding`), from the first primitive
+  drawn with the material;
+- `ffx_wrap`: each texture sampler's address modes (u, v) from the
+  material's sampler state (`WRAP`, `CLAMP`, `MIRROR`, `BORDER`).
+
+Each mesh (one per instance) gets its instance's `m_render_order`
+(`extras.ffx_render_order`) and, when not 0, `m_DObjKind`
+(`ffx_dobj_kind`). The `.glb` carries the importer's format
+(`asset.extras.ffx_import`, `ffx_import::FORMAT`); a cached import of
+another format is made again. docs/architecture.md, "Map materials", says how
+gd-ffx draws them.
+
 ## Placing them
 
 - **The map** is written as stored (y up). The game places its instances at
@@ -55,7 +89,12 @@ cargo run --release -p ffx-import -- --game-dir <game> --out <dir> chr c001 w041
 cargo run --release -p ffx-import -- --game-dir <game> --out <dir> map2d /map/kami/kami01/
 cargo run --release -p ffx-import -- --game-dir <game> devsaves      # the developers' saves: map, entrance, scenario
 cargo run --release -p ffx-import -- --game-dir <game> model /map/kami/kami01/   # a model's nodes, instances, materials
+cargo run --release -p ffx-import -- --game-dir <game> effects /map/bsil/bsil00/  # its materials' effect variant states, instances' render orders
+cargo run --release -p ffx-import -- --game-dir <game> effect --wgsl TransparentNoMSAA 'PS3Data/Shaders/PhyreDefaultLitShader.fx#DE71...'  # a variant's programs as WGSL (ffx-dxbc)
 ```
+
+The WGSL is a reading aid printed from the player's own files; keep it out
+of git.
 
 `--game-dir` defaults to `FFX_GAME_DIR`.
 
@@ -64,7 +103,9 @@ cargo run --release -p ffx-import -- --game-dir <game> model /map/kami/kami01/  
 - The PS2 map camera file is not read; the 2D layers' texture animation is
   not played.
 - No collision mesh (the game does the walking), no lights or fog from the
-  files, no water, morphing meshes, texture animation or effects; the
-  materials are base colour only.
+  files, no morphing meshes (instances with `m_dynamicMeshInstance`, whose
+  vertices the game rewrites every frame: drawn in their stored pose, e.g.
+  `bsil06`'s ground), no texture animation. glTF `TEXCOORD_2` and up are not
+  read (no map segment seen has more than two UV sets).
 - Big maps load on the main thread (a pause of a second or two the first
   time).

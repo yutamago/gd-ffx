@@ -757,6 +757,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "ffx-draw"
+version = "0.1.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#48b5705b3fe7ae006e6917f61577a97e02a1ce53"
+dependencies = [
+ "ffx-gfx",
+ "windows",
+]
+
+[[package]]
+name = "ffx-drawdiff"
+version = "0.1.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#48b5705b3fe7ae006e6917f61577a97e02a1ce53"
+dependencies = [
+ "ffx-dxbc",
+ "ffx-gfx",
+]
+
+[[package]]
+name = "ffx-dxbc"
+version = "0.1.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#48b5705b3fe7ae006e6917f61577a97e02a1ce53"
+dependencies = [
+ "thiserror",
+ "windows-sys",
+]
+
+[[package]]
 name = "ffx-field"
 version = "0.1.0"
 source = "git+https://github.com/yutamago/ffx-rust?branch=main#48b5705b3fe7ae006e6917f61577a97e02a1ce53"
@@ -874,10 +901,13 @@ dependencies = [
 name = "ffx-import"
 version = "0.1.0"
 dependencies = [
+ "ffx-dxbc",
  "ffx-kernel",
  "ffx-phyre",
+ "ffx-scene",
  "ffx-text",
  "ffx-vbf",
+ "serde_json",
 ]
 
 [[package]]
@@ -1019,6 +1049,19 @@ dependencies = [
  "ffx-bridge",
  "ffx-graphic",
  "ffx-system",
+]
+
+[[package]]
+name = "ffx-scene"
+version = "0.1.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#48b5705b3fe7ae006e6917f61577a97e02a1ce53"
+dependencies = [
+ "ffx-draw",
+ "ffx-drawdiff",
+ "ffx-dxbc",
+ "ffx-gfx",
+ "ffx-phyre",
+ "ffx-vbf",
 ]
 
 [[package]]
