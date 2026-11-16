@@ -923,8 +923,9 @@ public sealed partial class Look
     public Vector3 Ambient;
     /// <summary>
     /// The background (clear) colour (context `+0x30`: the map's
-    /// `GlobalCamera` `m_bgColor`, docs/formats/postfx.md; default 0.235,
-    /// 0.235, 0.275), drawn as it is wherever nothing covers the screen.
+    /// `GlobalCamera` `m_bgColor`, docs/formats/postfx.md; e.g. 0.235,
+    /// 0.235, 0.275 on cdsp00): the scene target's clear colour, not
+    /// tone-curved; the post passes still apply.
     /// </summary>
     public Vector3 Background;
     /// <summary>
@@ -1230,7 +1231,7 @@ public sealed partial class SceneMesh
     /// </summary>
     public bool Drawn;
     /// <summary>
-    /// Its group id (`+0x48`, `m_groupID`): the bit `1 &lt;&lt; (id &amp; 31)` of
+    /// Its group id (`+0x48`, `m_groupID`): the bit `1 &lt;&lt; (group id &amp; 31)` of
     /// the scene's mask `+0xfb14`.
     /// </summary>
     public uint Layer;
