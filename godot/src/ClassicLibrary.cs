@@ -113,8 +113,12 @@ public sealed class ClassicLibrary
     /// <summary>Whether <paramref name="name"/> failed to import.</summary>
     public bool Failed(string kind, string name) => _errors.ContainsKey((kind, name));
 
-    /// <summary>A loaded copy of the .glb at <paramref name="path"/> (null on failure).</summary>
-    public static Node3D? Load(string path)
+    /// <summary>
+    /// A loaded copy of the .glb at <paramref name="path"/> (null on failure); <paramref name="texDir"/>
+    /// is a map's texture folder as the models name it (<c>PS3Data/map/bsil/bsil00/tex/</c>),
+    /// where its cube maps are.
+    /// </summary>
+    public static Node3D? Load(string path, string? texDir = null)
     {
         var doc = new GltfDocument();
         var state = new GltfState();
@@ -125,7 +129,7 @@ public sealed class ClassicLibrary
         }
         var scene = doc.GenerateScene(state) as Node3D;
         if (scene != null)
-            ClassicMaterials.Apply(state, scene);
+            ClassicMaterials.Apply(state, scene, texDir);
         return scene;
     }
 }

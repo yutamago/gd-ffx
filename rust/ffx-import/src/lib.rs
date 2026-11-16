@@ -248,6 +248,34 @@ impl Importer {
         place_name_in(&b, index)
     }
 
+    /// A material's texture as PNG: `path` as the model stores it (the
+    /// glTF's `extras.ffx_textures`, e.g.
+    /// `PS3Data/map/bsil/bsil00/tex/reflection3.dds`), face `face` (0 for a
+    /// 2D texture, 0..6 for a cube map: D3D's +x, -x, +y, -y, +z, -z).
+    /// `None` when the texture is missing or has no such face.
+    #[must_use]
+    pub fn texture_png(&self, path: &str, face: usize) -> Option<Vec<u8>> {
+        let t = ffx_phyre::MaterialTexture {
+            sampler: String::new(),
+            path: path.to_string(),
+        };
+        let tex = ffx_phyre::Texture::parse(self.read(&t.archive_path()).ok()?).ok()?;
+        tex.face_png(face)
+    }
+
+    /// Whether the texture at `path` (as [`Importer::texture_png`]) is a cube map.
+    #[must_use]
+    pub fn texture_is_cube(&self, path: &str) -> bool {
+        let t = ffx_phyre::MaterialTexture {
+            sampler: String::new(),
+            path: path.to_string(),
+        };
+        self.read(&t.archive_path())
+            .ok()
+            .and_then(|b| ffx_phyre::Texture::parse(b).ok())
+            .is_some_and(|t| t.kind.faces() == 6)
+    }
+
     /// The model at `path` as a glTF binary with its base colour textures
     /// embedded (PNG), as stored (no axis change: see the module's doc).
     ///

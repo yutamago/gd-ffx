@@ -168,17 +168,31 @@ are imported; `DebugView` is the overlay (F1).
 ## Water
 
 `ClassicMaterials`' water shader is `PhyreWaterShader`'s math as its
-bytecode has it (both of Besaid's variants): the colour the cube map's
-reflection x `SpecularShininess` x `SpecularColor` x the vertex colour (the
-teal is in the vertex colours), then the fog, the colour scale and the tone
-curve; alpha (`SpecularShininess` + `MultiTexBlendFactor` x
-`MaterialColour.a`) x the vertex alpha (the cube maps are DXT1, alpha 1);
-blended over the scene, double-sided, no depth write. The beach sea's
-refraction variant mixes the same colour over the scene behind it by the
-same alpha (its small distortion is left out). The cube map is not imported
-yet: its mean colour stands in for the reflection (Besaid's `reflection3`:
-0.56, 0.70, 0.80), so the scrolling normal maps, which only bend the
-reflection's lookup, drop out. Besaid against the original: 14.4 -> 13.9.
+bytecode has it (both of Besaid's variants): the two normal maps scrolled
+by `ScrollSpeed_nml1/2` x time on the two UV sets, their sum recentred as
+the normal in the surface's frame, the view ray reflected off it into the
+map's cube map; the colour that reflection x `SpecularShininess` x
+`SpecularColor` x the vertex colour, then the fog, the colour scale and the
+tone curve; alpha (cube alpha x `SpecularShininess` + `MultiTexBlendFactor`
+x `MaterialColour.a`) x the vertex alpha; blended over the scene,
+double-sided, no depth write. The beach sea's refraction variant mixes the
+same colour over the scene behind it by the same alpha (its small
+distortion is left out). The material names no cube map (its sampler is
+bound outside it): the map's own `reflection*` cube map is used (Besaid has
+one, `reflection3`), its six faces from the archive (`FfxGame.classic_texture`,
+ffx-phyre's `face_png`); without one, the cube's mean colour stands in. The
+D3D cube's z is mirrored into Godot's (`cube_axes`).
+
+The screen is cleared to the map's background colour (`Look.background`,
+the `GlobalCamera`'s `m_bgColor`; Besaid 0.306, 0.357, 0.537).
+
+Not matched yet: near the shore the original's sea is a bright, nearly
+opaque cyan (the patch at the left of the Besaid picture: 169, 226, 222),
+ours paler and more see-through (151, 180, 172). By the formula the colour
+before the tone curve is about 0.27 there (0.3835 x the cube's ~0.7 x the
+vertex green ~1), which the curve darkens: a factor or the vertex colour
+set the water reads is missing. The game's own draw data (the effect
+capture's next step) will settle it.
 
 ## The map's objects
 

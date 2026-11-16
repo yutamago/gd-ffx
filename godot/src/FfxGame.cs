@@ -70,6 +70,12 @@ public partial class FfxGame : RefCounted
     /// <summary>A developer's look at <paramref name="len"/> bytes of game memory (read only; empty while no game runs).</summary>
     public byte[] Peek(long address, int len) => Node.Call("peek", address, len).AsByteArray();
 
+    /// <summary>A material texture's face (0, or 0..6 for a cube map) as PNG bytes; empty without the archive.</summary>
+    public byte[] ClassicTexture(string path, int face) => Node.Call("classic_texture", path, face).AsByteArray();
+
+    /// <summary>Whether the material texture at <paramref name="path"/> is a cube map.</summary>
+    public bool ClassicTextureIsCube(string path) => Node.Call("classic_texture_is_cube", path).AsBool();
+
     /// <summary>Sphere grid node kind <paramref name="kind"/>'s name, decoded; empty without the archive.</summary>
     public string GridNodeName(int kind, string language) => Node.Call("grid_node_name", kind, language).AsString();
 

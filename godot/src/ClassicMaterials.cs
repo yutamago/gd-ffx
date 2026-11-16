@@ -80,10 +80,38 @@ uniform vec3 specular_colour = vec3(0.65);
 uniform float shininess = 0.59;
 uniform float multitex_blend = 0.128;
 uniform vec3 env_colour = vec3(0.56, 0.70, 0.80);
+uniform bool has_cube = false;
+uniform samplerCube cube : filter_linear_mipmap;
+uniform sampler2D nml1 : filter_linear_mipmap, repeat_enable;
+uniform sampler2D nml2 : filter_linear_mipmap, repeat_enable;
+uniform vec2 scroll1 = vec2(0.0);
+uniform vec2 scroll2 = vec2(0.0);
+// the cube map's axes against render space (D3D's left-handed faces in Godot's cube)
+uniform vec3 cube_axes = vec3(1.0, 1.0, -1.0);
 void fragment() {
+	vec3 N = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
+	vec3 T = (INV_VIEW_MATRIX * vec4(TANGENT, 0.0)).xyz;
+	if (dot(T, T) < 1e-6) { T = vec3(1.0, 0.0, 0.0); }
+	T = normalize(T);
+	vec3 B = cross(T, N);
 	vec4 c;
-	c.rgb = env_colour * shininess * specular_colour;
-	c.a = shininess + multitex_blend * material_colour.a;
+	float cube_a = 1.0;
+	if (has_cube) {
+		vec3 a = texture(nml1, UV + scroll1 * TIME).rgb;
+		vec3 b = texture(nml2, UV2 + scroll2 * TIME).rgb;
+		vec3 n = normalize(a + b - vec3(1.0));
+		vec3 Nw = n.x * T + n.y * B + n.z * N;
+		vec3 P = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+		vec3 I = normalize(P - CAMERA_POSITION_WORLD);
+		vec3 R = I - 2.0 * dot(I, Nw) * Nw;
+		vec4 cR = texture(cube, R * cube_axes);
+		cube_a = texture(cube, Nw * cube_axes).a;
+		c.rgb = cR.rgb * shininess * specular_colour;
+		c.a = cR.a * shininess + multitex_blend * material_colour.a * cube_a;
+	} else {
+		c.rgb = env_colour * shininess * specular_colour;
+		c.a = shininess + multitex_blend * material_colour.a;
+	}
 	c *= COLOR;
 	c.rgb = ffx_fog_apply(c.rgb, -VERTEX.z);
 	c = clamp(c * vec4(ffx_colour_scale, 1.0), 0.0, 1.0);
@@ -194,7 +222,7 @@ void fragment() {
     /// Replaces the generated scene's materials with the game's (glTF material i ↔
     /// <paramref name="state"/>'s material i, by its <c>extras</c>).
     /// </summary>
-    public static void Apply(GltfState state, Node root)
+    public static void Apply(GltfState state, Node root, string? texDir = null)
     {
         var json = state.Json;
         if (!json.TryGetValue("materials", out var mv))
@@ -227,6 +255,7 @@ void fragment() {
                 s = new ShaderMaterial { Shader = water ? Water : masked ? MapOpaqueTwoSided : MapOpaque };
                 if (water)
                 {
+                    WaterTextures(s, extras, p, texDir);
                     var sc = Floats(p, "SpecularColor", [0.65f, 0.65f, 0.65f]);
                     s.SetShaderParameter("specular_colour", new Vector3(sc[0], sc[1], sc[2]));
                     s.SetShaderParameter("shininess", Floats(p, "SpecularShininess", [0.59f])[0]);
@@ -244,6 +273,87 @@ void fragment() {
             replace[godotMats[i]] = s;
         }
         Swap(root, replace);
+    }
+
+    private static readonly System.Collections.Generic.Dictionary<string, Texture?> Textures = new();
+
+    /// <summary>A material texture (its path in <c>extras.ffx_textures</c>) from the player's archive: a cube map's six faces, or a 2D texture with mipmaps; null when it cannot be read.</summary>
+    private static Texture? ClassicTexture(string path)
+    {
+        if (Textures.TryGetValue(path, out var t))
+            return t;
+        var game = GameHost.Instance?.Game;
+        t = null;
+        if (game != null)
+        {
+            Image? Face(int f)
+            {
+                var png = game.ClassicTexture(path, f);
+                if (png.Length == 0)
+                    return null;
+                var img = new Image();
+                return img.LoadPngFromBuffer(png) == Error.Ok ? img : null;
+            }
+            if (game.ClassicTextureIsCube(path))
+            {
+                var faces = new Godot.Collections.Array<Image>();
+                for (int f = 0; f < 6; f++)
+                    if (Face(f) is { } img)
+                    {
+                        img.GenerateMipmaps();
+                        faces.Add(img);
+                    }
+                if (faces.Count == 6)
+                {
+                    var cube = new Cubemap();
+                    if (cube.CreateFromImages(faces) == Error.Ok)
+                        t = cube;
+                }
+            }
+            else if (Face(0) is { } img)
+            {
+                img.GenerateMipmaps();
+                t = ImageTexture.CreateFromImage(img);
+            }
+        }
+        Textures[path] = t;
+        return t;
+    }
+
+    /// <summary>The map's reflection cube map: the first of reflection, reflection1..4 in its texture folder.</summary>
+    private static string? MapCube(string? texDir)
+    {
+        if (texDir == null || GameHost.Instance?.Game is not { } game)
+            return null;
+        foreach (var n in new[] { "reflection", "reflection1", "reflection2", "reflection3", "reflection4" })
+            if (game.ClassicTextureIsCube($"{texDir}{n}.dds"))
+                return $"{texDir}{n}.dds";
+        return null;
+    }
+
+    /// <summary>The water's cube map, normal maps and their scrolls (falls back to the cube's mean colour without a cube map).</summary>
+    private static void WaterTextures(ShaderMaterial s, Dictionary extras, Dictionary p, string? texDir)
+    {
+        if (!extras.TryGetValue("ffx_textures", out var tv))
+            return;
+        var tex = tv.AsGodotDictionary();
+        string? Path(string sampler) => tex.TryGetValue(sampler, out var v) ? v.AsString() : null;
+        // the material names no cube map (its sampler is bound outside the material): the map's
+        // own reflection cube map (bsil00 has one, reflection3, the one its water reflects)
+        var cubePath = Path("CubeMapSampler") ?? MapCube(texDir);
+        if (cubePath is { } cp && ClassicTexture(cp) is Cubemap cube
+            && Path("NormalMapSampler") is { } n1p && ClassicTexture(n1p) is { } n1
+            && Path("NormalMap2Sampler") is { } n2p && ClassicTexture(n2p) is { } n2)
+        {
+            s.SetShaderParameter("cube", cube);
+            s.SetShaderParameter("nml1", n1);
+            s.SetShaderParameter("nml2", n2);
+            s.SetShaderParameter("has_cube", true);
+            var a = Floats(p, "ScrollSpeed_nml1_X", [0f]); var b = Floats(p, "ScrollSpeed_nml1_Y", [0f]);
+            var c = Floats(p, "ScrollSpeed_nml2_X", [0f]); var d = Floats(p, "ScrollSpeed_nml2_Y", [0f]);
+            s.SetShaderParameter("scroll1", new Vector2(a[0], b[0]));
+            s.SetShaderParameter("scroll2", new Vector2(c[0], d[0]));
+        }
     }
 
     private static Color ToColor(float[] c) => new(c[0], c[1], c[2], c.Length > 3 ? c[3] : 1);

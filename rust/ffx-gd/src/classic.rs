@@ -126,6 +126,21 @@ impl Classic {
         self.decode(language, &name)
     }
 
+    /// A material texture's face as PNG (`ffx_import::Importer::texture_png`).
+    #[must_use]
+    pub fn texture_png(&self, path: &str, face: usize) -> Option<Vec<u8>> {
+        let open = lock(&self.open).clone()?;
+        open.importer.texture_png(path, face)
+    }
+
+    /// Whether a material texture is a cube map.
+    #[must_use]
+    pub fn texture_is_cube(&self, path: &str) -> bool {
+        lock(&self.open)
+            .clone()
+            .is_some_and(|o| o.importer.texture_is_cube(path))
+    }
+
     /// Whether the archive is open.
     #[must_use]
     pub fn is_open(&self) -> bool {

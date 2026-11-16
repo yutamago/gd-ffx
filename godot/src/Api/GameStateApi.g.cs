@@ -922,6 +922,12 @@ public sealed partial class Look
     /// </summary>
     public Vector3 Ambient;
     /// <summary>
+    /// The background (clear) colour (context `+0x30`: the map's
+    /// `GlobalCamera` `m_bgColor`, docs/formats/postfx.md; default 0.235,
+    /// 0.235, 0.275), drawn as it is wherever nothing covers the screen.
+    /// </summary>
+    public Vector3 Background;
+    /// <summary>
     /// The fog's colour (context `+0x10`).
     /// </summary>
     public Vector3 FogColour;
@@ -953,6 +959,7 @@ public sealed partial class Look
         o.Valid = r.Bool();
         o.ColourScale = r.Vec3();
         o.Ambient = r.Vec3();
+        o.Background = r.Vec3();
         o.FogColour = r.Vec3();
         o.FogNear = r.F32();
         o.FogFar = r.F32();

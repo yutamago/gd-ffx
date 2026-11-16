@@ -494,6 +494,25 @@ impl FfxGame {
             })
     }
 
+    /// A material texture (its path as the model stores it, e.g. from the
+    /// glTF's `extras.ffx_textures`), face `face` (0, or 0..6 for a cube
+    /// map), as PNG bytes; empty without the archive or such a face.
+    #[func]
+    fn classic_texture(&self, path: GString, face: i64) -> PackedByteArray {
+        usize::try_from(face)
+            .ok()
+            .and_then(|f| classic().texture_png(&path.to_string(), f))
+            .map_or_else(PackedByteArray::new, |b| {
+                PackedByteArray::from(b.as_slice())
+            })
+    }
+
+    /// Whether the material texture at `path` is a cube map.
+    #[func]
+    fn classic_texture_is_cube(&self, path: GString) -> bool {
+        classic().texture_is_cube(&path.to_string())
+    }
+
     /// Sphere grid node kind `kind`'s name in `language`; empty without the
     /// archive or such a record.
     #[func]

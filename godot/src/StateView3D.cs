@@ -16,6 +16,7 @@ namespace GdFfx;
 public partial class StateView3D : Node3D
 {
     private Camera3D _camera = null!;
+    private WorldEnvironment _env = null!;
     private readonly Dictionary<ushort, ActorNode> _actors = new();
     private SphereMesh _boneMesh = null!;
     private Node3D? _map;
@@ -61,7 +62,7 @@ public partial class StateView3D : Node3D
         GameSettings.ApplyQuality(GetViewport());
         _camera = new Camera3D { Current = true, Near = 0.5f, Far = 20000f };
         AddChild(_camera);
-        var env = new WorldEnvironment
+        _env = new WorldEnvironment
         {
             Environment = new Environment
             {
@@ -74,7 +75,7 @@ public partial class StateView3D : Node3D
                 TonemapMode = Environment.ToneMapper.Linear,
             },
         };
-        AddChild(env);
+        AddChild(_env);
         AddChild(new EffectView { Name = "EffectView" });
         AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-55, 30, 0), LightEnergy = 0.8f });
         _boneMesh = new SphereMesh { Radius = 0.6f, Height = 1.2f, RadialSegments = 6, Rings = 3 };
@@ -127,6 +128,9 @@ public partial class StateView3D : Node3D
             _camera.VOffset = -(fx?.ShakeY ?? 0f) * unit;
         }
         ClassicMaterials.SetLook(view.Current?.Look);
+        // the game clears to the map's background colour (Look.background), drawn as it is
+        if (view.Current?.Look is { Valid: true } look)
+            _env.Environment.BackgroundColor = new Color(look.Background.X, look.Background.Y, look.Background.Z);
         UpdateMap(host.Classic, view.Current);
         UpdateObjects(view);
         UpdateActors(host.Classic, view);
