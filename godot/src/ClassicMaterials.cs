@@ -710,12 +710,12 @@ void fragment() {
         var post = Of(last);
         foreach (var (mi, order) in placed)
         {
-            int sorted = Math.Clamp(1 + keys.IndexOf(Key(order)), 1, 126);
+            int sorted = Math.Clamp(1 + keys.IndexOf(Key(order)), 1, PostPriority - 1);
             for (int s = 0; s < mi.Mesh.GetSurfaceCount(); s++)
             {
                 if (mi.GetSurfaceOverrideMaterial(s) is not { } m || !blended.Contains(m))
                     continue;
-                int priority = post.Contains(m) ? 127 : sorted;
+                int priority = post.Contains(m) ? PostPriority : sorted;
                 if (!copies.TryGetValue((m, priority), out var c))
                 {
                     c = (Material)m.Duplicate();
@@ -726,6 +726,12 @@ void fragment() {
             }
         }
     }
+
+    /// <summary>
+    /// The render priority of the parts the game draws after the scene (postTransparent: the
+    /// refraction water); only the effects come later (<see cref="EffectDrawView.Priority"/>).
+    /// </summary>
+    public const int PostPriority = EffectDrawView.Priority - 1;
 
     /// <summary>Face 0 of cube maps already read by <see cref="MapCube"/>.</summary>
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, TextureFetcher.Pixels> FaceZero = new();

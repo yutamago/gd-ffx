@@ -15,9 +15,13 @@ namespace GdFfx;
 /// list no pass draws. Of the draw events, the screen fade (kind 2) is drawn: a full-screen
 /// colour over the picture (<see cref="Fade"/>, in the overlay); the others act on buffers or
 /// characters gd-ffx draws its own way (copy buffer, PS2 lighting, specular, character draws).
-/// Each frame is
-/// one <see cref="ArrayMesh"/>, a surface per (texture, <see cref="Look"/>); unshaded, two-sided,
-/// depth tested, no depth write. The blend is the game's own (FXDR version 4: the D3D11 blend of
+/// Each run of draws with the same (texture, <see cref="Look"/>) is one surface of a part
+/// (a child <see cref="MeshInstance3D"/>); unshaded, two-sided, depth tested, no depth write. The
+/// game draws its effects after the whole scene (its transparent parts and the refraction water
+/// too): the parts take the highest render priority (<see cref="Priority"/>), above the map's
+/// blended parts, and keep the game's order among themselves by their sorting offset (Godot
+/// sorts the transparent pass by priority, then far to near, and does not keep the order of
+/// equal keys). The blend is the game's own (FXDR version 4: the D3D11 blend of
 /// the material's shader pass, <see cref="LookOf"/>), with what the game's pixel shader writes
 /// for the draw's flags and technique (<see cref="Form"/>): <c>Transparent</c> premultiplies
 /// with source factor one, <c>OptimizedTrans</c> writes straight colour for source alpha
@@ -95,7 +99,7 @@ public partial class EffectDrawView : MeshInstance3D
     /// <summary>
     /// What the game's VFX pixel shader writes (effects-draw.md "What each pixel shader writes"):
     /// 0 <c>t·2v</c> (straight); 1 premultiplied, <c>a = t.a·2v.a</c>, <c>(a·min(t·2v, 1), a)</c>
-    /// (the textured families under <c>Transparent</c>); 2 the untextured additive
+    /// (the textured families under <c>Transparent</c>, the subtract family 0x18 under both); 2 the untextured additive
     /// <c>(2·v.a·v.rgb, v.a)</c> (0x2, 0x3); 3 <c>a = 2v.a</c>, <c>(a·v.rgb, a)</c> (0x0, 0x10).
     /// </summary>
     public static int Form(uint flags, int technique)
@@ -105,7 +109,8 @@ public partial class EffectDrawView : MeshInstance3D
             return 2;
         if (family is 0x0 or 0x10)
             return 3;
-        if (family is 0x8 or 0x9 or 0xa or 0xb or 0x18 && technique == TechTransparent)
+        // the subtract family premultiplies in both techniques (effects-draw.md: "the same")
+        if (family is 0x18 || family is 0x8 or 0x9 or 0xa or 0xb && technique == TechTransparent)
             return 1;
         return 0;
     }
@@ -187,6 +192,13 @@ public partial class EffectDrawView : MeshInstance3D
     }
     private readonly Dictionary<string, Texture2D?> _textures = new();
     private readonly Dictionary<(string, Look), ShaderMaterial> _materials = new();
+
+    /// <summary>
+    /// The render priority of the effects: Godot's highest, after the map's blended parts (1 up)
+    /// and the refraction water (<see cref="ClassicMaterials.PostPriority"/>), as the game draws
+    /// them after the scene.
+    /// </summary>
+    public const int Priority = 127;
 
     private static readonly Shader[] Shaders =
     [
@@ -442,7 +454,7 @@ void fragment() {
             return m;
         if (texture != FrameBufferName && !_textures.ContainsKey(texture) && !TryTex(texture, out _))
             return null;
-        m = new ShaderMaterial { Shader = Shaders[look.Blend] };
+        m = new ShaderMaterial { Shader = Shaders[look.Blend], RenderPriority = Priority };
         m.SetShaderParameter("form", look.Form);
         m.SetShaderParameter("alpha_one", look.AlphaOne);
         m.SetShaderParameter("zero_colour", look.ZeroColour);
@@ -488,9 +500,34 @@ void fragment() {
     private readonly Geometry _geometry = new();
     private readonly Geometry _surface = new();
     private readonly List<((string, Look) Key, List<Draw> Draws)> _groups = new();
-    private readonly Dictionary<(string, Look), int> _groupIndex = new();
     private readonly Godot.Collections.Array _arrays = new();
-    private ArrayMesh? _mesh;
+
+    /// <summary>The parts, one a run of draws (kept from frame to frame; the unused ones hidden).</summary>
+    private readonly List<(MeshInstance3D Node, ArrayMesh Mesh)> _parts = new();
+
+    /// <summary>The part <paramref name="k"/> (made when first needed), drawn after parts 0..k-1.</summary>
+    private (MeshInstance3D Node, ArrayMesh Mesh) Part(int k)
+    {
+        while (_parts.Count <= k)
+        {
+            var mesh = new ArrayMesh();
+            // all parts at the same place: the offset alone orders them (a larger one draws later)
+            var node = new MeshInstance3D
+            {
+                Name = $"Part{_parts.Count}",
+                Mesh = mesh,
+                SortingUseAabbCenter = false,
+                SortingOffset = _parts.Count + 1,
+                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+            };
+            AddChild(node);
+            _parts.Add((node, mesh));
+        }
+        return _parts[k];
+    }
+
+    /// <summary>The parts in use (for tests).</summary>
+    public int Parts { get; private set; }
 
     private void Build(FfxGame game, GdFfx.Api.Snapshot s, (uint Update, List<Draw> Draws, Geometry Geometry)? frame)
     {
@@ -511,18 +548,17 @@ void fragment() {
             fv.Show(fade);
         if (frame == null || frame.Value.Draws.Count == 0)
         {
-            Mesh = null;
+            HideParts(0);
             Shown = (0, 0, s.Update);
             Textures.Clear();
             return;
         }
-        // a surface per (texture, blend), in the order first met (the game's draw order); the
-        // lists, the mesh and its arrays are kept from frame to frame
+        // a run of draws with the same (texture, look) is one part, in the game's draw order; the
+        // lists, the parts and their arrays are kept from frame to frame
         var groups = _groups;
         foreach (var (_, list) in groups)
             list.Clear();
         int used = 0;
-        _groupIndex.Clear();
         var geo = frame.Value.Geometry;
         foreach (var d in frame.Value.Draws)
         {
@@ -534,22 +570,19 @@ void fragment() {
             if (look.Skip)
                 continue;
             var k = (d.Texture, look);
-            if (!_groupIndex.TryGetValue(k, out var g))
+            if (used == 0 || groups[used - 1].Key != k)
             {
-                _groupIndex[k] = g = used++;
-                if (g == groups.Count)
+                if (used == groups.Count)
                     groups.Add((k, new List<Draw>()));
                 else
-                    groups[g] = (k, groups[g].Draws);
+                    groups[used] = (k, groups[used].Draws);
+                used++;
             }
-            groups[g].Draws.Add(d);
+            groups[used - 1].Draws.Add(d);
         }
-        _mesh ??= new ArrayMesh();
-        var mesh = _mesh;
-        mesh.ClearSurfaces();
         if (_arrays.Count != (int)Mesh.ArrayType.Max)
             _arrays.Resize((int)Mesh.ArrayType.Max);
-        int textured = 0;
+        int textured = 0, parts = 0;
         Textures.Clear();
         var surf = _surface;
         for (int gi = 0; gi < used; gi++)
@@ -580,16 +613,32 @@ void fragment() {
             _arrays[(int)Mesh.ArrayType.Color] = surf.Colours.AsSpan(0, surf.VertexCount);
             _arrays[(int)Mesh.ArrayType.TexUV] = surf.Uvs.AsSpan(0, surf.VertexCount);
             _arrays[(int)Mesh.ArrayType.Index] = surf.Indices.AsSpan(0, surf.IndexCount);
+            var (node, mesh) = Part(parts++);
+            mesh.ClearSurfaces();
             mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, _arrays);
-            mesh.SurfaceSetMaterial(mesh.GetSurfaceCount() - 1, mat);
+            mesh.SurfaceSetMaterial(0, mat);
+            node.Visible = true;
             if (tex == FrameBufferName || _textures.TryGetValue(tex, out var t) && t != null)
             {
                 textured += list.Count;
                 Textures.Add(tex);
             }
         }
-        if (Mesh != mesh)
-            Mesh = mesh;
+        HideParts(parts);
+        Parts = parts;
         Shown = (frame.Value.Draws.Count, textured, s.Update);
+    }
+
+    /// <summary>Hides the parts from <paramref name="from"/> on (their meshes emptied).</summary>
+    private void HideParts(int from)
+    {
+        for (int k = from; k < _parts.Count; k++)
+            if (_parts[k].Node.Visible)
+            {
+                _parts[k].Node.Visible = false;
+                _parts[k].Mesh.ClearSurfaces();
+            }
+        if (from == 0)
+            Parts = 0;
     }
 }
