@@ -45,6 +45,8 @@ vec3 ffx_out(vec3 c) { return ffx_gamma_out ? ffx_to_linear(c) : c; }
 global uniform vec3 ffx_colour_scale;
 global uniform vec3 ffx_fog_colour;
 global uniform vec4 ffx_fog; // near, far, curve, limit
+// the shaders' GlobalTime (Look.global_time, interpolated between snapshots; SetTime)
+global uniform float ffx_time;
 // the game's fog: min(((depth - near) / (far - near))^curve, limit) x fgEff,
 // mixed in before the colour scale and the tone curve
 uniform float fog_effect = 1.0;
@@ -81,7 +83,7 @@ uniform vec2 scroll = vec2(0.0);
 void fragment() {
 	vec2 uv = UV;
 #ifdef UV_ANIM
-	uv += vec2(fract(scroll.x * TIME), -fract(scroll.y * TIME));
+	uv += vec2(fract(scroll.x * ffx_time), -fract(scroll.y * ffx_time));
 #endif
 	vec4 t = texture(tex, uv);
 #ifdef ALPHA_TEST
@@ -149,8 +151,8 @@ void fragment() {
 	vec4 cN = vec4(1.0);
 	vec4 spec;
 	if (has_cube) {
-		vec3 a = texture(nml1, mix(UV, UV2, uv_sets.z) + ffx_scroll(scroll1, TIME)).rgb;
-		vec3 b = texture(nml2, mix(UV, UV2, uv_sets.w) + ffx_scroll(scroll2, TIME)).rgb;
+		vec3 a = texture(nml1, mix(UV, UV2, uv_sets.z) + ffx_scroll(scroll1, ffx_time)).rgb;
+		vec3 b = texture(nml2, mix(UV, UV2, uv_sets.w) + ffx_scroll(scroll2, ffx_time)).rgb;
 		vec3 n = normalize(a + b - vec3(1.0));
 		Nw = normalize(n.x * T + n.y * B + n.z * N);
 		vec3 P = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
@@ -165,8 +167,8 @@ void fragment() {
 	}
 	vec4 base = vec4(0.0, 0.0, 0.0, 1.0);
 #ifdef TEXTURE
-	base += texture(tex0, mix(UV, UV2, uv_sets.x) + ffx_scroll(scroll_tex0, TIME));
-	base += texture(tex1, mix(UV, UV2, uv_sets.y) + ffx_scroll(scroll_tex1, TIME));
+	base += texture(tex0, mix(UV, UV2, uv_sets.x) + ffx_scroll(scroll_tex0, ffx_time));
+	base += texture(tex1, mix(UV, UV2, uv_sets.y) + ffx_scroll(scroll_tex1, ffx_time));
 #endif
 	vec4 c = base * multitex_blend * material_colour * cN + spec;
 	c *= COLOR;
@@ -269,7 +271,26 @@ void fragment() {
         Add("ffx_light_sign", RenderingServer.GlobalShaderParameterType.Float, LightSign);
         Add("ffx_layer_window", RenderingServer.GlobalShaderParameterType.Vec4, new Vector4(1f / 3f - 2f * 0.035f, 4f / 3f, 0, 0));
         Add("ffx_layer_far", RenderingServer.GlobalShaderParameterType.Float, 19000f);
+        Add("ffx_time", RenderingServer.GlobalShaderParameterType.Float, 0f);
         return true;
+    }
+
+    /// <summary>
+    /// The shaders' clock (<c>ffx_time</c>): the game's <c>GlobalTime</c> (<c>Look.global_time</c>,
+    /// the clock of the scrolling UVs and the water), interpolated between the last two
+    /// snapshots by <paramref name="alpha"/>. Across a jump (0 again after a map change, the wrap
+    /// at 2400 s, a pause or a load) the newest value is taken as it is. Once a frame.
+    /// </summary>
+    public static float SetTime(GdFfx.Api.Snapshot? previous, GdFfx.Api.Snapshot? current, float alpha)
+    {
+        _ = Globals;
+        if (current?.Look is not { Valid: true } now)
+            return -1f;
+        float t = now.GlobalTime;
+        if (previous?.Look is { Valid: true } was && was.GlobalTime <= t && t - was.GlobalTime < 0.5f)
+            t = Mathf.Lerp(was.GlobalTime, t, alpha);
+        RenderingServer.GlobalShaderParameterSet("ffx_time", t);
+        return t;
     }
 
     /// <summary>The scene's look from the game-state API, into the shaders' globals.</summary>

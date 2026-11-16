@@ -18,8 +18,9 @@ namespace GdFfx;
 /// shows (<c>Menus.current_player</c>). The abilities screen (slot 2): each member's
 /// own learnt commands (<see cref="Learnt"/>, without the shared ones) named from the kernel's
 /// command table; the overdrive
-/// screen (slot 0x15): each member's mode, the modes obtained and the gauge. The other
-/// screens' bits are in <see cref="Screens"/>.
+/// screen (slot 0x15): each member's mode, the modes obtained and the gauge. The config
+/// screen (slot 0xa, <see cref="ConfigMask"/>): its rows, options and cursor (<see cref="ShowConfig"/>).
+/// The other screens' bits are in <see cref="Screens"/>.
 /// </summary>
 public partial class FieldMenuView : Control
 {
@@ -34,7 +35,7 @@ public partial class FieldMenuView : Control
     public static readonly (uint Mask, string Screen)[] Screens =
     [
         (0x2, "main"), (0x80000, "sphere grid"), (ItemsMask, "items"), (0x4, "abilities"),
-        (0x200000, "overdrive"), (0x40, "status"), (0x400, "config"), (0x800, "help"),
+        (0x200000, "overdrive"), (0x40, "status"), (ConfigMask, "config"), (0x800, "help"),
     ];
 
     /// <summary>The status screen's bit (menu slot 6).</summary>
@@ -130,6 +131,13 @@ public partial class FieldMenuView : Control
         _statusGrid = new GridContainer();
         _statusGrid.AddThemeConstantOverride("h_separation", 36);
         _statusPanel.AddChild(_statusGrid);
+        _configPanel = new PanelContainer { MouseFilter = MouseFilterEnum.Ignore, Visible = false };
+        _configPanel.AddThemeStyleboxOverride("panel", (StyleBox)_panel.GetThemeStylebox("panel").Duplicate());
+        AddChild(_configPanel);
+        _configGrid = new GridContainer();
+        _configGrid.AddThemeConstantOverride("h_separation", 40);
+        _configGrid.AddThemeConstantOverride("v_separation", 8);
+        _configPanel.AddChild(_configGrid);
         _itemGrid = new GridContainer { Columns = 2 };
         _itemGrid.AddThemeConstantOverride("h_separation", 48);
         _itemsPanel.AddChild(_itemGrid);
@@ -170,6 +178,108 @@ public partial class FieldMenuView : Control
             _itemNames[(id, lang)] = n;
         }
         return n;
+    }
+
+    /// <summary>The config screen's bit (menu slot 0xa).</summary>
+    public const uint ConfigMask = 0x400;
+
+    private PanelContainer _configPanel = null!;
+    private GridContainer _configGrid = null!;
+    private readonly Dictionary<(string Raw, string Lang), string> _texts = new();
+
+    /// <summary>
+    /// The config rows shown now (for tests): the title, then the options with the chosen one in
+    /// brackets; the cursor's row starts with ▶, a disabled one is in parentheses.
+    /// </summary>
+    public List<string> Config { get; } = new();
+
+    /// <summary>
+    /// A config row's title (<c>ConfigRow.title</c>, the game's text decoded). The PC's own row
+    /// (<c>ConfigMenu.pc_row</c>) has no menu text: its texts come from the remaster's
+    /// localisation (title id 0x1cd), which gd-ffx does not read; it is named by what it is.
+    /// </summary>
+    private string ConfigText(FfxGame game, byte[] raw, string lang)
+    {
+        if (raw.Length == 0)
+            return "";
+        var key = (System.Convert.ToHexString(raw), lang);
+        if (!_texts.TryGetValue(key, out var t))
+        {
+            t = MessageView.Clean(game.DecodeText(raw, lang));
+            _texts[key] = t;
+        }
+        return t;
+    }
+
+    /// <summary>
+    /// The config screen (<c>Menus.config</c>, API 10): each row's title and its options, the
+    /// chosen one highlighted, the game's cursor on its row, disabled rows dimmed. The PC row's
+    /// texts are the localisation's (ids only in the state): "PC settings" and its options
+    /// numbered.
+    /// </summary>
+    private void ShowConfig(FfxGame game, GdFfx.Api.Snapshot s)
+    {
+        Config.Clear();
+        var cfg = s.Menus.Config;
+        if ((s.Menus.MainMask & ConfigMask) == 0 || !cfg.Open || cfg.Rows.Count == 0)
+        {
+            _configPanel.Visible = false;
+            return;
+        }
+        var lang = MessageView.LanguageCode(s.World.Language);
+        int columns = 1 + cfg.Rows.Max(r => r.Options.Count);
+        var cells = new List<(string Text, Color Colour)>();
+        var normal = new Color(0.92f, 0.94f, 1f);
+        var chosen = new Color(1f, 0.95f, 0.6f);
+        var dim = new Color(0.55f, 0.58f, 0.68f);
+        for (int r = 0; r < cfg.Rows.Count; r++)
+        {
+            var row = cfg.Rows[r];
+            bool pc = r == cfg.PcRow;
+            var title = ConfigText(game, row.Title, lang);
+            if (title.Length == 0)
+                title = pc ? "PC settings" : $"0x{row.TitleId:x}";
+            bool on = r == cfg.Cursor;
+            cells.Add(((on ? "▶ " : "   ") + title, on ? chosen : row.Enabled ? normal : dim));
+            var texts = new List<string>();
+            for (int k = 0; k < columns - 1; k++)
+            {
+                if (k >= row.Options.Count)
+                {
+                    cells.Add(("", normal));
+                    continue;
+                }
+                var text = ConfigText(game, row.Options[k].Text, lang);
+                if (text.Length == 0)
+                    text = pc ? $"Option {k + 1}" : $"0x{row.Options[k].Id:x}";
+                bool picked = k == row.Value;
+                texts.Add(picked ? $"[{text}]" : text);
+                cells.Add((picked ? $"[{text}]" : text, !row.Enabled ? dim : picked ? chosen : normal));
+            }
+            var line = $"{title}: {string.Join(" ", texts)}";
+            Config.Add((on ? "▶ " : "") + (row.Enabled ? line : $"({line})"));
+        }
+        _configGrid.Columns = columns;
+        while (_configGrid.GetChildCount() < cells.Count)
+        {
+            var l = new Label();
+            l.AddThemeFontSizeOverride("font_size", 20);
+            _configGrid.AddChild(l);
+        }
+        for (int i = 0; i < _configGrid.GetChildCount(); i++)
+        {
+            var l = (Label)_configGrid.GetChild(i);
+            l.Visible = i < cells.Count;
+            if (i >= cells.Count)
+                continue;
+            Ui.SetText(l, cells[i].Text);
+            Ui.SetColour(l, cells[i].Colour);
+        }
+        _configPanel.Visible = true;
+        var view = GetViewportRect().Size;
+        var size = _configPanel.GetCombinedMinimumSize();
+        _configPanel.Size = size;
+        _configPanel.Position = new Vector2((view.X - size.X) / 2, view.Y * 0.12f);
     }
 
     private void ShowStatus(FfxGame game, GdFfx.Api.Snapshot s)
@@ -318,9 +428,12 @@ public partial class FieldMenuView : Control
             _panel.Visible = false;
             _itemsPanel.Visible = false;
             _statusPanel.Visible = false;
+            _configPanel.Visible = false;
+            Config.Clear();
             return;
         }
         ShowItems(host.Game, s);
+        ShowConfig(host.Game, s);
         ShowStatus(host.Game, s);
         if ((s.Menus.MainMask & 0x2) == 0)
         {

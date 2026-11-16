@@ -241,11 +241,21 @@ public sealed class GameStateView
     private Snapshot? _pairedFor;
     private readonly List<ActorFrame> _frames = new();
 
+    /// <summary>
+    /// The characters (model#slot, map) the game culled or skipped while their hide byte, alpha and
+    /// matrix would have shown them, seen so far: what <see cref="Drawn"/> hides since API 10 (for
+    /// the checks).
+    /// </summary>
+    public SortedSet<string> Skipped { get; } = new();
+
     private Actor?[] PreviousOf()
     {
         if (ReferenceEquals(_pairedFor, Current) && _pairedFor != null)
             return _previousOf;
         _pairedFor = Current;
+        foreach (var a in Current!.Actors)
+            if (!a.Drawn && a.Hidden == 0 && a.Alpha > 0 && !ZeroSize(a.World) && Skipped.Count < 64)
+                Skipped.Add($"{a.Model}#{a.Slot}@{Current.World.Map:x}");
         var cur = Current!.Actors;
         _previousOf = new Actor?[cur.Count];
         if (Previous == null || ReferenceEquals(Previous, Current))
@@ -258,6 +268,15 @@ public sealed class GameStateView
                 _previousOf[i] = p;
         return _previousOf;
     }
+
+    /// <summary>
+    /// Whether the game draws the character: <c>Actor.drawn</c> (API 10), what the last
+    /// <c>Ch_DrawMain</c> handed to <c>graphicCharacterInstanceSetVisible</c> after the hide byte,
+    /// <c>flags2</c> bit 0x20, the distance cull, the alpha and its per-id cases. The hide byte,
+    /// the alpha and a matrix without size are not enough on their own (a culled or skipped
+    /// character keeps them); they stay as a guard.
+    /// </summary>
+    public static bool Drawn(Actor a) => a.Drawn && a.Hidden == 0 && a.Alpha > 0 && !ZeroSize(a.World);
 
     /// <summary>
     /// The characters this frame (by slot), interpolated where the same character was there an
@@ -277,7 +296,7 @@ public sealed class GameStateView
             var p = prev[i];
             if (p != null)
                 root = FieldTransform(p.World).InterpolateWith(root, Alpha);
-            _frames.Add(new ActorFrame(a, p, root, a.Hidden == 0 && a.Alpha > 0 && !ZeroSize(a.World), Alpha));
+            _frames.Add(new ActorFrame(a, p, root, Drawn(a), Alpha));
         }
         return _frames;
     }

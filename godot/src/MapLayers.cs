@@ -14,8 +14,8 @@ namespace GdFfx;
 /// camera, at the main camera's depth for 10 x its z, so the characters go behind nearer
 /// layers.
 /// <para>
-/// What the game decides at run time is read from its memory each frame (<see cref="FfxGame.Peek"/>;
-/// these belong in the game-state API, ffx-state, later): the 2D scene shown (scene
+/// What the game decides at run time comes from the game-state API's <c>Snapshot.layers</c>
+/// (API 10; scene is <c>*g_PhyreScene</c>): the 2D scene shown (scene
 /// <c>+0x11d8</c>; a map starts on scene 0, scripts change it with
 /// <c>PhyreScene_change2DSceneNum</c>), the layers' shown flags (<c>PhyreScene_show2DLayer</c>'s
 /// table at <c>+0x1140</c>, <c>+0x1138</c> entries of 8 bytes: shown, scene, layer id (i16),
@@ -27,10 +27,6 @@ namespace GdFfx;
 /// </summary>
 public partial class MapLayers : Node3D
 {
-    /// <summary><c>g_PhyreScene</c>: a pointer to the scene.</summary>
-    public const uint PhyreScene = 0x00ccb9d8;
-    /// <summary><c>g_PhyreScene3D</c> (a byte): no squeeze while set.</summary>
-    public const uint PhyreScene3D = 0x00ccb9c0;
     /// <summary>The maps whose layers blend (<c>preTransparent</c>) instead of being cut out (<c>preTransparentATC</c>).</summary>
     public static readonly int[] BlendedMaps = [0xa0, 0xa1, 0x101, 0x16c];
 
@@ -151,7 +147,7 @@ public partial class MapLayers : Node3D
     }
 
     /// <summary>Shows the layers the game draws now and sets the window (once a frame).</summary>
-    public void Tick(FfxGame? game, int map, float cameraFar)
+    public void Tick(GdFfx.Api.Snapshot? snapshot, int map, float cameraFar)
     {
         ClassicMaterials.EnsureGlobals();
         RenderingServer.GlobalShaderParameterSet("ffx_layer_far", cameraFar * 0.99f);
@@ -161,59 +157,32 @@ public partial class MapLayers : Node3D
             return;
         }
         SetBlend(map);
-        var live = game != null ? Read(game) : null;
+        var live = snapshot?.Layers is { Valid: true } l ? l : null;
         int scene = live?.Scene ?? 0;
         int shown = 0;
-        foreach (var l in _layers)
+        foreach (var layer in _layers)
         {
-            bool on = l.Scene == scene && (live == null || (live.Value.Drawn && live.Value.Shown(l.Scene, l.Id)));
-            l.Mesh.Visible = on;
+            bool on = layer.Scene == scene && (live == null || (live.Drawn && Shown(live, layer.Scene, layer.Id)));
+            layer.Mesh.Visible = on;
             if (on)
                 shown++;
         }
         float b = live?.Pan ?? 0.035f;
         var window = live is { Squeezed: false }
-            ? new Vector4(0, 1, live.Value.Shift.X, live.Value.Shift.Y)
-            : new Vector4(1f / 3f - 2f * b, 4f / 3f, live?.Shift.X ?? 0, live?.Shift.Y ?? 0);
+            ? new Vector4(0, 1, live.ShiftX, live.ShiftY)
+            : new Vector4(1f / 3f - 2f * b, 4f / 3f, live?.ShiftX ?? 0, live?.ShiftY ?? 0);
         RenderingServer.GlobalShaderParameterSet("ffx_layer_window", window);
         State = (_layers.Count, shown, scene, b, live != null);
     }
 
-    /// <summary>The scene's 2D-layer state from the game's memory (null when no scene is up).</summary>
-    private readonly record struct Live(bool Drawn, int Scene, float Pan, Vector2 Shift, bool Squeezed, Dictionary<(int, int), bool>? Table)
+    /// <summary>A layer's shown flag in <c>PhyreScene_show2DLayer</c>'s table; shown when the table does not list it.</summary>
+    private static bool Shown(GdFfx.Api.Layers live, int scene, int id)
     {
-        /// <summary>The layer's shown flag; shown when the table does not list it.</summary>
-        public bool Shown(int scene, int id) => Table == null || !Table.TryGetValue((scene, id), out var on) || on;
-    }
-
-    private static uint U32(byte[] b, int at) => b.Length >= at + 4 ? BitConverter.ToUInt32(b, at) : 0;
-
-    private static Live? Read(FfxGame game)
-    {
-        var p = game.Peek(PhyreScene, 4);
-        uint scene = U32(p, 0);
-        if (scene == 0)
-            return null;
-        var level = game.Peek(scene + 0x93c, 2);
-        var a = game.Peek(scene + 0x1128, 0xb4); // +0x1128 .. +0x11dc
-        var w = game.Peek(scene + 0xf9bc, 0x80); // +0xf9bc .. +0xfa3c
-        var s3d = game.Peek(PhyreScene3D, 1);
-        if (level.Length < 2 || a.Length < 0xb4 || w.Length < 0x80 || s3d.Length < 1)
-            return null;
-        bool drawn = level[0] != 0 && level[1] == 0;
-        int current = (int)U32(a, 0x11d8 - 0x1128);
-        Dictionary<(int, int), bool>? table = null;
-        uint count = U32(a, 0x1138 - 0x1128), at = U32(a, 0x1140 - 0x1128);
-        if (U32(a, 0) != 0 && at != 0 && count > 0 && count < 256)
-        {
-            var t = game.Peek(at, (int)count * 8);
-            table = new();
-            for (int i = 0; i + 8 <= t.Length; i += 8)
-                table[((sbyte)t[i + 1], BitConverter.ToInt16(t, i + 2))] = t[i] != 0;
-        }
-        float pan = BitConverter.ToSingle(w, 0);
-        bool squeezed = w[0xf9c7 - 0xf9bc] == 0 && s3d[0] == 0;
-        var shift = new Vector2(BitConverter.ToSingle(w, 0xfa34 - 0xf9bc), BitConverter.ToSingle(w, 0xfa38 - 0xf9bc));
-        return new Live(drawn, current, pan, shift, squeezed, table);
+        // the last entry for the layer wins, as a dictionary filled in order kept it
+        bool on = true;
+        foreach (var e in live.Entries)
+            if (e.Scene == scene && e.Id == id)
+                on = e.Shown;
+        return on;
     }
 }

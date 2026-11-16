@@ -133,6 +133,8 @@ public partial class DebugView : Control
         {
             GD.Print(pass ? $"ffx selftest: PASS ({_test.Note})" : $"ffx selftest: FAIL ({_test.Note})");
             GD.Print($"ffx: {OneLine(s, _rate)}  {AudioLine(s)}");
+            if (host.View.Skipped.Count > 0)
+                GD.Print($"ffx: characters the game culled or skipped (not drawn here since API 10): {string.Join(" ", host.View.Skipped)}");
             host.Game.Stop();
             GetTree().Quit(pass ? 0 : 1);
             _test = null;
@@ -158,7 +160,7 @@ public partial class DebugView : Control
         var c = v.Current;
         if (c == null)
             return "no snapshot yet";
-        var shown = c.Actors.Count(a => a.Hidden == 0);
+        var shown = c.Actors.Count(GameStateView.Drawn);
         return $"snapshot {c.Update} ({v.Decoded} decoded): event {c.World.Event}, "
             + $"{c.Actors.Count} actors ({shown} shown), camera {(c.Camera.Valid ? "yes" : "no")}";
     }
@@ -198,7 +200,7 @@ public partial class DebugView : Control
                 var t = GameStateView.CameraTransform(c.Camera.World);
                 b.AppendLine($"camera         at {t.Origin:F1}  fov {Mathf.RadToDeg(c.Camera.FovY):F1} deg");
             }
-            foreach (var a in c.Actors.Where(a => a.Hidden == 0).Take(12))
+            foreach (var a in c.Actors.Where(GameStateView.Drawn).Take(12))
                 b.AppendLine($"  {a.Slot,2} {a.Model,-6} {Hex(a.Id, 4)} motion {a.Motion:x8} @{a.MotionFrame,7:F1}  bones {a.Bones.Count,3}"
                     + $"{(a.Player ? "  player" : "")}");
         }
@@ -491,7 +493,8 @@ public sealed class BesaidTest(double timeout, string? shot) : ITest
 /// runs it on every developer save): once the save's scene runs (not the title), its map or
 /// battle map is shown with the classic content, character models posed by the game, and it
 /// stays up for 3 seconds; reports the level, models, bones, objects, effect draws, the
-/// distortion and whether it is a battle (with <c>--shot=FILE.png</c> and a renderer, a picture).
+/// distortion, the characters the game draws and whether it is a battle (with <c>--shot=FILE.png</c>
+/// and a renderer, a picture; with <c>--walk=KEYS:SECONDS</c>, after walking).
 /// </summary>
 public sealed class MapTest(double timeout, string? shot) : ITest
 {
@@ -526,6 +529,9 @@ public sealed class MapTest(double timeout, string? shot) : ITest
             _shown = _total;
         if (_total - _shown < 3)
             return null;
+        // --walk=KEYS:SECONDS (keys joined by +, e.g. up+left:6): hold them, then 2 s still
+        if (Walk(_total - _shown - 3, delta) is { } walking && walking)
+            return null;
         var fx = view.GetNodeOrNull<EffectDrawView>("EffectDrawView");
         var dv = view.GetTree().Root.FindChild("DistortionView", true, false) as DistortionView;
         if (shot != null && DisplayServer.GetName() != "headless")
@@ -535,7 +541,48 @@ public sealed class MapTest(double timeout, string? shot) : ITest
         }
         return Done(true, $"{(c.World.Battle ? "battle" : "field")} {c.World.Level} (map {c.World.Map:x}): {view.Posed.Models} models "
             + $"({view.Posed.PosedBones} bones), {view.ObjectsPlaced} objects, {fx?.Shown.Draws ?? 0} effect draws "
-            + $"({fx?.Shown.Textured ?? 0} textured), distortion {(dv?.Shown.On == true ? "on" : "off")}{Layers(view)}, at {_total:F0} s");
+            + $"({fx?.Shown.Textured ?? 0} textured), distortion {(dv?.Shown.On == true ? "on" : "off")}{Layers(view)}, {Characters(c)}, "
+            + $"global time {view.GlobalTime:F2} s, at {_total:F0} s");
+    }
+
+    /// <summary>
+    /// The characters the game draws (<c>Actor.drawn</c>), and those it culls or skips although
+    /// their hide byte, alpha and matrix would show them (by model): hidden here since API 10.
+    /// </summary>
+    public static string Characters(Snapshot c)
+    {
+        var skipped = c.Actors.Where(a => !a.Drawn && a.Hidden == 0 && a.Alpha > 0 && !GameStateView.ZeroSize(a.World)).ToList();
+        var note = $"characters drawn {c.Actors.Count(GameStateView.Drawn)}/{c.Actors.Count}";
+        return skipped.Count == 0 ? note
+            : note + $" ({skipped.Count} culled or skipped by the game: {string.Join(" ", skipped.Select(a => $"{a.Model}#{a.Slot}(flags2 {a.Flags2:x})"))})";
+    }
+
+    private bool _held;
+
+    /// <summary>
+    /// <c>--walk=KEYS:SECONDS</c>: the keys (arrow names, joined by <c>+</c>) held for that long
+    /// from <paramref name="t"/> 0, then released and 2 s more; true while walking, null without
+    /// the option.
+    /// </summary>
+    private bool? Walk(double t, double delta)
+    {
+        if (GameSettings.Arg("walk") is not { } arg || arg.Split(':') is not [var names, var time]
+            || !double.TryParse(time, System.Globalization.CultureInfo.InvariantCulture, out var seconds))
+            return null;
+        var keys = names.Split('+').Select(n => n.ToLowerInvariant() switch
+        {
+            "up" => Key.Up, "down" => Key.Down, "left" => Key.Left, "right" => Key.Right, _ => Key.None,
+        }).Where(k => k != Key.None).ToArray();
+        bool hold = t < seconds;
+        if (hold != _held)
+        {
+            _held = hold;
+            foreach (var k in keys)
+                Godot.Input.ParseInputEvent(new InputEventKey { PhysicalKeycode = k, Keycode = k, Pressed = hold });
+            if (!hold)
+                GD.Print($"ffx selftest: walked {names} for {seconds:F1} s");
+        }
+        return t < seconds + 2;
     }
 
     /// <summary>The 2D layers, when the map has any: loaded, shown, the 2D scene and the pan (read from the game, or "not read").</summary>
@@ -609,7 +656,8 @@ public sealed class MessageTest(double timeout, string? shot) : ITest
 /// and the HUD the party's HP and MP and the turn order; then Tidus attacks
 /// (Enter tapped) until a damage number pops; the battle's effects play on their
 /// targets, effect 50001800 by the example remade effect (registered at the start)
-/// (with <c>--shot=FILE.png</c> under a renderer, a picture).
+/// (with <c>--shot=FILE.png</c> under a renderer, a picture). With <c>--to-results</c> it
+/// attacks on until the battle is won and reports the results screen (<see cref="BattleEndView"/>).
 /// </summary>
 public sealed class BattleTest : ITest
 {
@@ -650,6 +698,8 @@ public sealed class BattleTest : ITest
         if (_total > timeout)
             return Done(false, $"timed out: battle {c?.World.Battle}, level {c?.World.Level}, map shown {view3d?.MapLevel}, "
                 + $"models {view3d?.Posed.Models}, menu [{string.Join(", ", menu?.Shown ?? [])}]");
+        if (_attacked.Length > 0 && c != null)
+            return Results(c, root, delta);
         if (c == null || menu == null || view3d == null || hud == null || !c.World.Battle || menu.Shown.Count < 2
             || view3d.MapLevel != c.World.Level || view3d.Posed.Models < 2 || hud.Shown.Count == 0 || hud.Order.Length == 0)
             return null;
@@ -672,10 +722,16 @@ public sealed class BattleTest : ITest
         // Attack: confirm (Enter) tapped until a damage number pops
         if (hud.Popped > 0)
         {
-            Tap(false);
-            return Done(true, $"{_first}; {hud.Popped} damage number(s) popped; {effects?.Started ?? 0} effect(s) started "
+            var attacked = $"{_first}; {hud.Popped} damage number(s) popped; {effects?.Started ?? 0} effect(s) started "
                 + $"({effects?.RemadeStarted ?? 0} remade as {RemadeId}); effect draws by pass [{string.Join(", ", EffectDrawView.PassDraws)}], "
-                + $"{EffectDrawView.FadeFrames} frame(s) with a screen fade");
+                + $"{EffectDrawView.FadeFrames} frame(s) with a screen fade";
+            if (!GameSettings.Flag("to-results"))
+            {
+                Tap(false);
+                return Done(true, attacked);
+            }
+            _attacked = attacked;
+            GD.Print($"ffx selftest: {attacked}; attacking until the results");
         }
         _tap += delta;
         if (_tap > 0.25)
@@ -684,6 +740,99 @@ public sealed class BattleTest : ITest
             Tap(!_down);
         }
         return null;
+    }
+
+    private string _attacked = "";
+    private double _resultsAt = -1;
+    private uint _firstAp, _firstGilLeft, _firstState;
+    private bool _stateChanged;
+    private uint _firstGil = uint.MaxValue;
+    private readonly System.Collections.Generic.List<uint> _states = new();
+    private string _lastView = "", _apView = "", _gilView = "";
+    private double _gilAt = -1;
+    private string _resultsFirst = "";
+
+    private static uint TotalAp(GdFfx.Api.BattleEnd e)
+    {
+        uint t = 0;
+        for (int i = 0; i < 18; i++)
+            t += BattleEndView.Ap(e, i);
+        return t;
+    }
+
+    /// <summary>
+    /// <c>--to-results</c>: confirm (Enter) tapped on until the battle is won and the results
+    /// screen runs (as ffx-rust's test wins the deck's battle with Circle); the AP count down
+    /// by themselves, then confirm is tapped once a second until the gil is paid (at most 20 s): the rows, the AP counted down, the gil and the spoils as
+    /// <see cref="BattleEndView"/> shows them.
+    /// </summary>
+    private bool? Results(GdFfx.Api.Snapshot c, Window? root, double delta)
+    {
+        var view = root?.FindChild("BattleEndView", true, false) as BattleEndView;
+        var e = c.Menus.BattleEnd;
+        if (_resultsAt < 0)
+        {
+            if (view == null || !BattleEndView.Open(c) || view.Shown.Count == 0)
+            {
+                _tap += delta;
+                if (_tap > 0.25)
+                {
+                    _tap = 0;
+                    Tap(!_down);
+                }
+                return null;
+            }
+            Tap(false);
+            _resultsAt = _total;
+            _firstAp = TotalAp(e);
+            _firstGilLeft = e.GilLeft;
+            _firstState = e.State;
+            _resultsFirst = $"state 0x{e.State:x}: [{string.Join(" | ", view.Shown)}]; {view.Gil}; {view.Spoils}";
+            GD.Print($"ffx selftest: the results screen: {_resultsFirst}");
+            return null;
+        }
+        _stateChanged |= e.State != _firstState;
+        if (_firstGil == uint.MaxValue)
+            _firstGil = c.Save.Gil;
+        if (_states.Count == 0 || _states[^1] != e.State)
+            _states.Add(e.State);
+        if (BattleEndView.Open(c))
+        {
+            if (TotalAp(e) == 0 && _apView.Length == 0)
+                _apView = $"state 0x{e.State:x}: [{string.Join(" | ", view?.Shown ?? [])}]";
+            _lastView = $"state 0x{e.State:x}: [{string.Join(" | ", view?.Shown ?? [])}]; {view?.Gil}; {view?.Spoils}";
+            if (e.GilWon > 0 && e.GilLeft == 0 && c.Save.Gil >= _firstGil + e.GilWon && _gilAt < 0)
+            {
+                _gilAt = _total;
+                _gilView = _lastView;
+            }
+        }
+        double on = _total - _resultsAt;
+        // the AP count needs no input; then the screen waits for confirm (state 0xe) before the
+        // gil and the spoils: confirm tapped once a second from 4 s on, until the gil is paid
+        bool paid = _gilAt >= 0 && _total - _gilAt > 1;
+        if (BattleEndView.Open(c) && !paid && on < 20)
+        {
+            if (shot != null && on >= 1.5 && on - delta < 1.5 && DisplayServer.GetName() != "headless")
+            {
+                root!.GetViewport().GetTexture().GetImage().SavePng(shot);
+                GD.Print($"ffx selftest: picture {shot}");
+            }
+            if (TotalAp(e) == 0 && on > 4)
+            {
+                bool want = (on - 4) % 1.0 < 0.25;
+                if (want != _down)
+                    Tap(want);
+            }
+            return null;
+        }
+        if (_down)
+            Tap(false);
+        uint ap = TotalAp(e);
+        bool pass = _apView.Length > 0 && _gilAt >= 0 && _stateChanged;
+        return Done(pass, $"{_attacked}; the results screen: {_resultsFirst}; the AP counted: {_apView}; the gil paid: {_gilView} "
+            + $"(states {string.Join(" ", _states.Select(x => $"0x{x:x}"))}; AP left {_firstAp} -> {ap}, gil left {_firstGilLeft} -> 0, party gil {_firstGil} -> {c.Save.Gil}, "
+            + $"most AP shown {view?.MostAp}, level-up flash frames {view?.Flashes}, state changed {_stateChanged})");
     }
 
     private void Tap(bool down)
@@ -782,6 +931,8 @@ public sealed class MenuTest(double timeout, string? shot) : ITest
                 $"{_main}; the sphere grid: {grid.Shown.Nodes} nodes, {grid.Shown.Links} links, {grid.Shown.Marked} marked for character {c.SphereGrid.Current}, "
                 + $"the cursor on node {c.SphereGrid.Cursor} ({grid.CursorName})");
         }
+        if (screen == "config")
+            return Config(c, panel, delta);
         bool status = screen is "status" or "abilities" or "overdrive";
         _probe += delta;
         void Press(Key key, bool d) => Godot.Input.ParseInputEvent(new InputEventKey { PhysicalKeycode = key, Keycode = key, Pressed = d });
@@ -833,6 +984,61 @@ public sealed class MenuTest(double timeout, string? shot) : ITest
         if (cur != 1 || _first.Length == 0 || panel.ItemAtCursor.Length == 0 || panel.ItemAtCursor == _first)
             return Done(false, $"the item cursor: [{_first}] then [{panel.ItemAtCursor}] (slot {cur}, not 1)");
         return Done(true, $"{_main}; the cursor on [{_first}], one down on [{panel.ItemAtCursor}]; the items: [{string.Join(" | ", panel.Items.Take(4))}{(panel.Items.Count > 4 ? " | ..." : "")}] ({panel.Items.Count})");
+    }
+
+    private double _key;
+    private bool _keyDown;
+    private double _configAt = -1;
+
+    /// <summary>
+    /// The config screen: down the main menu's options to the config entry (option id 8,
+    /// <c>TkMenuMainOpenOption</c> opens slot 0xa, as ffx-rust's test picks it), confirm, then
+    /// the native panel's rows; one Down moves the game's cursor to the next row.
+    /// </summary>
+    private bool? Config(Snapshot c, FieldMenuView panel, double delta)
+    {
+        void Press(Key key, bool d) => Godot.Input.ParseInputEvent(new InputEventKey { PhysicalKeycode = key, Keycode = key, Pressed = d });
+        _key += delta;
+        _probe += delta;
+        var cfg = c.Menus.Config;
+        if (_configAt < 0 && !(cfg.Open && panel.Config.Count > 0))
+        {
+            if (_probe > 20)
+                return Done(false, $"the config screen did not come (mask {c.Menus.MainMask:x}, cursor {c.Menus.MainCursor}); {_main}");
+            if (_key < 0.3)
+                return null;
+            _key = 0;
+            if (_keyDown)
+            {
+                Press(Key.Down, false);
+                Press(Key.Enter, false);
+                _keyDown = false;
+                return null;
+            }
+            if ((c.Menus.MainMask & 2) == 0)
+                return null;
+            int target = c.Menus.MainOptionList.FindIndex(o => o.Id == 8);
+            if (target < 0)
+                return Done(false, $"no config entry (option id 8) in the main menu: [{string.Join(", ", c.Menus.MainOptionList.Select(o => $"0x{o.Id:x}"))}]");
+            Press(c.Menus.MainCursor == target ? Key.Enter : Key.Down, true);
+            _keyDown = true;
+            return null;
+        }
+        if (_configAt < 0)
+        {
+            _configAt = _probe;
+            _first = $"cursor {cfg.Cursor}: [{string.Join(" | ", panel.Config)}]";
+        }
+        double t = _probe - _configAt, tw = t - delta;
+        if (tw < 1.0 && t >= 1.0) Press(Key.Down, true);
+        if (tw < 1.3 && t >= 1.3) Press(Key.Down, false);
+        if (t < 2.5)
+            return null;
+        if (shot != null && DisplayServer.GetName() != "headless")
+            ((Engine.GetMainLoop() as SceneTree)?.Root)!.GetViewport().GetTexture().GetImage().SavePng(shot);
+        var at = panel.Config.FindIndex(r => r.StartsWith("▶"));
+        return Done(cfg.Rows.Count > 1 && at == cfg.Cursor && panel.Config.Count == cfg.Rows.Count,
+            $"{_main}; the config screen ({cfg.Rows.Count} rows, PC row {cfg.PcRow}), {_first}; one down: cursor {cfg.Cursor} on [{(at >= 0 ? panel.Config[at] : "")}]");
     }
 
     private void Tap(bool down)
