@@ -8,9 +8,10 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
   <ItemGroup>
-    <!-- arrays up to 2 MiB in the young generation: the frame's effect geometry and the snapshots,
-         copied out of the extension each update, die young; on the large object heap (from
-         85,000 bytes) each one counted towards a full collection (docs/running.md, "Benchmark") -->
+    <!-- arrays up to 2 MiB in the young generation (from 85,000 bytes they go on the large object
+         heap, collected with gen2). Only where .NET reads this project's runtimeconfig.json:
+         Godot run on the project folder starts it with the editor's own, so not there
+         (docs/running.md, "Benchmark") -->
     <RuntimeHostConfigurationOption Include="System.GC.LOHThreshold" Value="2097152" />
   </ItemGroup>
 </Project>

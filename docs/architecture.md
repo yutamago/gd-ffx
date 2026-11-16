@@ -139,7 +139,13 @@ encoding.
   main thread, between two updates) and hands it to the observer
   `rust/ffx-gd/src/snapshots.rs` registers, which keeps the newest two
   with the time the newest came.
-- `FfxGame.snapshots()` gives them to C# encoded; the C# bindings
+- `FfxGame.snapshots_held()` gives them to C# encoded without copies of
+  its own: the node holds the encoded pair until its next call and hands
+  out each one's address and length, and C# copies the bytes into buffers
+  it keeps (`Held.CopyInto`, `Marshal.Copy`) before that next call (all on
+  Godot's main thread: gdext calls are main-thread only). No array is made
+  an update on either side (`FfxGame.snapshots()`, with Godot arrays, stays
+  for the benchmark and tools). The C# bindings
   (`godot/src/Api/GameStateApi.g.cs`) are generated from the API's schema
   by `rust/ffx-state-cs` (`cargo run -p ffx-state-cs`; a test fails when
   they are stale) and read the bytes through `godot/src/Api/StateReader.cs`.
@@ -297,11 +303,16 @@ Scripts move map objects (`graphicObjectSetTranslation`/`Rotation`) and
 show or hide their meshes (the layer mask); the file only has where they
 start. API 8's `Snapshot.objects` gives each object id's meshes with their
 live world matrices and whether they are drawn. `StateView3D` finds the
-classic map's mesh nodes by name (`N_kShape`, FBX's `FBXASCnnn` escapes
-decoded: mesh k of object N) and places each at its matrix (interpolated
+classic map's mesh nodes by the object id the import gives each mesh
+(`extras.ffx_obj_id`, the instance's `m_objID`, by which
+`PhyreScene_rebuildMapObjects` lists an object's meshes; mesh k of object
+N is the k-th of those meshes in instance order, `ffx_instance`), and by
+name (`N_kShape`, FBX's `FBXASCnnn` escapes decoded) for an import without
+the ids. The names are not always the ids: at Besaid the mesh named
+`6_0Shape` is object 5's. Each is placed at its matrix (interpolated
 between the last two snapshots), shown while the game draws it. Besaid's
 birds (objects 18..32, at the origin in the file) fly where the game has
-them; the Besaid check counts the meshes placed (45).
+them; the Besaid check counts the meshes placed.
 
 Some map meshes morph (docs/importer.md, "Morphing meshes"): the import
 gives a mesh its instance's `m_objID`, `m_animCt`, `m_mimeCt` and
@@ -422,7 +433,9 @@ the game gets from `ViewProjection2` (traced only as the main camera's).
   pass: positions in render space, colours, UVs, indices, the texture name
   and the VSP flags. The
   extension hands the frame of the shown snapshot's update to C#
-  (`FfxGame.effect_draws`, the `FXDR` encoding), which builds one mesh a
+  (`FfxGame.effect_draws_held` and `effect_draws_address`, the `FXDR`
+  encoding held by the node until its next call, copied into a buffer C#
+  keeps, as the snapshots are), which builds one mesh a
   frame, a surface per (texture, blend): unshaded, two-sided, no depth
   write, the vertex colour doubled (0.5 is the PS2's 0x80). Blend from the
   flags: bit 0x10 subtracts, else bit 0x2 adds, else alpha (from the

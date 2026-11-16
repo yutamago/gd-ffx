@@ -146,11 +146,14 @@ public partial class MapLayers : Node3D
         }
     }
 
+    // made once: a string passed for a StringName makes a new (finalizable) one each call
+    private static readonly StringName G_ffx_layer_far = "ffx_layer_far", G_ffx_layer_window = "ffx_layer_window";
+
     /// <summary>Shows the layers the game draws now and sets the window (once a frame).</summary>
     public void Tick(GdFfx.Api.Snapshot? snapshot, int map, float cameraFar)
     {
         ClassicMaterials.EnsureGlobals();
-        RenderingServer.GlobalShaderParameterSet("ffx_layer_far", cameraFar * 0.99f);
+        RenderingServer.GlobalShaderParameterSet(G_ffx_layer_far, cameraFar * 0.99f);
         if (_layers.Count == 0)
         {
             State = default;
@@ -171,7 +174,7 @@ public partial class MapLayers : Node3D
         var window = live is { Squeezed: false }
             ? new Vector4(0, 1, live.ShiftX, live.ShiftY)
             : new Vector4(1f / 3f - 2f * b, 4f / 3f, live?.ShiftX ?? 0, live?.ShiftY ?? 0);
-        RenderingServer.GlobalShaderParameterSet("ffx_layer_window", window);
+        RenderingServer.GlobalShaderParameterSet(G_ffx_layer_window, window);
         State = (_layers.Count, shown, scene, b, live != null);
     }
 

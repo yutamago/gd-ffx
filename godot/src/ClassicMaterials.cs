@@ -303,6 +303,9 @@ void fragment() {
         return true;
     }
 
+    // made once: a string passed for a StringName makes a new (finalizable) one each call
+    private static readonly StringName G_ffx_time = "ffx_time", G_ffx_colour_scale = "ffx_colour_scale", G_ffx_fog_colour = "ffx_fog_colour", G_ffx_fog = "ffx_fog", G_ffx_ambient = "ffx_ambient", G_ffx_light_dirs = "ffx_light_dirs", G_ffx_light_colours = "ffx_light_colours", G_ffx_light_sign = "ffx_light_sign";
+
     /// <summary>
     /// The shaders' clock (<c>ffx_time</c>): the game's <c>GlobalTime</c> (<c>Look.global_time</c>,
     /// the clock of the scrolling UVs and the water), interpolated between the last two
@@ -317,7 +320,7 @@ void fragment() {
         float t = now.GlobalTime;
         if (previous?.Look is { Valid: true } was && was.GlobalTime <= t && t - was.GlobalTime < 0.5f)
             t = Mathf.Lerp(was.GlobalTime, t, alpha);
-        RenderingServer.GlobalShaderParameterSet("ffx_time", t);
+        RenderingServer.GlobalShaderParameterSet(G_ffx_time, t);
         return t;
     }
 
@@ -327,18 +330,18 @@ void fragment() {
         _ = Globals;
         if (l == null || !l.Valid)
             return;
-        RenderingServer.GlobalShaderParameterSet("ffx_colour_scale", l.ColourScale);
-        RenderingServer.GlobalShaderParameterSet("ffx_fog_colour", l.FogColour);
-        RenderingServer.GlobalShaderParameterSet("ffx_fog", new Vector4(l.FogNear, l.FogFar, l.FogCurve, l.FogLimit));
+        RenderingServer.GlobalShaderParameterSet(G_ffx_colour_scale, l.ColourScale);
+        RenderingServer.GlobalShaderParameterSet(G_ffx_fog_colour, l.FogColour);
+        RenderingServer.GlobalShaderParameterSet(G_ffx_fog, new Vector4(l.FogNear, l.FogFar, l.FogCurve, l.FogLimit));
         if (l.Lights.Count == 0)
             return;
-        RenderingServer.GlobalShaderParameterSet("ffx_ambient", l.Ambient + l.CharacterAmbient);
+        RenderingServer.GlobalShaderParameterSet(G_ffx_ambient, l.Ambient + l.CharacterAmbient);
         Vector3 Dir(int i) => i < l.Lights.Count ? Turn(l.Lights[i]) : Vector3.Zero;
         Vector3 Col(int i) => i < l.Lights.Count ? l.Lights[i].Colour * l.Lights[i].Level : Vector3.Zero;
         // Basis(x, y, z) takes columns
-        RenderingServer.GlobalShaderParameterSet("ffx_light_dirs", new Basis(Dir(0), Dir(1), Dir(2)));
-        RenderingServer.GlobalShaderParameterSet("ffx_light_colours", new Basis(Col(0), Col(1), Col(2)));
-        RenderingServer.GlobalShaderParameterSet("ffx_light_sign", LightSign);
+        RenderingServer.GlobalShaderParameterSet(G_ffx_light_dirs, new Basis(Dir(0), Dir(1), Dir(2)));
+        RenderingServer.GlobalShaderParameterSet(G_ffx_light_colours, new Basis(Col(0), Col(1), Col(2)));
+        RenderingServer.GlobalShaderParameterSet(G_ffx_light_sign, LightSign);
     }
 
     /// <summary>A light's direction turned by the map's yaw and pitch: Rx(pitch) Ry(yaw) d.</summary>
