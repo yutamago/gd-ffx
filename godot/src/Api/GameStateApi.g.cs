@@ -533,6 +533,13 @@ public sealed partial class Menus
     /// screen's lists and cursors.
     /// </summary>
     public List<MenuWindow> Windows = new();
+    /// <summary>
+    /// The character the PS2 menus show (`TkMenuGetCurrentPlayer`:
+    /// `g_TkMenuPlayers` `0x01841c14` at `g_TkMenuCurrentPlayerPos`
+    /// `0x01841c28`; below 8 a party member, 8 and up an aeon); 0xff
+    /// when the position is out of the list.
+    /// </summary>
+    public byte CurrentPlayer;
 
     /// <summary>Reads one from the encoding.</summary>
     public static Menus Read(ref StateReader r)
@@ -564,6 +571,7 @@ public sealed partial class Menus
             for (int i = 0; i < n; i++)
                 o.Windows.Add(MenuWindow.Read(ref r));
         }
+        o.CurrentPlayer = r.U8();
         return o;
     }
 }

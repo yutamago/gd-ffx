@@ -14,8 +14,8 @@ namespace GdFfx;
 /// measured: Items in the main menu opens it), the inventory instead: each used slot in the
 /// game's order, the item named from the kernel tables (as the battle commands), and its
 /// count, in two columns, the one under the game's cursor marked (<see cref="ItemList"/>). While the status screen is open (slot 6), every party member's
-/// HP, MP, the 8 stats, AP, sphere levels and overdrive gauge side by side (which member
-/// the game shows is not in the API yet). The abilities screen (slot 2): each member's
+/// HP, MP, the 8 stats, AP, sphere levels and overdrive gauge of the character the menu
+/// shows (<c>Menus.current_player</c>). The abilities screen (slot 2): each member's
 /// own learnt commands (<see cref="Learnt"/>, without the shared ones) named from the kernel's
 /// command table; the overdrive
 /// screen (slot 0x15): each member's mode, the modes obtained and the gauge. The other
@@ -183,6 +183,9 @@ public partial class FieldMenuView : Control
         }
         var sv = s.Save;
         var who = sv.Frontline.Concat(sv.Backline).Where(i => i != 0xff && i < sv.Members.Count).Distinct().ToList();
+        // the status screen shows the menu's current character (Menus.current_player)
+        if (screen == "status" && s.Menus.CurrentPlayer < sv.Members.Count)
+            who = [s.Menus.CurrentPlayer];
         var cells = new List<string> { "" };
         cells.AddRange(who.Select(i => MemberName(game, s, i, _names)));
         if (screen != "status")

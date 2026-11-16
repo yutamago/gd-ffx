@@ -244,8 +244,11 @@ The main menu's screens by their bit (measured: each option picked, a
 character chosen where it asks; `FieldMenuView.Screens`): sphere grid
 `0x80000` (slot 0x13), items `0x8` (3), abilities `0x4` (2), overdrive
 `0x200000` (0x15), status `0x40` (6), config `0x400` (0xa), help `0x800`
-(0xb). The status screen shows every party member's HP, MP, the 8 stats,
-AP, sphere levels and overdrive gauge side by side (`--selftest-menu
+(0xb). The status screen shows the menu's current character's HP, MP, the 8
+stats, AP, sphere levels and overdrive gauge (API 8's
+`menus.current_player`: `g_TkMenuPlayers` at `g_TkMenuCurrentPlayerPos`,
+found by diffing the menu's memory with the first and the second
+character chosen; the check picks Wakka) (`--selftest-menu
 --menu-screen=status`; Tidus and Wakka's start values, which confirm the
 stats' order); the abilities screen each member's own learnt commands
 (`PartyMember.commands`, `0x3000 + i`, named from the kernel's command
@@ -256,8 +259,7 @@ and the gauge (`--menu-screen=abilities|overdrive|status`). API 8's
 cursors: on the item screen the list is the window of kind 0 with 56 rows,
 its cursor taken as the inventory slot and marked (0 at the start, 1 after
 one Down: measured; whether the game's own picture marks that entry or a
-row of two is not checked, as gd-ffx does not draw the game's menu). Which member
-the status screen shows is not in the API yet. The sphere grid screen
+row of two is not checked, as gd-ffx does not draw the game's menu). The sphere grid screen
 (`SphereGridView`, API 8's `sphere_grid`: the game's own grid while it is
 up, read from `*g_Abmap`) draws the 828 nodes and 834 links fitted to the
 screen, coloured by kind, the nodes the shown character activated marked

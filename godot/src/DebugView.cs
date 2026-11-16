@@ -692,7 +692,11 @@ public sealed class MenuTest(double timeout, string? shot) : ITest
             if (was < t + 0.3 && _probe >= t + 0.3) Press(Key.Down, false);
         }
         double e = 1.5 + 0.6 * downs;
-        foreach (var t in status ? new[] { e, e + 1.2 } : new[] { e })
+        // the status screen: the second character (one down in the character choice)
+        bool second = screen == "status";
+        if (second && was < e + 0.7 && _probe >= e + 0.7) Press(Key.Down, true);
+        if (second && was < e + 0.9 && _probe >= e + 0.9) Press(Key.Down, false);
+        foreach (var t in status ? new[] { e, e + 1.4 } : new[] { e })
         {
             if (was < t && _probe >= t) Press(Key.Enter, true);
             if (was < t + 0.3 && _probe >= t + 0.3) Press(Key.Enter, false);
@@ -703,7 +707,9 @@ public sealed class MenuTest(double timeout, string? shot) : ITest
                 return _probe > 15
                     ? Done(false, $"the {screen} screen did not come (mask {c.Menus.MainMask:x}, {FieldMenuView.OpenScreen(c.Menus.MainMask)}); {_main}")
                     : null;
-            return Done(true, $"{_main}; the {screen} screen: [{string.Join(" | ", panel.Status)}]");
+            if (second && (c.Menus.CurrentPlayer != c.Save.Frontline[1] || !panel.Status[0].StartsWith($"HP: {c.Save.Members[c.Save.Frontline[1]].Hp}/")))
+                return Done(false, $"the status screen shows character {c.Menus.CurrentPlayer}, not the second ({c.Save.Frontline[1]}): [{string.Join(" | ", panel.Status)}]");
+            return Done(true, $"{_main}; the {screen} screen (character {c.Menus.CurrentPlayer}): [{string.Join(" | ", panel.Status)}]");
         }
         if ((c.Menus.MainMask & FieldMenuView.ItemsMask) == 0 || panel.Items.Count == 0)
         {
