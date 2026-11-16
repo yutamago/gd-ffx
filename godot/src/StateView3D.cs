@@ -64,11 +64,11 @@ public partial class StateView3D : Node3D
         /// <summary>The skeleton's transform in the model's space (inverted).</summary>
         public Transform3D SkeletonInModelInv = Transform3D.Identity;
         /// <summary>
-        /// A model without a skin (rigid parts, e.g. the save sphere f001): each part node
-        /// <c>MeshNodeK</c> with the game element it follows and its parent's transform in the
+        /// A model without a skin (rigid parts, e.g. the save sphere f001): each mesh with its
+        /// segments' model id (the import's <c>ffx_model_id</c>) and its parent's transform in the
         /// model (inverted).
         /// </summary>
-        public (Node3D Part, int Element, Transform3D ParentInv)[] Rigid = [];
+        public (Node3D Part, int ModelId, Transform3D ParentInv)[] Rigid = [];
     }
 
     public override void _Ready()
@@ -571,39 +571,27 @@ public partial class StateView3D : Node3D
     }
 
     /// <summary>
-    /// A skinless model's parts and the elements they follow: part <c>MeshNodeK</c> follows the
-    /// K-th leaf <c>SkeletonNode_i</c> by element (f001: three parts on elements 2, 3, 4, the
-    /// leaves; the game moves 2 and 3 up 6 and turns them, 4 is the base). Seen on f001, where
-    /// the game places the parts per mesh (<c>graphicCharacterInstanceSetWorldMatrixByMdlID</c>);
-    /// the pairing is inferred, not read from the game.
+    /// A skinless model's meshes and the game models they belong to: the model id of their
+    /// segments (<c>PMeshSegment +0x18</c>, the import's mesh extras <c>ffx_model_id</c>), by which
+    /// <c>graphicCharacterInstanceSetWorldMatrixByMdlID</c> places them; a mesh without one is
+    /// mesh number id, as the game falls back to.
     /// </summary>
     private static (Node3D, int, Transform3D)[] RigidParts(Node3D model)
     {
-        const string bone = "SkeletonNode_", part = "MeshNode";
-        var leaves = new List<int>();
-        var parts = new SortedDictionary<int, Node3D>();
-        foreach (var x in model.FindChildren("*", nameof(Node3D), true, false))
-        {
-            if (x is not Node3D n3)
-                continue;
-            var name = n3.Name.ToString();
-            if (name.StartsWith(bone, System.StringComparison.Ordinal) && int.TryParse(name[bone.Length..], out var e)
-                && !n3.GetChildren().OfType<Node3D>().Any(c => c.Name.ToString().StartsWith(bone, System.StringComparison.Ordinal)))
-                leaves.Add(e);
-            else if (name.StartsWith(part, System.StringComparison.Ordinal) && int.TryParse(name[part.Length..], out var k))
-                parts[k] = n3;
-        }
-        leaves.Sort();
         var list = new List<(Node3D, int, Transform3D)>();
-        foreach (var (k, node) in parts)
+        int k = 0;
+        foreach (var x in model.FindChildren("*", nameof(MeshInstance3D), true, false))
         {
-            if (k >= leaves.Count)
-                break;
+            if (x is not MeshInstance3D { Mesh: { } mesh } mi)
+                continue;
+            int id = mesh.HasMeta("extras") && mesh.GetMeta("extras").AsGodotDictionary() is { } e
+                && e.TryGetValue("ffx_model_id", out var v) ? v.AsInt32() : k;
+            k++;
             Transform3D t = Transform3D.Identity;
-            for (Node? p = node.GetParent(); p != null && p != model; p = p.GetParent())
+            for (Node? p = mi.GetParent(); p != null && p != model; p = p.GetParent())
                 if (p is Node3D p3)
                     t = p3.Transform * t;
-            list.Add((node, leaves[k], t.AffineInverse()));
+            list.Add((mi, id, t.AffineInverse()));
         }
         return list.ToArray();
     }
@@ -646,9 +634,14 @@ public partial class StateView3D : Node3D
         var prev = f.Previous is { } fp && fp.Bones.Count == a.Bones.Count ? fp : null;
         if (skel == null)
         {
+            // Ch_DrawMain's walk 1: an unskinned model at the character's world times its base
+            // element's matrix (here relative to the character: the element's)
             int moved = 0;
-            foreach (var (part, i, parentInv) in n.Rigid)
+            foreach (var (part, id, parentInv) in n.Rigid)
             {
+                if (id >= a.Models.Count || a.Models[id].Skinned)
+                    continue;
+                int i = a.Models[id].Base;
                 if (i >= a.Bones.Count)
                     continue;
                 var t = RowMajor(a.Bones[i].Matrix);

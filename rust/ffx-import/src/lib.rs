@@ -33,7 +33,8 @@ pub mod morph;
 /// fields (`ffx_obj_id`, `ffx_anim_ct`, `ffx_mime_ct`, `ffx_dobj_flag`), the
 /// position morphs as glTF morph targets, the colour morphs' second colour
 /// as `TEXCOORD_2`/`TEXCOORD_3`, the materials' `ffx_colors`
-/// (docs/importer.md, "Morphing meshes").
+/// (docs/importer.md, "Morphing meshes"); the meshes' and primitives'
+/// segment model ids (`ffx_model_id`).
 pub const FORMAT: u64 = 3;
 
 /// The game places a 3D map's instances at the file's node worlds times
@@ -406,8 +407,9 @@ impl Importer {
             },
             &[],
         );
-        // the morphing instances (map clusters only)
+        // the morphing instances (map clusters only), the segments' model ids
         let tags = morph::tags(&bytes);
+        let model_ids = segment_model_ids(&bytes);
         let morphs = morph::read(&bytes);
         // the segment contexts' stream bindings (which UV set a water
         // shader's TEXCOORD4/6/7 read): only a map cluster has them
@@ -416,6 +418,7 @@ impl Importer {
             self.add_extras(&model, scene.as_ref(), &tags, doc);
             add_morph_targets(&model, &morphs, doc, bin);
             add_color_morph_streams(&model, doc, bin);
+            add_model_ids(&model_ids, doc);
         })
         .ok_or_else(|| Error::Model(format!("{path}: bad glTF from the export")))
     }
@@ -996,6 +999,53 @@ fn add_morph_targets(
     }
 }
 
+/// Each `PMeshSegment`'s model id (`+0x18`, a word; the segments are
+/// `0x6c` bytes): the model a character's unskinned mesh belongs to,
+/// which `graphicCharacterInstanceSetWorldMatrixByMdlID` (`0x0063c430`)
+/// places at the model's base element (ffx-rust's `ffx-graphic`
+/// `character_set_world_matrix_by_mdl_id`). Empty for other layouts.
+fn segment_model_ids(bytes: &[u8]) -> Vec<u32> {
+    let Ok(c) = ffx_phyre::cluster::Cluster::parse(bytes) else {
+        return Vec::new();
+    };
+    let Some(l) = c.list("PMeshSegment").filter(|l| l.object_size() == 0x6c) else {
+        return Vec::new();
+    };
+    (0..l.count)
+        .map_while(|i| {
+            let o = l.object(i) + 0x18;
+            Some(u32::from_le_bytes(bytes.get(o..o + 4)?.try_into().ok()?))
+        })
+        .collect()
+}
+
+/// Each primitive's segment's model id ([`segment_model_ids`]) as
+/// `extras.ffx_model_id`, and each mesh's (its first primitive's) as the
+/// mesh's `extras.ffx_model_id`.
+fn add_model_ids(ids: &[u32], doc: &mut Value) {
+    let Some(meshes) = doc["meshes"].as_array_mut() else {
+        return;
+    };
+    for mesh in meshes {
+        let mut first = None;
+        if let Some(prims) = mesh["primitives"].as_array_mut() {
+            for p in prims {
+                let id = p["extras"]["ffx_segment"]
+                    .as_u64()
+                    .and_then(|s| usize::try_from(s).ok())
+                    .and_then(|s| ids.get(s));
+                if let Some(&id) = id {
+                    p["extras"]["ffx_model_id"] = json!(id);
+                    first.get_or_insert(id);
+                }
+            }
+        }
+        if let Some(id) = first {
+            mesh["extras"]["ffx_model_id"] = json!(id);
+        }
+    }
+}
+
 /// For materials of a vertex colour morph (`VERTEX_COLOR_MORPH`: the vertex
 /// program's colour is `COLOR0 + w (COLOR1 - COLOR0)`), the `COLOR_n` that
 /// `COLOR1` reads (the material's `ffx_colors`) as two float pairs,
@@ -1227,6 +1277,28 @@ mod tests {
         let target = &bird["primitives"][0]["targets"][0]["POSITION"];
         let acc = &doc["accessors"][usize::try_from(target.as_u64().unwrap()).unwrap()];
         assert_eq!(acc["count"], 96);
+        // the save sphere's three unskinned parts: models 0, 1, 2 (MeshNode0..2)
+        let path = character_model_path("f001").unwrap();
+        let doc = glb_json(&imp.model_glb(&path).unwrap());
+        let ids: Vec<(String, Value)> = doc["meshes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| {
+                (
+                    m["name"].as_str().unwrap().to_owned(),
+                    m["extras"]["ffx_model_id"].clone(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            ids,
+            [
+                ("MeshNode0Shape".to_owned(), json!(0)),
+                ("MeshNode1Shape".to_owned(), json!(1)),
+                ("MeshNode2Shape".to_owned(), json!(2))
+            ]
+        );
     }
 
     /// On the player's game (skips without `FFX_GAME_DIR`): the opening's

@@ -59,7 +59,9 @@ variant (`PMaterial.m_effectVariant`, the cluster
 Each mesh (one per instance) gets its instance's `m_render_order`
 (`extras.ffx_render_order`) and, when not 0, `m_DObjKind`
 (`ffx_dobj_kind`); also its instance's index (`ffx_instance`) and morph
-fields (below). Materials also get `ffx_colors`, which `COLOR_n` each
+fields (below), and its segments' model id (`ffx_model_id`, also on each
+primitive: `PMeshSegment +0x18`, by which the game places a character's
+unskinned meshes). Materials also get `ffx_colors`, which `COLOR_n` each
 `COLOR` input reads (as `ffx_texcoords`). The `.glb` carries the importer's format
 (`asset.extras.ffx_import`, `ffx_import::FORMAT`); a cached import of
 another format is made again. docs/architecture.md, "Map materials", says how

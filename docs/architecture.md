@@ -292,14 +292,16 @@ view: `FFX_SHOT_ARGS="--shots=4 --look-at-object=19" tools/compare-shot.sh`).
 
 Character models made of rigid parts without a skin (the save sphere's
 base `f001`: three meshes `MeshNode0..2`, five `SkeletonNode`s, no skin in
-the import) are placed by the game per mesh
-(`graphicCharacterInstanceSetWorldMatrixByMdlID`), so posing bones moves
-nothing. `StateView3D` moves part `MeshNodeK` with the K-th leaf
-`SkeletonNode` (by element) instead: on f001 elements 2, 3 and 4, of which
-the game lifts 2 and 3 by 6 and turns them (the ring and its mount) and
-leaves 4 at the base. The pairing is inferred from f001, not read from the
-game; the picture then matches the original's (the ring floating above the
-pedestal). Its glowing orb is an effect, not part of the model.
+the import) are placed by the game per model, as `Ch_DrawMain`'s first walk
+does: each model not in the skin list at the character's world times its
+base element's matrix (`graphicCharacterInstanceSetWorldMatrixByMdlID`,
+which finds a model's meshes by their segments' model id, `PMeshSegment
++0x18`). The import writes that id (`extras.ffx_model_id`, docs/importer.md)
+and API 10 gives each model's base element (`Actor.models`), so
+`StateView3D` puts mesh `id` at `bones[models[id].base]` (f001: models 0, 1,
+2 on elements 2, 3, 4; the game lifts 2 and 3 by 6 and turns them, the ring
+and its mount, and leaves 4 at the base). Its glowing orb is an effect, not
+part of the model.
 
 ## The 2D layers (G5)
 
