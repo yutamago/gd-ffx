@@ -24,7 +24,10 @@ ships with gd-ffx or goes into git.
   `--classic=PATH` or the project setting `ffx/classic/cache_dir`); an import
   that is there already is reused.
 - `godot/src/ClassicLibrary.cs` asks for what the snapshots name and loads
-  finished `.glb` files at run time (`GltfDocument`); `StateView3D` shows
+  finished `.glb` files at run time (`GltfDocument`; the extras below are
+  read from the file's JSON chunk with System.Text.Json by `GltfExtras`,
+  not through Godot's dictionaries, and a mesh's fields set on the Godot
+  mesh as integer metadata: docs/running.md, "Garbage collections"); `StateView3D` shows
   them, through `ContentResolver`, which takes a remade scene instead when
   one is registered for the id (docs/remake.md); then the classic import is
   never asked for.

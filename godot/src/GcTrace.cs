@@ -101,8 +101,60 @@ public sealed class GcTrace : EventListener
     private static readonly System.Reflection.PropertyInfo? Tracked = typeof(Godot.GodotObject).Assembly
         .GetType("Godot.DisposablesTracker")?.GetProperty("OtherInstances",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+    private static readonly System.Reflection.PropertyInfo? TrackedObjects = typeof(Godot.GodotObject).Assembly
+        .GetType("Godot.DisposablesTracker")?.GetProperty("GodotObjectInstances",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
     private HashSet<object> _seen = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<string, int> _made = new();
+    private readonly ConcurrentQueue<string> _loads = new();
+
+    /// <summary>The trace of this run (null without <c>--bench-gc-trace</c>).</summary>
+    public static GcTrace? Current { get; private set; }
+
+    public GcTrace() => Current = this;
+
+    /// <summary>
+    /// Runs a background load (<paramref name="load"/>, on its worker thread) and, when tracing,
+    /// notes the Godot disposables (variants, collections, names) and object wrappers it left
+    /// registered when it ended, all finalizable: those a collection during the load found dead
+    /// are not counted (a lower bound). Other threads' count too; the main thread makes almost none.
+    /// </summary>
+    public static T Load<T>(string what, Func<T> load)
+    {
+        if (Current is not { } trace || Tracked?.GetValue(null) is not System.Collections.IDictionary d
+            || TrackedObjects?.GetValue(null) is not System.Collections.IDictionary o)
+            return load();
+        var before = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        foreach (var key in d.Keys)
+            before.Add(key);
+        foreach (var key in o.Keys)
+            before.Add(key);
+        var t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+        var result = load();
+        var ms = System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds;
+        var kinds = new Dictionary<string, int>();
+        int n = 0, objects = 0;
+        foreach (var key in d.Keys)
+            if (!before.Contains(key) && key is WeakReference<IDisposable> w && w.TryGetTarget(out var t))
+            {
+                n++;
+                kinds[Kind(t)] = kinds.GetValueOrDefault(Kind(t)) + 1;
+            }
+        foreach (var key in o.Keys)
+            if (!before.Contains(key) && key is WeakReference<Godot.GodotObject> w && w.TryGetTarget(out _))
+                objects++;
+        var top = string.Join(", ", kinds.OrderByDescending(kv => kv.Value).Take(6).Select(kv => $"{kv.Key} {kv.Value}"));
+        trace._loads.Enqueue($"{what} ({ms:F0} ms): {n} godot disposables ({top}), {objects} object wrappers");
+        return result;
+    }
+
+    private static string Kind(object t) =>
+        t.GetType().GetField("_native", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+            ?.GetValue(t) is { } native
+        && native.GetType().GetField("_typeField", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+            ?.GetValue(native) is int type
+            ? $"Variant {(Godot.Variant.Type)type}"
+            : t.GetType().Name;
 
     /// <summary>Notes the tracked disposables made since the last call, as made by <paramref name="where"/>.</summary>
     public void Census(string where)
@@ -115,13 +167,7 @@ public sealed class GcTrace : EventListener
             now.Add(key);
             if (_seen.Contains(key) || key is not WeakReference<IDisposable> w || !w.TryGetTarget(out var t))
                 continue;
-            var what = t.GetType().Name;
-            if (t.GetType().GetField("_native", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
-                ?.GetValue(t) is { } native
-                && native.GetType().GetField("_typeField", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
-                ?.GetValue(native) is int type)
-                what = $"Variant {(Godot.Variant.Type)type}";
-            var k = $"{where}: {what}";
+            var k = $"{where}: {Kind(t)}";
             _made[k] = _made.GetValueOrDefault(k) + 1;
         }
         _seen = now;
@@ -135,6 +181,8 @@ public sealed class GcTrace : EventListener
             yield return $"gc event: {c}";
         foreach (var (k, n) in _made.OrderByDescending(kv => kv.Value))
             yield return $"gc godot disposables made: {n} {k}";
+        foreach (var l in _loads)
+            yield return $"gc load: {l}";
         var total = Math.Max(1, _sampled.Values.Sum());
         foreach (var (type, bytes) in _sampled.OrderByDescending(kv => kv.Value).Take(top))
             yield return $"gc sampled allocations: {bytes / 1024} KiB ({bytes * 100.0 / total:F1} %) {type}";

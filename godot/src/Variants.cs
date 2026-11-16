@@ -48,6 +48,18 @@ public static class Variants
         RenderingServer.GlobalShaderParameterSet(name, v);
     }
 
+    /// <summary>A shader parameter set to a resource (a variant with a finalizer), the variant disposed; the name made once.</summary>
+    public static void SetParameter(ShaderMaterial m, string name, GodotObject? value)
+    {
+        if (value == null)
+        {
+            m.SetShaderParameter(Name(name), default);
+            return;
+        }
+        using var v = Variant.CreateFrom(value);
+        m.SetShaderParameter(Name(name), v);
+    }
+
     /// <summary>The dictionary <paramref name="node"/>'s <paramref name="method"/> returns, its variant disposed (the caller disposes the dictionary).</summary>
     public static Godot.Collections.Dictionary CallDictionary(GodotObject node, StringName method)
     {
