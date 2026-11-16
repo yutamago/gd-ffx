@@ -156,7 +156,12 @@ public sealed class ClassicLibrary
     {
         var meshes = state.GetMeshes();
         for (int i = 0; i < meshes.Count && i < extras.Meshes.Length; i++)
-            if (meshes[i].Mesh?.GetMesh() is { } mesh)
+        {
+            // their C# wrappers released at once (finalizable; nothing else holds these two)
+            using var gltf = meshes[i];
+            using var importer = gltf.Mesh;
+            if (importer?.GetMesh() is { } mesh)
                 extras.Meshes[i].SetOn(mesh);
+        }
     }
 }
