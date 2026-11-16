@@ -208,6 +208,13 @@ public partial class GameHost : Node
         Remake.ContentResolver.WaitPending(10000);
         EffectDrawView.WaitPending(10000);
         MapLayers.WaitPending(10000);
+        // Godot objects C# let go of (materials, textures, meshes) are released by their
+        // wrappers' finalizers: run them while the servers are still up. With little garbage a
+        // frame there may have been no full collection since they were dropped, and finalized
+        // at shutdown they leak their RIDs ("RenderingServer is null" at exit).
+        System.GC.Collect();
+        System.GC.WaitForPendingFinalizers();
+        System.GC.Collect();
     }
 
     public override void _Notification(int what)
