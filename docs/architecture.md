@@ -260,10 +260,13 @@ pedestal). Its glowing orb is an effect, not part of the model.
   is the game's own (FXDR version 4: each draw's technique and its shader
   passes' D3D11 blends): `Transparent` writes premultiplied colour for a
   source factor of one, `OptimizedTrans` straight colour for source alpha
-  (`EffectDrawView.LookOf`, `Form`). Open: the save sphere's two sparkle
-  quads (flags 0xa, the `bat_eff` atlas of 32-pixel cells) carry UVs over a
-  64-pixel block, so they show four pink frames at once; the game's VFX
-  shader must scale or pick the frame (not captured yet).
+  (`EffectDrawView.LookOf`, `Form`). Texture coordinates (FXDR
+  version 5): the game uploads a texture's rows as stored, bottom first,
+  and its shaders sample the captured UVs unchanged, so on the upright PNG
+  a file texture is sampled at `(u, 1 - v)`; each draw's sampler gives its
+  address mode (wrap, clamp, mirror). This fixed the save sphere's
+  sparkles: read top-down their quad covered four atlas frames (pink
+  rings); read as the game does it is one soft glow ball.
 
 - **The draw events** (the same capture): the screen fade (kind 2) is
   drawn by `ScreenFadeView`, a full-screen quad of the event's colour

@@ -23,13 +23,14 @@ namespace GdFfx;
 /// (effects-draw.md, open question 2's answer). The save sphere's two sparkle quads (flags 0xa)
 /// differ: one (one, one) premultiplied, one (src alpha, one). Older frames fall back to the
 /// flags (0x10 subtract, 0x2 add, else alpha). Textures come from the player's archive by the
-/// name the game holds.
+/// name the game holds, sampled as the game does (FXDR version 5): at <c>(u, 1 - v)</c> on the
+/// upright image (the game uploads rows bottom first) with the draw's sampler address modes.
 /// </summary>
 public partial class EffectDrawView : MeshInstance3D
 {
     /// <summary>One decoded draw.</summary>
     public sealed record Draw(ulong Key, uint Flags, string Texture, Vector3[] Positions, Color[] Colours, Vector2[] Uvs, int[] Indices, int Pass = 0,
-        int Technique = 0, PassBlend[]? Blends = null);
+        int Technique = 0, PassBlend[]? Blends = null, int AddressU = 1, int AddressV = 1);
 
     /// <summary>
     /// One shader pass's D3D11 blend (FXDR version 4): enabled, colour source, destination and op,
@@ -49,7 +50,12 @@ public partial class EffectDrawView : MeshInstance3D
     /// factor of one under Godot's add and subtract, which weight by the alpha) or the colour to 0,
     /// or not drawn at all (write mask 0).
     /// </summary>
-    public readonly record struct Look(int Blend, int Form, bool AlphaOne, bool ZeroColour, bool Skip);
+    public readonly record struct Look(int Blend, int Form, bool AlphaOne, bool ZeroColour, bool Skip)
+    {
+        /// <summary>The sampler's address modes, D3D11's numbers: 1 wrap, 2 mirror, 3 clamp, 4 border, 5 mirror once.</summary>
+        public int AddressU { get; init; } = 1;
+        public int AddressV { get; init; } = 1;
+    }
 
     /// <summary>
     /// What the game's VFX pixel shader writes (effects-draw.md "What each pixel shader writes"):
@@ -70,7 +76,9 @@ public partial class EffectDrawView : MeshInstance3D
     }
 
     /// <summary>The look of a draw from its captured blend (its first shader pass), else from its flags.</summary>
-    public static Look LookOf(Draw d)
+    public static Look LookOf(Draw d) => BlendLook(d) with { AddressU = d.AddressU, AddressV = d.AddressV };
+
+    private static Look BlendLook(Draw d)
     {
         // the DTT pass's FrameBuffer shader (two passes) is not decoded: the frame copy mixed in
         if (d.Texture == FrameBufferName)
@@ -145,6 +153,16 @@ public partial class EffectDrawView : MeshInstance3D
     {
         Code = "shader_type spatial;\nrender_mode unshaded, cull_disabled, depth_draw_never, " + blend + ";\n" + @"
 uniform sampler2D tex : filter_linear_mipmap, repeat_enable;
+uniform sampler2D tex_clamp : filter_linear_mipmap, repeat_disable;
+uniform bool flip_v = true;
+uniform int address_u = 1;
+uniform int address_v = 1;
+// the sampler's address mode outside 0..1 (D3D11: 1 wrap, 2 mirror, 3 clamp, 4 border as clamp, 5 mirror once)
+float ffx_address(float t, int mode) {
+	if (mode == 2) return 1.0 - abs(mod(t, 2.0) - 1.0);
+	if (mode == 5) return clamp(abs(t), 0.0, 1.0);
+	return mode == 1 ? t : clamp(t, 0.0, 1.0);
+}
 uniform sampler2D screen : hint_screen_texture, filter_linear;
 uniform bool textured = true;
 uniform bool frame_buffer = false;
@@ -152,7 +170,13 @@ uniform int form = 0;
 uniform bool alpha_one = false;
 uniform bool zero_colour = false;
 void fragment() {
-	vec4 t = frame_buffer ? vec4(texture(screen, UV).rgb, 1.0) : textured ? texture(tex, UV) : vec4(1.0);
+	// the game samples file textures with v counted from the stored first row, the image's
+	// bottom (the PNG is upright): (u, 1 - v)
+	vec2 uv = flip_v ? vec2(UV.x, 1.0 - UV.y) : UV;
+	bool wrap = address_u == 1 && address_v == 1;
+	vec2 fu = vec2(ffx_address(uv.x, address_u), ffx_address(uv.y, address_v));
+	vec4 t = frame_buffer ? vec4(texture(screen, UV).rgb, 1.0)
+		: textured ? (wrap ? texture(tex, uv) : texture(tex_clamp, fu)) : vec4(1.0);
 	vec4 v = COLOR;
 	vec4 c = t * v * 2.0;
 	vec4 o = c;
@@ -185,7 +209,7 @@ void fragment() {
     /// <summary>The distortion of the last decoded frame (null: the pass is off).</summary>
     public static Distortion? LastDistortion { get; private set; }
 
-    /// <summary>Decodes a frame (<c>FXDR</c>, versions 1 to 4); null when it is not one.</summary>
+    /// <summary>Decodes a frame (<c>FXDR</c>, versions 1 to 5); null when it is not one.</summary>
     public static (uint Update, List<Draw> Draws)? Decode(byte[] b)
     {
         if (b.Length < 24 || b[0] != (byte)'F' || b[1] != (byte)'X' || b[2] != (byte)'D' || b[3] != (byte)'R')
@@ -195,7 +219,7 @@ void fragment() {
         uint U32() { var v = System.BitConverter.ToUInt32(b, at); at += 4; return v; }
         float F() { var v = System.BitConverter.ToSingle(b, at); at += 4; return v; }
         var version = U16();
-        if (version is not (1 or 2 or 3 or 4))
+        if (version is not (1 or 2 or 3 or 4 or 5))
             return null;
         U16();
         var update = U32();
@@ -236,6 +260,14 @@ void fragment() {
                 for (int k = 0; k < np; k++, at += 8)
                     blends[k] = new PassBlend(b[at] != 0, b[at + 1], b[at + 2], b[at + 3], b[at + 4], b[at + 5], b[at + 6], b[at + 7]);
             }
+            int addressU = 1, addressV = 1;
+            if (version >= 5 && b[at++] == 1)
+            {
+                // address U, V, W, then filter, bias, anisotropy, border (4 bytes each)
+                addressU = b[at];
+                addressV = b[at + 1];
+                at += 3 + 16;
+            }
             at += 48; // world (positions are already placed)
             int tl = U16();
             var texture = System.Text.Encoding.UTF8.GetString(b, at, tl);
@@ -249,7 +281,7 @@ void fragment() {
             for (int i = 0; i < v; i++) uv[i] = new Vector2(F(), F());
             var idx = new int[n];
             for (int i = 0; i < n; i++) idx[i] = U16();
-            draws.Add(new Draw(hi << 32 | lo, flags, texture, pos, col, uv, idx, pass, technique, blends));
+            draws.Add(new Draw(hi << 32 | lo, flags, texture, pos, col, uv, idx, pass, technique, blends, addressU, addressV));
         }
         LastDistortion = null;
         if (version >= 2 && at + 16 <= b.Length)
@@ -299,6 +331,8 @@ void fragment() {
         m.SetShaderParameter("form", look.Form);
         m.SetShaderParameter("alpha_one", look.AlphaOne);
         m.SetShaderParameter("zero_colour", look.ZeroColour);
+        m.SetShaderParameter("address_u", look.AddressU);
+        m.SetShaderParameter("address_v", look.AddressV);
         // the DTT pass's draws sample the frame copy (the picture so far)
         if (texture == FrameBufferName)
         {
@@ -309,7 +343,7 @@ void fragment() {
         var t = Tex(game, texture);
         m.SetShaderParameter("textured", t != null);
         if (t != null)
-            m.SetShaderParameter("tex", t);
+            { m.SetShaderParameter("tex", t); m.SetShaderParameter("tex_clamp", t); }
         _materials[(texture, look)] = m;
         return m;
     }
