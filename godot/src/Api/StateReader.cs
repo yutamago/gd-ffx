@@ -44,9 +44,44 @@ public ref struct StateReader
     public byte[] Bytes() => Take(U16()).ToArray();
     public byte[] Rgb() => Take(3).ToArray();
 
-    public float[] Floats(int n)
+    public float[] Floats(int n) => Floats(null, n);
+
+    // ---- reading into what a snapshot read before holds (StateApi.Decode's `into`) ----
+
+    /// <summary>A string; <paramref name="was"/> itself when the text is the same (no new string).</summary>
+    public string Str(string? was)
     {
-        var f = new float[n];
+        var b = Take(U16());
+        if (was != null && was.Length == b.Length)
+        {
+            int i = 0;
+            while (i < b.Length && b[i] < 0x80 && b[i] == was[i])
+                i++;
+            if (i == b.Length)
+                return was;
+        }
+        return Encoding.UTF8.GetString(b);
+    }
+
+    /// <summary>Bytes, into <paramref name="was"/> when it has the length.</summary>
+    public byte[] Bytes(byte[]? was) => Fill(was, U16());
+
+    /// <summary>Three bytes, into <paramref name="was"/> when it has three.</summary>
+    public byte[] Rgb(byte[]? was) => Fill(was, 3);
+
+    private byte[] Fill(byte[]? was, int n)
+    {
+        var b = Take(n);
+        if (was == null || was.Length != n)
+            return b.ToArray();
+        b.CopyTo(was);
+        return was;
+    }
+
+    /// <summary><paramref name="n"/> floats, into <paramref name="was"/> when it has that many.</summary>
+    public float[] Floats(float[]? was, int n)
+    {
+        var f = was != null && was.Length == n ? was : new float[n];
         for (int i = 0; i < n; i++)
             f[i] = F32();
         return f;

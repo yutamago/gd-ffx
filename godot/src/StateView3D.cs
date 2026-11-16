@@ -16,7 +16,7 @@ namespace GdFfx;
 public partial class StateView3D : Node3D
 {
     private Camera3D _camera = null!;
-    private Snapshot? _lookOf;
+    private long _lookOf = -1;
     private (bool On, float None, float Full, float Gain) _glow = (false, -1, -1, -1);
     private WorldEnvironment _env = null!;
     private readonly Dictionary<ushort, ActorNode> _actors = new();
@@ -64,14 +64,16 @@ public partial class StateView3D : Node3D
         public Transform3D[] Globals = [];
         /// <summary>The local poses of the character's two newest snapshots (<see cref="Locals"/>).</summary>
         public (Actor? Of, BoneLocal[] Bones) LocalsA = (null, []), LocalsB = (null, []);
+        /// <summary>The decode (<see cref="GameStateView.Decoded"/>) the locals were last made at: older ones may name reused actors.</summary>
+        public long LocalsAt = -1;
         /// <summary>The skeleton's transform in the model's space (inverted).</summary>
         public Transform3D SkeletonInModelInv = Transform3D.Identity;
         /// <summary>
-        /// A model without a skin (rigid parts, e.g. the save sphere f001): each part node
-        /// <c>MeshNodeK</c> with the game element it follows and its parent's transform in the
+        /// A model without a skin (rigid parts, e.g. the save sphere f001): each mesh with its
+        /// segments' model id (the import's <c>ffx_model_id</c>) and its parent's transform in the
         /// model (inverted).
         /// </summary>
-        public (Node3D Part, int Element, Transform3D ParentInv)[] Rigid = [];
+        public (Node3D Part, int ModelId, Transform3D ParentInv)[] Rigid = [];
     }
 
     public override void _Ready()
@@ -149,9 +151,9 @@ public partial class StateView3D : Node3D
             _camera.VOffset = -(fx?.ShakeY ?? 0f) * unit;
         }
         // the look changes with the snapshot (30 a second), not every frame
-        if (!ReferenceEquals(view.Current, _lookOf))
+        if (view.Decoded != _lookOf)
         {
-            _lookOf = view.Current;
+            _lookOf = view.Decoded;
             ClassicMaterials.SetLook(view.Current?.Look);
             // the game clears to the map's background colour (Look.background), drawn as it is
             if (view.Current?.Look is { Valid: true } look)
@@ -169,6 +171,7 @@ public partial class StateView3D : Node3D
         Perf.End(Perf.Section.View3D, t0);
         t0 = Perf.Start();
         UpdateObjects(view);
+        LookAtObject();
         Perf.End(Perf.Section.Objects, t0);
         t0 = Perf.Start();
         UpdateActors(host.Classic, view);
@@ -209,11 +212,38 @@ public partial class StateView3D : Node3D
     /// <summary>The classic map's mesh nodes by object id and mesh index (<c>N_kShape</c>).</summary>
     private Dictionary<(uint Id, int K), Node3D>? _objectNodes;
 
-    private Snapshot? _objectsPrevOf;
+    /// <summary>The classic map's morphing meshes (<see cref="MapObjects"/>).</summary>
+    private List<Morph> _morphs = [];
+
+    private long _objectsPrevOf = -1;
     private readonly Dictionary<uint, GdFfx.Api.SceneObject> _objectsPrev = new();
+    private readonly Dictionary<uint, GdFfx.Api.SceneObject> _objectsCur = new();
 
     /// <summary>Objects placed by the game this frame (for tests).</summary>
     public int ObjectsPlaced { get; private set; }
+
+    /// <summary>Morphing meshes the game drives, and how many have a weight other than 0 this frame (for tests).</summary>
+    public (int Meshes, int Moved) Morphed { get; private set; }
+
+    /// <summary>How a mesh morphs (docs/importer.md, "Morphing meshes").</summary>
+    private enum MorphKind { Position, Weight, UvOffset }
+
+    /// <summary>
+    /// A morphing mesh: the instance whose weight the game sets by its <c>m_objID</c>
+    /// (<c>MorphManager_setWeights</c>), its kind, the morph targets of a position morph (1:
+    /// in1 - in0, weight w; 2: weights 1 - w, w) and the values last set.
+    /// </summary>
+    private sealed class Morph
+    {
+        public required MeshInstance3D Mesh;
+        public required uint ObjId;
+        public required MorphKind Kind;
+        public int Targets;
+        public Vector2 Last = new(float.NaN, float.NaN);
+    }
+
+    /// <summary>What <see cref="ObjectIndex"/> finds in a classic map (on the loading worker).</summary>
+    private sealed record MapObjects(Dictionary<(uint Id, int K), Node3D> Nodes, List<Morph> Morphs);
 
     private static readonly System.Text.RegularExpressions.Regex Fbx = new("FBXASC(\\d{3})");
     private static readonly System.Text.RegularExpressions.Regex MeshName = new("^(\\d+)_(\\d+)Shape$");
@@ -223,17 +253,109 @@ public partial class StateView3D : Node3D
 
     private void IndexObjects()
     {
-        _objectNodes = _map == null || _map.Name != "ClassicMap" ? new() : ObjectIndex(_map);
+        var x = _map == null || _map.Name != "ClassicMap" ? null : ObjectIndex(_map);
+        _objectNodes = x?.Nodes ?? new();
+        _morphs = x?.Morphs ?? [];
     }
 
-    /// <summary>A classic map's mesh nodes by object id and mesh index (on the loading worker thread: a search of every node).</summary>
-    private static Dictionary<(uint Id, int K), Node3D> ObjectIndex(Node3D map)
+    /// <summary>
+    /// A classic map's mesh nodes by object id and mesh index, and its morphing meshes (on the
+    /// loading worker thread: a search of every node). A mesh morphs as
+    /// <c>MorphManager_registerClusterMorphs</c> (<c>0x006aca10</c>) registers its instance: with
+    /// <c>m_animCt</c> above 0, by <c>m_mimeCt</c> 1 a position morph (its morph targets), 4 a
+    /// vertex colour and 3 a UV morph (a material with the weight), else with
+    /// <c>m_dObjFlag</c> <c>0x400</c> a UV offset (a material with the offset); the import's
+    /// mesh extras <c>ffx_anim_ct</c>, <c>ffx_mime_ct</c>, <c>ffx_dobj_flag</c>, <c>ffx_obj_id</c>.
+    /// </summary>
+    private static MapObjects ObjectIndex(Node3D map)
     {
         var index = new Dictionary<(uint Id, int K), Node3D>();
+        var morphs = new List<Morph>();
         foreach (var n in map.FindChildren("*", nameof(Node3D), true, false))
-            if (n is Node3D n3 && MeshName.Match(FbxName(n3.Name)) is { Success: true } m)
+        {
+            if (n is not Node3D n3)
+                continue;
+            if (MeshName.Match(FbxName(n3.Name)) is { Success: true } m)
                 index.TryAdd((uint.Parse(m.Groups[1].Value), int.Parse(m.Groups[2].Value)), n3);
-        return index;
+            if (n3 is MeshInstance3D { Mesh: { } mesh } mi && MorphOf(mi, mesh) is { } morph)
+                morphs.Add(morph);
+        }
+        return new MapObjects(index, morphs);
+    }
+
+    private static Morph? MorphOf(MeshInstance3D mi, Mesh mesh)
+    {
+        if (!mesh.HasMeta("extras") || mesh.GetMeta("extras").AsGodotDictionary() is not { } x)
+            return null;
+        long Get(string k) => x.TryGetValue(k, out var v) ? v.AsInt64() : 0;
+        if (Get("ffx_anim_ct") <= 0 || !x.ContainsKey("ffx_obj_id"))
+            return null;
+        var (mime, flag, id) = (Get("ffx_mime_ct"), Get("ffx_dobj_flag"), (uint)Get("ffx_obj_id"));
+        int targets = mesh is ArrayMesh am ? am.GetBlendShapeCount() : 0;
+        if (mime == 1 && targets > 0)
+            return new Morph { Mesh = mi, ObjId = id, Kind = MorphKind.Position, Targets = targets };
+        bool weight = false, offset = false;
+        for (int s = 0; s < mesh.GetSurfaceCount(); s++)
+        {
+            var (w, o) = ClassicMaterials.Morphs(mi.GetActiveMaterial(s));
+            weight |= w;
+            offset |= o;
+        }
+        if ((mime == 4 || mime == 3) && weight)
+            return new Morph { Mesh = mi, ObjId = id, Kind = MorphKind.Weight };
+        if ((flag & 0x400) != 0 && offset)
+            return new Morph { Mesh = mi, ObjId = id, Kind = MorphKind.UvOffset };
+        return null;
+    }
+
+    /// <summary>
+    /// The morphing meshes' weights from the snapshot (interpolated): a display object's morph
+    /// value (<c>SceneObject.morph</c>, <c>morph_v</c>: <c>yiSetMIMeParamDObj</c> or a keyframe
+    /// track's UV offset); an object that is not a display object keeps 0 (the morph manager's
+    /// first value). Set only when it changes.
+    /// </summary>
+    private void UpdateMorphs(GameStateView view)
+    {
+        int moved = 0;
+        bool noMorph = GameSettings.Flag("no-morph");
+        foreach (var m in _morphs)
+        {
+            var v = Vector2.Zero;
+            // --no-morph: every mesh in its stored pose (a check's comparison)
+            if (!noMorph && _objectsCur.TryGetValue(m.ObjId, out var o) && o.Dobj)
+            {
+                v = new Vector2(o.Morph, o.MorphV);
+                // between the two snapshots, unless the value jumps (a scroll wrapping)
+                if (_objectsPrev.TryGetValue(m.ObjId, out var p) && p.Dobj)
+                {
+                    var a = new Vector2(p.Morph, p.MorphV);
+                    if ((v - a).Abs() is { X: < 0.5f, Y: < 0.5f })
+                        v = a.Lerp(v, view.Alpha);
+                }
+            }
+            if (v != Vector2.Zero)
+                moved++;
+            if (v == m.Last || !GodotObject.IsInstanceValid(m.Mesh))
+                continue;
+            m.Last = v;
+            switch (m.Kind)
+            {
+                case MorphKind.Position when m.Targets == 1:
+                    m.Mesh.SetBlendShapeValue(0, v.X);
+                    break;
+                case MorphKind.Position:
+                    m.Mesh.SetBlendShapeValue(0, 1f - v.X);
+                    m.Mesh.SetBlendShapeValue(1, v.X);
+                    break;
+                case MorphKind.Weight:
+                    m.Mesh.SetInstanceShaderParameter("ffx_morph", v.X);
+                    break;
+                case MorphKind.UvOffset:
+                    m.Mesh.SetInstanceShaderParameter("ffx_uv_offset", v);
+                    break;
+            }
+        }
+        Morphed = (_morphs.Count, moved);
     }
 
     /// <summary>
@@ -250,16 +372,20 @@ public partial class StateView3D : Node3D
             return;
         if (_objectNodes == null)
             IndexObjects();
-        if (_objectNodes!.Count == 0)
+        if (_objectNodes!.Count == 0 && _morphs.Count == 0)
             return;
-        if (!ReferenceEquals(_objectsPrevOf, s))
+        if (_objectsPrevOf != view.Decoded)
         {
-            _objectsPrevOf = s;
+            _objectsPrevOf = view.Decoded;
             _objectsPrev.Clear();
+            _objectsCur.Clear();
             if (view.Previous is { } p && !ReferenceEquals(p, s) && p.World.Level == s.World.Level)
                 foreach (var o in p.Objects)
                     _objectsPrev.TryAdd(o.Id, o);
+            foreach (var o in s.Objects)
+                _objectsCur.TryAdd(o.Id, o);
         }
+        UpdateMorphs(view);
         var prev = _objectsPrev.Count > 0 ? _objectsPrev : null;
         foreach (var o in s.Objects)
             for (int k = 0; k < o.Meshes.Count; k++)
@@ -279,6 +405,20 @@ public partial class StateView3D : Node3D
                 node.Visible = m.Drawn;
                 ObjectsPlaced++;
             }
+    }
+
+    /// <summary>
+    /// A check's view (<c>--look-at-object=N</c>): the camera 150 units from map object N's first
+    /// mesh, looking at it (Besaid's birds fly far above the save 7 view).
+    /// </summary>
+    private void LookAtObject()
+    {
+        if (GameSettings.Arg("look-at-object") is not { } a || !uint.TryParse(a, out var id)
+            || _objectNodes == null || !_objectNodes.TryGetValue((id, 0), out var n) || n is not MeshInstance3D mi)
+            return;
+        var c = mi.GlobalTransform * mi.GetAabb().GetCenter();
+        _camera.GlobalTransform = Transform3D.Identity.LookingAt(Vector3.Forward, Vector3.Up).Translated(c + new Vector3(0, 40, 150));
+        _camera.LookAt(c);
     }
 
     private void UpdateMap(ClassicLibrary? lib, Snapshot? s)
@@ -303,6 +443,7 @@ public partial class StateView3D : Node3D
                 _map?.QueueFree();
                 _map = null;
                 _objectNodes = null;
+                _morphs = [];
                 _mapLevel = level;
                 GD.Print($"ffx: map {level} shown (2D layers only)");
             }
@@ -313,7 +454,9 @@ public partial class StateView3D : Node3D
             ClassicMaterials.FixLayers(map);
         _map?.QueueFree();
         _map = map;
-        _objectNodes = content.Remade ? null : content.Prepared as Dictionary<(uint Id, int K), Node3D>;
+        var objects = content.Remade ? null : content.Prepared as MapObjects;
+        _objectNodes = objects?.Nodes;
+        _morphs = objects?.Morphs ?? [];
         _mapLevel = level;
         if (map == null)
             return;
@@ -435,39 +578,27 @@ public partial class StateView3D : Node3D
     }
 
     /// <summary>
-    /// A skinless model's parts and the elements they follow: part <c>MeshNodeK</c> follows the
-    /// K-th leaf <c>SkeletonNode_i</c> by element (f001: three parts on elements 2, 3, 4, the
-    /// leaves; the game moves 2 and 3 up 6 and turns them, 4 is the base). Seen on f001, where
-    /// the game places the parts per mesh (<c>graphicCharacterInstanceSetWorldMatrixByMdlID</c>);
-    /// the pairing is inferred, not read from the game.
+    /// A skinless model's meshes and the game models they belong to: the model id of their
+    /// segments (<c>PMeshSegment +0x18</c>, the import's mesh extras <c>ffx_model_id</c>), by which
+    /// <c>graphicCharacterInstanceSetWorldMatrixByMdlID</c> places them; a mesh without one is
+    /// mesh number id, as the game falls back to.
     /// </summary>
     private static (Node3D, int, Transform3D)[] RigidParts(Node3D model)
     {
-        const string bone = "SkeletonNode_", part = "MeshNode";
-        var leaves = new List<int>();
-        var parts = new SortedDictionary<int, Node3D>();
-        foreach (var x in model.FindChildren("*", nameof(Node3D), true, false))
-        {
-            if (x is not Node3D n3)
-                continue;
-            var name = n3.Name.ToString();
-            if (name.StartsWith(bone, System.StringComparison.Ordinal) && int.TryParse(name[bone.Length..], out var e)
-                && !n3.GetChildren().OfType<Node3D>().Any(c => c.Name.ToString().StartsWith(bone, System.StringComparison.Ordinal)))
-                leaves.Add(e);
-            else if (name.StartsWith(part, System.StringComparison.Ordinal) && int.TryParse(name[part.Length..], out var k))
-                parts[k] = n3;
-        }
-        leaves.Sort();
         var list = new List<(Node3D, int, Transform3D)>();
-        foreach (var (k, node) in parts)
+        int k = 0;
+        foreach (var x in model.FindChildren("*", nameof(MeshInstance3D), true, false))
         {
-            if (k >= leaves.Count)
-                break;
+            if (x is not MeshInstance3D { Mesh: { } mesh } mi)
+                continue;
+            int id = mesh.HasMeta("extras") && mesh.GetMeta("extras").AsGodotDictionary() is { } e
+                && e.TryGetValue("ffx_model_id", out var v) ? v.AsInt32() : k;
+            k++;
             Transform3D t = Transform3D.Identity;
-            for (Node? p = node.GetParent(); p != null && p != model; p = p.GetParent())
+            for (Node? p = mi.GetParent(); p != null && p != model; p = p.GetParent())
                 if (p is Node3D p3)
                     t = p3.Transform * t;
-            list.Add((node, leaves[k], t.AffineInverse()));
+            list.Add((mi, id, t.AffineInverse()));
         }
         return list.ToArray();
     }
@@ -510,9 +641,14 @@ public partial class StateView3D : Node3D
         var prev = f.Previous is { } fp && fp.Bones.Count == a.Bones.Count ? fp : null;
         if (skel == null)
         {
+            // Ch_DrawMain's walk 1: an unskinned model at the character's world times its base
+            // element's matrix (here relative to the character: the element's)
             int moved = 0;
-            foreach (var (part, i, parentInv) in n.Rigid)
+            foreach (var (part, id, parentInv) in n.Rigid)
             {
+                if (id >= a.Models.Count || a.Models[id].Skinned)
+                    continue;
+                int i = a.Models[id].Base;
                 if (i >= a.Bones.Count)
                     continue;
                 var t = RowMajor(a.Bones[i].Matrix);
@@ -524,7 +660,17 @@ public partial class StateView3D : Node3D
             return moved;
         }
         // each snapshot's bones are split into local poses once (Locals); a frame only
-        // interpolates position, rotation and scale between the two
+        // interpolates position, rotation and scale between the two. Locals of an older pair
+        // than the last may be keyed by an actor object reused for a newer snapshot: dropped.
+        if (n.LocalsAt != view.Decoded)
+        {
+            if (view.Decoded - n.LocalsAt > 1)
+            {
+                n.LocalsA = (null, n.LocalsA.Bones);
+                n.LocalsB = (null, n.LocalsB.Bones);
+            }
+            n.LocalsAt = view.Decoded;
+        }
         var cur = Locals(n, skel, a);
         var from = prev != null ? Locals(n, skel, prev) : null;
         int posed = 0;

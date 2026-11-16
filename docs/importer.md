@@ -58,10 +58,57 @@ variant (`PMaterial.m_effectVariant`, the cluster
 
 Each mesh (one per instance) gets its instance's `m_render_order`
 (`extras.ffx_render_order`) and, when not 0, `m_DObjKind`
-(`ffx_dobj_kind`). The `.glb` carries the importer's format
+(`ffx_dobj_kind`); also its instance's index (`ffx_instance`) and morph
+fields (below), and its segments' model id (`ffx_model_id`, also on each
+primitive: `PMeshSegment +0x18`, by which the game places a character's
+unskinned meshes). Materials also get `ffx_colors`, which `COLOR_n` each
+`COLOR` input reads (as `ffx_texcoords`). The `.glb` carries the importer's format
 (`asset.extras.ffx_import`, `ffx_import::FORMAT`); a cached import of
 another format is made again. docs/architecture.md, "Map materials", says how
 gd-ffx draws them.
+
+## Morphing meshes
+
+The game morphs some map meshes (MIMe; `MorphManager`). Each
+`PMeshInstance` says how: `m_animCt` (`+0x30`, registered only above 0),
+`m_mimeCt` (`+0x44`), `m_dObjFlag` (`+0x54`), `m_objID` (`+0x58`): the
+mesh's `extras.ffx_anim_ct`, `ffx_mime_ct`, `ffx_dobj_flag` (when not 0)
+and `ffx_obj_id`. The weight `w` is per object id (`MorphManager_setWeights`
+`0x006abfc0`: a display object's morph value, `SceneObject.morph`).
+
+- **Positions** (`m_mimeCt` 1, 868 instances on 80 maps, every one read):
+  `m_dynamicMeshInstance` (`+0x18`) leads to a
+  `PModifierNetworkDynamicMesh` over the instance's own mesh. Per segment
+  its `PModifierNetworkDynamicMeshSegment` names a `PModifierNetwork`
+  (`m_totalInputCount` 2, modifier `Morph23` everywhere) and its first input
+  among the mesh's `m_modifierNetworkInputs`; each input is a
+  `PDynamicDataBlock` (`m_stride` 12, `m_elementCount` the segment's
+  vertices, one `Vertex` stream) whose `m_data` lies in the list's arrays,
+  one block after another. Each mesh's segments, inputs and segment inputs
+  follow the previous mesh's in their lists. The game writes `in0 (1 - w)
+  + in1 w` over the `Vertex` stream (`PMorphModifier_blend2x3`
+  `0x005ca0d0`; the file's weights are 1, 0). `in0` is the stored stream on
+  every map, so the export adds one glTF morph target, `in1 - in0`
+  (`mesh.weights` `[0]`, `extras.ffx_morph_targets` 1); a mesh whose stored
+  stream differed would get two, `in0 - stored` and `in1 - stored`, driven
+  with `1 - w`, `w`. `rust/ffx-import/src/morph.rs` reads them.
+- **UV** (`m_mimeCt` 3, a material with `UV_MORPH`): the vertex program
+  reads `TEXCOORD0 + UVMorphWeight (TEXCOORD5 - TEXCOORD0)`
+  (`ffx_texcoords` says which set `TEXCOORD5` is).
+- **Vertex colour** (`m_mimeCt` 4, `VERTEX_COLOR_MORPH`): `COLOR0 +
+  VertexColorMorphWeight (COLOR1 - COLOR0)`. Godot imports no `COLOR_1`, so
+  the import writes the `COLOR_n` that `COLOR1` reads as `TEXCOORD_2` (r, g)
+  and `TEXCOORD_3` (b, a), Godot's `CUSTOM0`. On the maps looked at
+  (`lchb06`) no segment context binds `COLOR1`, so by ffx-scene's rule it
+  reads the first colour stream, the same as `COLOR0`: nothing changes, and
+  nothing is written.
+- **UV offset** (else, `m_dObjFlag` `0x400` and `UV_SCROLL`): `TEXCOORD0 +
+  (UvOffsetX, UvOffsetY)`, the object's `morph`, `morph_v`.
+
+`ffx-import morphs <level>` lists a model's morph fields and inputs,
+`ffx-import morphs all` counts them over every map model. Besaid's objects
+18..32 (`FBXASC0498..0512`) are birds: mesh `_0` is a bird whose two inputs
+hold the wings down and up.
 
 ## Placing them
 
@@ -103,9 +150,9 @@ of git.
 - The PS2 map camera file is not read; the 2D layers' texture animation is
   not played.
 - No collision mesh (the game does the walking), no lights or fog from the
-  files, no morphing meshes (instances with `m_dynamicMeshInstance`, whose
-  vertices the game rewrites every frame: drawn in their stored pose, e.g.
-  `bsil06`'s ground), no texture animation. glTF `TEXCOORD_2` and up are not
+  files, no texture animation. A colour morph whose `COLOR1` a segment
+  context binds to another stream has not been seen (see "Morphing
+  meshes"). glTF `TEXCOORD_2` and up are not
   read (no map segment seen has more than two UV sets).
 - Big maps load on the main thread (a pause of a second or two the first
   time).

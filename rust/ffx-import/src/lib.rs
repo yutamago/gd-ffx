@@ -22,14 +22,20 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 
 pub mod effect;
+pub mod morph;
 
 /// The version of what the importer writes into a `.glb`
 /// (`asset.extras.ffx_import`): a cached import of another version is made
 /// again. 2: the materials' effect variant states (`ffx_switches`,
 /// `ffx_passes`, `ffx_inputs`, `ffx_input_types`), UV set bindings
 /// (`ffx_texcoords`) and sampler address modes (`ffx_wrap`), the meshes'
-/// `ffx_render_order`.
-pub const FORMAT: u64 = 2;
+/// `ffx_render_order`. 3: the meshes' instance (`ffx_instance`) and morph
+/// fields (`ffx_obj_id`, `ffx_anim_ct`, `ffx_mime_ct`, `ffx_dobj_flag`), the
+/// position morphs as glTF morph targets, the colour morphs' second colour
+/// as `TEXCOORD_2`/`TEXCOORD_3`, the materials' `ffx_colors`
+/// (docs/importer.md, "Morphing meshes"); the meshes' and primitives'
+/// segment model ids (`ffx_model_id`).
+pub const FORMAT: u64 = 3;
 
 /// The game places a 3D map's instances at the file's node worlds times
 /// this (`PhyreScene_doOnFieldMapAssetLoaded`; ffx-rust's
@@ -401,11 +407,20 @@ impl Importer {
             },
             &[],
         );
+        // the morphing instances (map clusters only), the segments' model ids
+        let tags = morph::tags(&bytes);
+        let model_ids = segment_model_ids(&bytes);
+        let morphs = morph::read(&bytes);
         // the segment contexts' stream bindings (which UV set a water
         // shader's TEXCOORD4/6/7 read): only a map cluster has them
         let scene = ffx_scene::map::MapModel::parse(bytes).ok();
-        edit_glb_json(&glb, |doc| self.add_extras(&model, scene.as_ref(), doc))
-            .ok_or_else(|| Error::Model(format!("{path}: bad glTF from the export")))
+        edit_glb(&glb, |doc, bin| {
+            self.add_extras(&model, scene.as_ref(), &tags, doc);
+            add_morph_targets(&model, &morphs, doc, bin);
+            add_color_morph_streams(&model, doc, bin);
+            add_model_ids(&model_ids, doc);
+        })
+        .ok_or_else(|| Error::Model(format!("{path}: bad glTF from the export")))
     }
 
     /// Adds to the export's JSON what gd-ffx draws the model with:
@@ -420,12 +435,18 @@ impl Importer {
     /// - per material, which of the primitive's `TEXCOORD_n` each of its
     ///   vertex program's `TEXCOORD` inputs reads (`extras.ffx_texcoords`,
     ///   e.g. `{"TEXCOORD0": 0, "TEXCOORD6": 1}`), from the first primitive
-    ///   drawn with it ([`texcoord_sources`]);
+    ///   drawn with it ([`texcoord_sources`]), and likewise which `COLOR_n`
+    ///   each `COLOR` input reads (`extras.ffx_colors`);
+    /// - each mesh's instance (`extras.ffx_instance`, its index among the
+    ///   cluster's `PMeshInstance`s) and the instance's morph fields
+    ///   ([`morph::Tags`]: `ffx_obj_id`, and when not 0 `ffx_anim_ct`,
+    ///   `ffx_mime_ct`, `ffx_dobj_flag`);
     /// - [`FORMAT`] as `asset.extras.ffx_import`.
     fn add_extras(
         &self,
         model: &ffx_phyre::Model,
         scene: Option<&ffx_scene::map::MapModel>,
+        tags: &[morph::Tags],
         doc: &mut Value,
     ) {
         if let Some(mats) = doc.get_mut("materials").and_then(Value::as_array_mut) {
@@ -444,7 +465,7 @@ impl Importer {
             }
         }
         let texcoords = match doc.get_mut("meshes").and_then(Value::as_array_mut) {
-            Some(meshes) => self.mesh_extras(model, scene, meshes),
+            Some(meshes) => self.mesh_extras(model, scene, tags, meshes),
             None => HashMap::new(),
         };
         if let (Some(mats), Some(sc)) = (
@@ -454,9 +475,10 @@ impl Importer {
             add_wraps(model, sc, mats);
         }
         if let Some(mats) = doc.get_mut("materials").and_then(Value::as_array_mut) {
-            for (i, t) in texcoords {
+            for (i, (t, c)) in texcoords {
                 if let Some(m) = mats.get_mut(i).filter(|m| m["extras"].is_object()) {
                     m["extras"]["ffx_texcoords"] = t;
+                    m["extras"]["ffx_colors"] = c;
                 }
             }
         }
@@ -466,16 +488,18 @@ impl Importer {
         doc["asset"]["extras"] = json!({"ffx_import": FORMAT});
     }
 
-    /// Each mesh's instance's render order and `DObj` kind into its `extras`
-    /// (see [`Importer::add_extras`]); returns each material's
-    /// [`texcoord_sources`], from the first primitive drawn with it.
+    /// Each mesh's instance, render order, `DObj` kind and morph fields into
+    /// its `extras` (see [`Importer::add_extras`]); returns each material's
+    /// [`texcoord_sources`] for its `TEXCOORD` and `COLOR` inputs, from the
+    /// first primitive drawn with it.
     fn mesh_extras(
         &self,
         model: &ffx_phyre::Model,
         scene: Option<&ffx_scene::map::MapModel>,
+        tags: &[morph::Tags],
         meshes: &mut [Value],
-    ) -> HashMap<usize, Value> {
-        let mut texcoords: HashMap<usize, Value> = HashMap::new();
+    ) -> HashMap<usize, (Value, Value)> {
+        let mut texcoords: HashMap<usize, (Value, Value)> = HashMap::new();
         let mut next = 0;
         for mesh in meshes.iter_mut() {
             let Some(name) = mesh.get("name").and_then(Value::as_str).map(str::to_owned) else {
@@ -499,6 +523,19 @@ impl Importer {
                 continue;
             };
             next = i + 1;
+            mesh["extras"]["ffx_instance"] = json!(i);
+            if let Some(t) = tags.get(i) {
+                mesh["extras"]["ffx_obj_id"] = json!(t.obj_id);
+                for (k, v) in [
+                    ("ffx_anim_ct", i64::from(t.anim_ct)),
+                    ("ffx_mime_ct", i64::from(t.mime_ct)),
+                    ("ffx_dobj_flag", i64::from(t.dobj_flag)),
+                ] {
+                    if v != 0 {
+                        mesh["extras"][k] = json!(v);
+                    }
+                }
+            }
             if let Some(b) = model.instances[i].bounds {
                 mesh["extras"]["ffx_render_order"] = json!(b.render_order);
             }
@@ -540,11 +577,19 @@ impl Importer {
                         si.contexts.get(k)
                     })
                     .map_or(&[][..], Vec::as_slice);
-                let uv_sets: Vec<u64> = p["extras"]["ffx_uv_sets"]
-                    .as_array()
-                    .map(|a| a.iter().filter_map(Value::as_u64).collect())
-                    .unwrap_or_default();
-                texcoords.insert(mat, texcoord_sources(&fx, bindings, &uv_sets));
+                let sets = |key: &str| -> Vec<u64> {
+                    p["extras"][key]
+                        .as_array()
+                        .map(|a| a.iter().filter_map(Value::as_u64).collect())
+                        .unwrap_or_default()
+                };
+                texcoords.insert(
+                    mat,
+                    (
+                        texcoord_sources(&fx, bindings, &sets("ffx_uv_sets"), "TEXCOORD"),
+                        texcoord_sources(&fx, bindings, &sets("ffx_color_sets"), "COLOR"),
+                    ),
+                );
             }
         }
         texcoords
@@ -640,7 +685,8 @@ impl Importer {
 }
 
 /// Which glTF `TEXCOORD_n` of a primitive each `TEXCOORD` input of a
-/// material's vertex program reads, as `{"TEXCOORD4": n, ...}`: the
+/// material's vertex program reads, as `{"TEXCOORD4": n, ...}` (with
+/// `prefix` `COLOR`: which `COLOR_n` each `COLOR` input reads): the
 /// game binds an input to the segment's stream of its render type whose
 /// `m_streamSet` the instance's segment context names for it
 /// (`PMeshInstanceSegmentStreamBinding.m_inputSet`; the water's
@@ -648,7 +694,12 @@ impl Importer {
 /// `ffx_scene::build::vertex_inputs`). The export writes a segment's UV
 /// streams as `TEXCOORD_0..` with their sets in `ffx_uv_sets` (`sets`;
 /// empty: every set 0).
-fn texcoord_sources(fx: &Value, bindings: &[ffx_scene::map::StreamBinding], sets: &[u64]) -> Value {
+fn texcoord_sources(
+    fx: &Value,
+    bindings: &[ffx_scene::map::StreamBinding],
+    sets: &[u64],
+    prefix: &str,
+) -> Value {
     let mut out = serde_json::Map::new();
     let names = fx["ffx_inputs"].as_array().cloned().unwrap_or_default();
     let types = fx["ffx_input_types"]
@@ -659,10 +710,7 @@ fn texcoord_sources(fx: &Value, bindings: &[ffx_scene::map::StreamBinding], sets
         let (Some(name), Some(ty)) = (name.as_str(), ty.as_str()) else {
             continue;
         };
-        let Some(index) = name
-            .strip_prefix("TEXCOORD")
-            .and_then(|i| i.parse::<u8>().ok())
-        else {
+        let Some(index) = name.strip_prefix(prefix).and_then(|i| i.parse::<u8>().ok()) else {
             continue;
         };
         let set = bindings
@@ -758,17 +806,32 @@ fn glb_json_range(glb: &[u8]) -> Option<std::ops::Range<usize>> {
     (20 + len <= glb.len()).then_some(20..20 + len)
 }
 
-/// `glb` with its JSON chunk changed by `edit` (the binary chunk kept).
-fn edit_glb_json(glb: &[u8], edit: impl FnOnce(&mut Value)) -> Option<Vec<u8>> {
+/// `glb` with its JSON chunk and binary chunk changed by `edit` (which may
+/// append to the binary data; `buffers[0].byteLength` follows it).
+fn edit_glb(glb: &[u8], edit: impl FnOnce(&mut Value, &mut Vec<u8>)) -> Option<Vec<u8>> {
     let r = glb_json_range(glb)?;
     let mut doc: Value = serde_json::from_slice(&glb[r.clone()]).ok()?;
-    edit(&mut doc);
+    // the binary chunk: length, "BIN\0", data
+    let mut bin = match glb.get(r.end..r.end + 8) {
+        Some(h) if &h[4..8] == b"BIN\0" => {
+            let len = u32::from_le_bytes(h[0..4].try_into().ok()?) as usize;
+            glb.get(r.end + 8..r.end + 8 + len)?.to_vec()
+        }
+        _ => Vec::new(),
+    };
+    let had_bin = !bin.is_empty();
+    edit(&mut doc, &mut bin);
+    while !bin.len().is_multiple_of(4) {
+        bin.push(0);
+    }
+    if had_bin || !bin.is_empty() {
+        doc["buffers"] = json!([{"byteLength": bin.len()}]);
+    }
     let mut text = serde_json::to_vec(&doc).ok()?;
     while !text.len().is_multiple_of(4) {
         text.push(b' ');
     }
-    let rest = &glb[r.end..];
-    let total = 20 + text.len() + rest.len();
+    let total = 20 + text.len() + if bin.is_empty() { 0 } else { 8 + bin.len() };
     let mut out = Vec::with_capacity(total);
     out.extend(b"glTF");
     out.extend(2u32.to_le_bytes());
@@ -776,8 +839,278 @@ fn edit_glb_json(glb: &[u8], edit: impl FnOnce(&mut Value)) -> Option<Vec<u8>> {
     out.extend(u32::try_from(text.len()).ok()?.to_le_bytes());
     out.extend(b"JSON");
     out.extend(&text);
-    out.extend(rest);
+    if !bin.is_empty() {
+        out.extend(u32::try_from(bin.len()).ok()?.to_le_bytes());
+        out.extend(b"BIN\0");
+        out.extend(&bin);
+    }
     Some(out)
+}
+
+/// Appends `bytes` to the binary chunk as a buffer view and an accessor
+/// (`accessor`'s fields plus the view); returns the accessor's index.
+fn push_accessor(doc: &mut Value, bin: &mut Vec<u8>, bytes: &[u8], mut accessor: Value) -> usize {
+    while !bin.len().is_multiple_of(4) {
+        bin.push(0);
+    }
+    if !doc["bufferViews"].is_array() {
+        doc["bufferViews"] = json!([]);
+    }
+    if !doc["accessors"].is_array() {
+        doc["accessors"] = json!([]);
+    }
+    let views = doc["bufferViews"].as_array_mut().expect("an array");
+    views.push(
+        json!({"buffer": 0, "byteOffset": bin.len(), "byteLength": bytes.len(), "target": 34962}),
+    );
+    accessor["bufferView"] = json!(views.len() - 1);
+    bin.extend_from_slice(bytes);
+    let accessors = doc["accessors"].as_array_mut().expect("an array");
+    accessors.push(accessor);
+    accessors.len() - 1
+}
+
+/// A float accessor's bytes, count and per-component bounds.
+fn float_accessor<const N: usize>(values: &[[f32; N]]) -> (Vec<u8>, Value) {
+    let mut min = [f32::INFINITY; N];
+    let mut max = [f32::NEG_INFINITY; N];
+    for v in values {
+        for k in 0..N {
+            min[k] = min[k].min(v[k]);
+            max[k] = max[k].max(v[k]);
+        }
+    }
+    let bytes = values
+        .iter()
+        .flatten()
+        .flat_map(|f| f.to_le_bytes())
+        .collect();
+    let ty = match N {
+        2 => "VEC2",
+        3 => "VEC3",
+        _ => "VEC4",
+    };
+    (
+        bytes,
+        json!({"componentType": 5126, "count": values.len(), "type": ty, "min": min.as_slice(), "max": max.as_slice()}),
+    )
+}
+
+/// The position morphs ([`morph::read`]) as glTF morph targets on the
+/// meshes of their instances (`extras.ffx_instance`): the game's vertices
+/// are `in0 (1 - w) + in1 w` (docs/importer.md, "Morphing meshes"). Where
+/// the stored `Vertex` stream is `in0` (every map seen), one target
+/// `in1 - in0` with weight `w`; otherwise two, `in0 - stored` and
+/// `in1 - stored`, with weights `1 - w`, `w` (`extras.ffx_morph_targets`
+/// 2). A mesh with a segment not covered is left as it is.
+#[allow(clippy::many_single_char_names)] // glTF indices
+fn add_morph_targets(
+    model: &ffx_phyre::Model,
+    morphs: &[morph::InstanceMorph],
+    doc: &mut Value,
+    bin: &mut Vec<u8>,
+) {
+    let mesh_count = doc["meshes"].as_array().map_or(0, Vec::len);
+    for mi in 0..mesh_count {
+        let Some(i) = doc["meshes"][mi]["extras"]["ffx_instance"].as_u64() else {
+            continue;
+        };
+        let Some(mo) = morphs.iter().find(|m| m.instance as u64 == i) else {
+            continue;
+        };
+        let Some(inst) = usize::try_from(i).ok().and_then(|i| model.instances.get(i)) else {
+            continue;
+        };
+        // per primitive: its targets (relative positions)
+        let prims = doc["meshes"][mi]["primitives"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        let mut per_prim: Vec<Vec<Vec<[f32; 3]>>> = Vec::new();
+        for p in &prims {
+            let Some(s) = p["extras"]["ffx_segment"]
+                .as_u64()
+                .and_then(|s| usize::try_from(s).ok())
+            else {
+                break;
+            };
+            let Some(k) = inst.segments.iter().position(|&(x, _)| x == s) else {
+                break;
+            };
+            let (Some(sm), Some(seg)) =
+                (mo.segments.iter().find(|x| x.k == k), model.segments.get(s))
+            else {
+                break;
+            };
+            let (Some(a), Some(b)) = (sm.inputs.first(), sm.inputs.get(1)) else {
+                break;
+            };
+            let n = seg.positions.len();
+            if a.width != 3 || b.width != 3 || a.values.len() != n * 3 || b.values.len() != n * 3 {
+                break;
+            }
+            let at = |x: &morph::Input, v: usize| {
+                [x.values[3 * v], x.values[3 * v + 1], x.values[3 * v + 2]]
+            };
+            let same = (0..n).all(|v| {
+                let (p, q) = (seg.positions[v], at(a, v));
+                (0..3).all(|c| (p[c] - q[c]).abs() <= 1e-6)
+            });
+            let sub = |x: [f32; 3], y: [f32; 3]| [x[0] - y[0], x[1] - y[1], x[2] - y[2]];
+            per_prim.push(if same {
+                vec![(0..n).map(|v| sub(at(b, v), at(a, v))).collect()]
+            } else {
+                vec![
+                    (0..n).map(|v| sub(at(a, v), seg.positions[v])).collect(),
+                    (0..n).map(|v| sub(at(b, v), seg.positions[v])).collect(),
+                ]
+            });
+        }
+        if per_prim.len() != prims.len() || per_prim.is_empty() {
+            continue;
+        }
+        // glTF: every primitive of a mesh has the same number of targets
+        let count = per_prim.iter().map(Vec::len).max().unwrap_or(1);
+        for (pi, targets) in per_prim.into_iter().enumerate() {
+            let targets = if targets.len() == count {
+                targets
+            } else {
+                // in0 is the stored stream here: target 0 is zero, target 1 the delta
+                let n = targets[0].len();
+                vec![vec![[0.0; 3]; n], targets[0].clone()]
+            };
+            let mut list = Vec::new();
+            for t in &targets {
+                let (bytes, acc) = float_accessor(t);
+                let a = push_accessor(doc, bin, &bytes, acc);
+                list.push(json!({"POSITION": a}));
+            }
+            doc["meshes"][mi]["primitives"][pi]["targets"] = json!(list);
+        }
+        let mesh = &mut doc["meshes"][mi];
+        if count == 1 {
+            mesh["weights"] = json!([0.0]);
+            mesh["extras"]["targetNames"] = json!(["morph"]);
+        } else {
+            mesh["weights"] = json!([1.0, 0.0]);
+            mesh["extras"]["targetNames"] = json!(["morph_in0", "morph_in1"]);
+        }
+        mesh["extras"]["ffx_morph_targets"] = json!(count);
+    }
+}
+
+/// Each `PMeshSegment`'s model id (`+0x18`, a word; the segments are
+/// `0x6c` bytes): the model a character's unskinned mesh belongs to,
+/// which `graphicCharacterInstanceSetWorldMatrixByMdlID` (`0x0063c430`)
+/// places at the model's base element (ffx-rust's `ffx-graphic`
+/// `character_set_world_matrix_by_mdl_id`). Empty for other layouts.
+fn segment_model_ids(bytes: &[u8]) -> Vec<u32> {
+    let Ok(c) = ffx_phyre::cluster::Cluster::parse(bytes) else {
+        return Vec::new();
+    };
+    let Some(l) = c.list("PMeshSegment").filter(|l| l.object_size() == 0x6c) else {
+        return Vec::new();
+    };
+    (0..l.count)
+        .map_while(|i| {
+            let o = l.object(i) + 0x18;
+            Some(u32::from_le_bytes(bytes.get(o..o + 4)?.try_into().ok()?))
+        })
+        .collect()
+}
+
+/// Each primitive's segment's model id ([`segment_model_ids`]) as
+/// `extras.ffx_model_id`, and each mesh's (its first primitive's) as the
+/// mesh's `extras.ffx_model_id`.
+fn add_model_ids(ids: &[u32], doc: &mut Value) {
+    let Some(meshes) = doc["meshes"].as_array_mut() else {
+        return;
+    };
+    for mesh in meshes {
+        let mut first = None;
+        if let Some(prims) = mesh["primitives"].as_array_mut() {
+            for p in prims {
+                let id = p["extras"]["ffx_segment"]
+                    .as_u64()
+                    .and_then(|s| usize::try_from(s).ok())
+                    .and_then(|s| ids.get(s));
+                if let Some(&id) = id {
+                    p["extras"]["ffx_model_id"] = json!(id);
+                    first.get_or_insert(id);
+                }
+            }
+        }
+        if let Some(id) = first {
+            mesh["extras"]["ffx_model_id"] = json!(id);
+        }
+    }
+}
+
+/// For materials of a vertex colour morph (`VERTEX_COLOR_MORPH`: the vertex
+/// program's colour is `COLOR0 + w (COLOR1 - COLOR0)`), the `COLOR_n` that
+/// `COLOR1` reads (the material's `ffx_colors`) as two float pairs,
+/// `TEXCOORD_2` (r, g) and `TEXCOORD_3` (b, a): Godot imports no `COLOR_1`
+/// but reads those as its `CUSTOM0`.
+#[allow(clippy::many_single_char_names)] // glTF indices
+fn add_color_morph_streams(model: &ffx_phyre::Model, doc: &mut Value, bin: &mut Vec<u8>) {
+    let Some(mats) = doc["materials"].as_array() else {
+        return;
+    };
+    let second: Vec<Option<u64>> = mats
+        .iter()
+        .map(|m| {
+            let x = &m["extras"];
+            x["ffx_switches"]
+                .get("VERTEX_COLOR_MORPH")
+                .map(|_| x["ffx_colors"]["COLOR1"].as_u64().unwrap_or(1))
+        })
+        .collect();
+    let mesh_count = doc["meshes"].as_array().map_or(0, Vec::len);
+    for mi in 0..mesh_count {
+        let prim_count = doc["meshes"][mi]["primitives"]
+            .as_array()
+            .map_or(0, Vec::len);
+        for pi in 0..prim_count {
+            let p = &doc["meshes"][mi]["primitives"][pi];
+            let (Some(mat), Some(s)) =
+                (p["material"].as_u64(), p["extras"]["ffx_segment"].as_u64())
+            else {
+                continue;
+            };
+            let Some(Some(k)) = usize::try_from(mat).ok().and_then(|m| second.get(m)) else {
+                continue;
+            };
+            if p["attributes"].get("TEXCOORD_2").is_some() {
+                continue;
+            }
+            let Some(seg) = usize::try_from(s).ok().and_then(|s| model.segments.get(s)) else {
+                continue;
+            };
+            let colors = match *k {
+                0 => &seg.colors,
+                k => match usize::try_from(k - 1)
+                    .ok()
+                    .and_then(|k| seg.extra_colors.get(k))
+                {
+                    Some(c) => c,
+                    None => continue,
+                },
+            };
+            if colors.len() != seg.positions.len() || colors.is_empty() {
+                continue;
+            }
+            let f = |c: u8| f32::from(c) / 255.0;
+            let rg: Vec<[f32; 2]> = colors.iter().map(|c| [f(c[0]), f(c[1])]).collect();
+            let ba: Vec<[f32; 2]> = colors.iter().map(|c| [f(c[2]), f(c[3])]).collect();
+            let (bytes, acc) = float_accessor(&rg);
+            let a = push_accessor(doc, bin, &bytes, acc);
+            let (bytes, acc) = float_accessor(&ba);
+            let b = push_accessor(doc, bin, &bytes, acc);
+            let p = &mut doc["meshes"][mi]["primitives"][pi];
+            p["attributes"]["TEXCOORD_2"] = json!(a);
+            p["attributes"]["TEXCOORD_3"] = json!(b);
+        }
+    }
 }
 
 /// The importer format (`asset.extras.ffx_import`) of the `.glb` at
@@ -867,10 +1200,10 @@ mod tests {
             input_set,
         };
         // TEXCOORD7 bound to stream set 1, the primitive's second UV set; the others unbound
-        let t = texcoord_sources(&fx, &[bind(7, 1)], &[0, 1]);
+        let t = texcoord_sources(&fx, &[bind(7, 1)], &[0, 1], "TEXCOORD");
         assert_eq!(t, json!({"TEXCOORD0": 0, "TEXCOORD6": 0, "TEXCOORD7": 1}));
         // a set the primitive does not have: left out
-        let t = texcoord_sources(&fx, &[bind(6, 2)], &[0, 1]);
+        let t = texcoord_sources(&fx, &[bind(6, 2)], &[0, 1], "TEXCOORD");
         assert_eq!(t, json!({"TEXCOORD0": 0, "TEXCOORD7": 0}));
     }
 
@@ -888,14 +1221,84 @@ mod tests {
         glb.extend(4u32.to_le_bytes());
         glb.extend(b"BIN\0");
         glb.extend(bin);
-        let out = edit_glb_json(&glb, |d| {
-            d["asset"]["extras"] = json!({"ffx_import": FORMAT})
+        let out = edit_glb(&glb, |d, _| {
+            d["asset"]["extras"] = json!({"ffx_import": FORMAT});
         })
         .unwrap();
         assert_eq!(glb_json(&out)["asset"]["extras"]["ffx_import"], FORMAT);
         assert_eq!(&out[out.len() - 12..], &glb[glb.len() - 12..]);
         let declared = u32::from_le_bytes(out[8..12].try_into().unwrap()) as usize;
         assert_eq!(declared, out.len());
+        // appended data: a view after the old bytes, the buffer's length follows
+        let out = edit_glb(&glb, |d, b| {
+            push_accessor(d, b, &[5, 6, 7, 8, 9, 10, 11, 12], json!({"count": 2}));
+        })
+        .unwrap();
+        let doc = glb_json(&out);
+        assert_eq!(doc["bufferViews"][0]["byteOffset"], 4);
+        assert_eq!(doc["accessors"][0]["bufferView"], 0);
+        assert_eq!(doc["buffers"][0]["byteLength"], 12);
+        assert_eq!(
+            &out[out.len() - 12..],
+            &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        );
+    }
+
+    /// On the player's game (skips without `FFX_GAME_DIR`): Besaid's birds
+    /// (objects 18..32, display objects the scripts fly) are position morphs
+    /// whose base is the stored mesh; their mesh gets one morph target and
+    /// the instance's fields.
+    #[test]
+    fn exports_the_morphing_meshes() {
+        let Some(dir) = std::env::var_os("FFX_GAME_DIR") else {
+            eprintln!("FFX_GAME_DIR is not set; skipping");
+            return;
+        };
+        let imp = Importer::open(Path::new(&dir)).unwrap();
+        let path = imp.map_model("/map/bsil/bsil00/").unwrap();
+        let bytes = imp.read(&path).unwrap();
+        let morphs = morph::read(&bytes);
+        assert_eq!(morphs.len(), 22);
+        assert!(morphs.iter().all(|m| m.modifier == "Morph23"));
+        let tags = morph::tags(&bytes);
+        assert_eq!(tags[7].obj_id, 18);
+        assert_eq!(tags[7].mime_ct, 1);
+        let doc = glb_json(&imp.model_glb(&path).unwrap());
+        let bird = doc["meshes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["name"] == "FBXASC0498_0Shape")
+            .unwrap();
+        assert_eq!(bird["extras"]["ffx_obj_id"], 18);
+        assert_eq!(bird["extras"]["ffx_mime_ct"], 1);
+        assert_eq!(bird["extras"]["ffx_morph_targets"], 1);
+        assert_eq!(bird["weights"], json!([0.0]));
+        let target = &bird["primitives"][0]["targets"][0]["POSITION"];
+        let acc = &doc["accessors"][usize::try_from(target.as_u64().unwrap()).unwrap()];
+        assert_eq!(acc["count"], 96);
+        // the save sphere's three unskinned parts: models 0, 1, 2 (MeshNode0..2)
+        let path = character_model_path("f001").unwrap();
+        let doc = glb_json(&imp.model_glb(&path).unwrap());
+        let ids: Vec<(String, Value)> = doc["meshes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| {
+                (
+                    m["name"].as_str().unwrap().to_owned(),
+                    m["extras"]["ffx_model_id"].clone(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            ids,
+            [
+                ("MeshNode0Shape".to_owned(), json!(0)),
+                ("MeshNode1Shape".to_owned(), json!(1)),
+                ("MeshNode2Shape".to_owned(), json!(2))
+            ]
+        );
     }
 
     /// On the player's game (skips without `FFX_GAME_DIR`): the opening's
@@ -928,9 +1331,9 @@ mod tests {
             imp.effect_switches(&format!("{fx}76FCBCF8ED1839AC14A6288F177585D7"), &names),
             names
         );
-        assert!(
-            imp.effect_switches(&format!("{fx}987968ADFCEDE47EA4871B4290C3ED1B"), &names)
-                .is_empty()
+        assert_eq!(
+            imp.effect_switches(&format!("{fx}987968ADFCEDE47EA4871B4290C3ED1B"), &names),
+            Vec::<&str>::new()
         );
         assert!(layers.ends_with("map2d/kami01.glb"), "{}", layers.display());
         assert!(matches!(

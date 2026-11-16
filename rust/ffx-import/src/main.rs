@@ -9,6 +9,7 @@
 //! ffx-import --game-dir DIR model <path or level>...     # a model's nodes, instances, materials
 //! ffx-import --game-dir DIR effects <path or level>...   # its materials' effect variants: switches, pass states, inputs
 //! ffx-import --game-dir DIR effect [--wgsl [PASS]] <id>  # one variant (PS3Data/Shaders/X.fx#MD5); --wgsl: its programs as WGSL
+//! ffx-import --game-dir DIR morphs <path or level>...    # its morphing instances (`all`: a census of every map model)
 //! ```
 //!
 //! `--game-dir` defaults to `FFX_GAME_DIR`. Only reads the game; writes only
@@ -47,29 +48,22 @@ fn main() -> ExitCode {
         return devsaves(&imp);
     }
     if what == "model" {
-        let mut ok = true;
-        for n in names {
-            ok &= model(&imp, n);
-        }
-        return if ok {
-            ExitCode::SUCCESS
-        } else {
-            ExitCode::FAILURE
-        };
+        return each(names, |n| model(&imp, n));
     }
     if what == "effects" {
-        let mut ok = true;
-        for n in names {
-            ok &= effects(&imp, n);
-        }
-        return if ok {
-            ExitCode::SUCCESS
-        } else {
-            ExitCode::FAILURE
-        };
+        return each(names, |n| effects(&imp, n));
     }
     if what == "effect" {
         return effect(&imp, names);
+    }
+    if what == "morphs" {
+        return each(names, |n| {
+            if n == "all" {
+                morph_census(&imp)
+            } else {
+                morphs(&imp, n)
+            }
+        });
     }
     if what == "list" {
         for n in names {
@@ -101,6 +95,19 @@ fn main() -> ExitCode {
                 ok = false;
             }
         }
+    }
+    if ok {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+/// Runs `f` on each name; fails when any does.
+fn each(names: &[String], mut f: impl FnMut(&str) -> bool) -> ExitCode {
+    let mut ok = true;
+    for n in names {
+        ok &= f(n);
     }
     if ok {
         ExitCode::SUCCESS
@@ -242,6 +249,148 @@ fn effects(imp: &ffx_import::Importer, path: &str) -> bool {
         }
     }
     true
+}
+
+/// Prints a model's instances with morph tags (`m_mimeCt`, `m_dObjFlag`,
+/// `m_objID`) and its morphing instances' inputs: per segment, the inputs'
+/// render types and widths, how far the second moves from the first, and
+/// whether the first is the segment's stored `Vertex` stream.
+fn morphs(imp: &ffx_import::Importer, path: &str) -> bool {
+    let Some((path, m)) = load_model(imp, path) else {
+        return false;
+    };
+    let Ok(bytes) = imp.read(&path) else {
+        return false;
+    };
+    println!("{path}");
+    let tags = ffx_import::morph::tags(&bytes);
+    for (i, t) in tags.iter().enumerate() {
+        if t.mime_ct != 0 || t.dobj_flag != 0 {
+            let name = m.instances.get(i).map_or("", |x| x.name.as_str());
+            println!(
+                "instance {i} {name:?} mime_ct {} dobj_flag {:#x} obj_id {}",
+                t.mime_ct, t.dobj_flag, t.obj_id
+            );
+        }
+    }
+    for mo in ffx_import::morph::read(&bytes) {
+        let inst = m.instances.get(mo.instance);
+        println!(
+            "morph instance {} {:?} modifier {} mime_ct {:?}",
+            mo.instance,
+            inst.map_or("", |x| x.name.as_str()),
+            mo.modifier,
+            tags.get(mo.instance).map(|t| t.mime_ct)
+        );
+        for s in &mo.segments {
+            let stored = inst
+                .and_then(|x| x.segments.get(s.k))
+                .and_then(|&(g, _)| m.segments.get(g));
+            let kinds: Vec<String> = s
+                .inputs
+                .iter()
+                .map(|x| format!("{}x{}", x.semantic, x.width))
+                .collect();
+            let spread = match (s.inputs.first(), s.inputs.get(1)) {
+                (Some(a), Some(b)) => a
+                    .values
+                    .iter()
+                    .zip(&b.values)
+                    .map(|(x, y)| (x - y).abs())
+                    .fold(0f32, f32::max),
+                _ => 0.0,
+            };
+            let base = match (stored, s.inputs.first()) {
+                (Some(seg), Some(a)) if a.width == 3 && seg.positions.len() == s.vertices => seg
+                    .positions
+                    .iter()
+                    .flatten()
+                    .zip(&a.values)
+                    .map(|(x, y)| (x - y).abs())
+                    .fold(0f32, f32::max),
+                _ => f32::NAN,
+            };
+            println!(
+                "  segment {} verts {} inputs {kinds:?} max |in1 - in0| {spread} max |stored - in0| {base}",
+                s.k, s.vertices
+            );
+        }
+    }
+    true
+}
+
+/// Every map model's morphing instances, summed: `m_mimeCt` values,
+/// modifiers, input kinds, and instances whose network does not read.
+fn morph_census(imp: &ffx_import::Importer) -> bool {
+    use std::collections::BTreeMap;
+    use std::fmt::Write;
+    let mut mime: BTreeMap<i32, usize> = BTreeMap::new();
+    let mut kinds: BTreeMap<String, usize> = BTreeMap::new();
+    let (mut maps, mut dynamic, mut read, mut networks) = (0, 0, 0, 0);
+    let mut examples: [Vec<String>; 3] = Default::default();
+    for path in imp.list("/mdl/d3d11/") {
+        if !path.contains("ps3data/map/") || !path.ends_with(".dae.phyre") {
+            continue;
+        }
+        let Ok(bytes) = imp.read(&path) else {
+            continue;
+        };
+        maps += 1;
+        let tags = ffx_import::morph::tags(&bytes);
+        for t in &tags {
+            *mime.entry(t.mime_ct).or_default() += 1;
+        }
+        // a few maps of each other kind: UV morphs, colour morphs, UV offsets
+        for (k, hit) in [
+            tags.iter().any(|t| t.mime_ct == 3),
+            tags.iter().any(|t| t.mime_ct == 4),
+            tags.iter().any(|t| t.dobj_flag & 0x400 != 0),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            if hit && examples[k].len() < 3 {
+                examples[k].push(file_stem_of(&path));
+            }
+        }
+        let morphs = ffx_import::morph::read(&bytes);
+        read += morphs.len();
+        if let Ok(c) = ffx_phyre::cluster::Cluster::parse(&bytes) {
+            networks += c
+                .list("PModifierNetworkDynamicMeshInstance")
+                .map_or(0, |l| l.count as usize);
+        }
+        dynamic += tags.iter().filter(|t| t.mime_ct == 1).count();
+        for mo in &morphs {
+            let mut k = format!(
+                "{} mime {:?}",
+                mo.modifier,
+                tags.get(mo.instance).map(|t| t.mime_ct)
+            );
+            for s in mo.segments.iter().take(1) {
+                for x in &s.inputs {
+                    let _ = write!(k, " {}x{}", x.semantic, x.width);
+                }
+            }
+            *kinds.entry(k).or_default() += 1;
+        }
+    }
+    println!("{maps} map models; instances by m_mimeCt: {mime:?}");
+    println!("m_mimeCt 1: {dynamic}; dynamic mesh instances: {networks}; morphs read: {read}");
+    for (k, n) in kinds {
+        println!("  {n:5} {k}");
+    }
+    println!(
+        "e.g. m_mimeCt 3: {:?}; 4: {:?}; m_dObjFlag 0x400: {:?}",
+        examples[0], examples[1], examples[2]
+    );
+    true
+}
+
+/// `.../<name>.dae.phyre`'s name.
+fn file_stem_of(path: &str) -> String {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    name.strip_suffix(".dae.phyre").unwrap_or(name).to_string()
 }
 
 /// Prints one effect variant's extras, or with `--wgsl [PASS]` its first

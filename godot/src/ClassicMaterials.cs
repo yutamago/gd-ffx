@@ -70,7 +70,35 @@ vec3 ffx_fog_apply(vec3 c, float depth) {
     // draw with) discards where texture a < AlphaThreshold; the others ignore alpha.
     // UV_ANIM (phyreuvanimationshader): TEXCOORD0 + ScrollSpeed x GlobalTime in the vertex
     // program; the export flips v (v' = 1 - v), so the v scroll is negated here.
+    // The morphs the game drives per object (docs/importer.md, "Morphing meshes"; the weights
+    // per mesh instance, StateView3D): UV_MORPH, TEXCOORD0 + UVMorphWeight x (TEXCOORD5 -
+    // TEXCOORD0); VERTEX_COLOR_MORPH (COLOR_MORPH here), COLOR0 + VertexColorMorphWeight x (COLOR1 -
+    // COLOR0), COLOR1 imported as CUSTOM0; UV_SCROLL, TEXCOORD0 + (UvOffsetX, UvOffsetY), v
+    // negated for the export's flip.
     private const string MapBody = @"
+#if defined(UV_MORPH) || defined(COLOR_MORPH)
+instance uniform float ffx_morph = 0.0;
+#endif
+#ifdef UV_MORPH
+// TEXCOORD5's set (0 UV, 1 UV2)
+uniform float uv_morph_set = 1.0;
+#endif
+#ifdef UV_SCROLL
+instance uniform vec2 ffx_uv_offset = vec2(0.0);
+#endif
+#if defined(UV_MORPH) || defined(COLOR_MORPH) || defined(UV_SCROLL)
+void vertex() {
+#ifdef UV_MORPH
+	UV += (mix(UV, UV2, uv_morph_set) - UV) * ffx_morph;
+#endif
+#ifdef COLOR_MORPH
+	COLOR += (CUSTOM0 - COLOR) * ffx_morph;
+#endif
+#ifdef UV_SCROLL
+	UV += vec2(ffx_uv_offset.x, -ffx_uv_offset.y);
+#endif
+}
+#endif
 #ifdef TEX_CLAMP
 uniform sampler2D tex : filter_linear_mipmap_anisotropic, repeat_disable;
 #else
@@ -335,7 +363,13 @@ void fragment() {
         lock (MapShaders)
         {
             if (!MapShaders.TryGetValue(key, out var sh))
+            {
                 MapShaders[key] = sh = MakeShader(modes, body, d);
+                var list = defines.ToList();
+                bool weight = list.Contains("UV_MORPH") || list.Contains("COLOR_MORPH"), offset = list.Contains("UV_SCROLL");
+                if (weight || offset)
+                    MorphShaders[sh] = (weight, offset);
+            }
             return sh;
         }
     }
@@ -413,6 +447,22 @@ void fragment() {
     /// <summary>Whether the pass's pixel program reads constant <paramref name="name"/> (the import's <c>ps_reads</c>); <paramref name="unknown"/> without the list.</summary>
     private static bool Reads(Dictionary? pass, string name, bool unknown) =>
         pass != null && pass.TryGetValue("ps_reads", out var r) ? r.AsGodotArray().Any(x => x.AsString() == name) : unknown;
+
+    /// <summary>The glTF set a vertex program input reads (the import's <c>ffx_texcoords</c>, <c>ffx_colors</c>).</summary>
+    private static int InputSet(Dictionary extras, string key, string input, int fallback) =>
+        extras.TryGetValue(key, out var v) && v.AsGodotDictionary().TryGetValue(input, out var k) ? k.AsInt32() : fallback;
+
+    /// <summary>Whether a material draws with the per-instance morph weight (<c>ffx_morph</c>) or UV offset (<c>ffx_uv_offset</c>).</summary>
+    public static (bool Weight, bool UvOffset) Morphs(Material? m)
+    {
+        if (m is not ShaderMaterial { Shader: { } sh })
+            return (false, false);
+        lock (MapShaders)
+            return MorphShaders.TryGetValue(sh, out var x) ? x : (false, false);
+    }
+
+    /// <summary>The map shaders with per-instance morph uniforms (<see cref="Morphs"/>).</summary>
+    private static readonly System.Collections.Generic.Dictionary<Shader, (bool, bool)> MorphShaders = new();
 
     /// <summary>The variant's switches (the import's <c>extras.ffx_switches</c>).</summary>
     private static bool Switch(Dictionary extras, string name) =>
@@ -584,6 +634,11 @@ void fragment() {
                     if (known ? Reads(pass, "AlphaThreshold", false) && !blends : masked)
                         defines.Add("ALPHA_TEST");
                     if (effect.Contains("uvanimation")) defines.Add("UV_ANIM");
+                    // the morphs (the weights are the instance's: StateView3D); a colour morph whose
+                    // COLOR1 reads the first colour stream changes nothing (no CUSTOM0 imported)
+                    if (Switch(extras, "UV_MORPH")) defines.Add("UV_MORPH");
+                    if (Switch(extras, "VERTEX_COLOR_MORPH") && InputSet(extras, "ffx_colors", "COLOR1", 0) > 0) defines.Add("COLOR_MORPH");
+                    if (Switch(extras, "UV_SCROLL")) defines.Add("UV_SCROLL");
                     // the sampler's address modes (the import's ffx_wrap): Godot has one for both axes
                     if (extras.TryGetValue("ffx_wrap", out var wv) && wv.AsGodotDictionary().TryGetValue("TextureSampler", out var tw)
                         && tw.AsGodotArray().Any(x => x.AsString() == "CLAMP" || x.AsString() == "BORDER"))
@@ -592,6 +647,8 @@ void fragment() {
                     s = new ShaderMaterial { Shader = MapShader(modes, MapBody, defines) };
                     var sx = Floats(p, "ScrollSpeed_X", [0f]); var sy = Floats(p, "ScrollSpeed_Y", [0f]);
                     s.SetShaderParameter("scroll", new Vector2(sx[0], sy[0]));
+                    if (defines.Contains("UV_MORPH"))
+                        s.SetShaderParameter("uv_morph_set", (float)Math.Clamp(InputSet(extras, "ffx_texcoords", "TEXCOORD5", 1), 0, 1));
                     lock (MadeLock)
                         if (blends) Made.Blend++; else Made.Map++;
                 }

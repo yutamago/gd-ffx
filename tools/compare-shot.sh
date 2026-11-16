@@ -6,7 +6,8 @@
 #
 #   FFX_GAME_DIR=<game> tools/compare-shot.sh REF.png|bmp OUT_DIR [devsave, default 7]
 # (any save gives godot.png; the score only means something against a reference of that spot)
-# FFX_SHOT_ARGS: more arguments for the check, e.g. "--walk=up:6" (the map check walks first)
+# FFX_SHOT_ARGS: more arguments for the check, e.g. "--walk=up:6" (the map check walks
+# first) or "--shots=4" (Besaid: four pictures 0.1 s apart, godot.png, godot-1.png, ...)
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 ref="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"

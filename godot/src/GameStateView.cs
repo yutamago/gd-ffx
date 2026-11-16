@@ -26,7 +26,10 @@ public sealed class GameStateView
     /// <summary>Where between Previous (0) and Current (1) this frame is.</summary>
     public float Alpha { get; private set; }
 
-    /// <summary>Snapshots decoded so far.</summary>
+    /// <summary>
+    /// Snapshots decoded so far: what a view's cache of a snapshot compares (the objects are
+    /// reused, <see cref="Release"/>; a reference can come back holding a newer update).
+    /// </summary>
     public long Decoded { get; private set; }
 
     /// <summary>The last decode error, if any.</summary>
@@ -68,8 +71,9 @@ public sealed class GameStateView
             try
             {
                 var cur = d["current"].AsByteArray();
-                var old = Current;
-                Current = cur.Length > 0 ? StateApi.Decode(cur) : null;
+                var (old, oldPrev) = (Current, Previous);
+                // decoded into a spare snapshot (Spare): never one this frame's views saw last
+                Current = cur.Length > 0 ? StateApi.Decode(cur, Spare()) : null;
                 // the previous one is usually the last current, already decoded (not copied again)
                 var prevUpdate = d["previous_update"].AsInt64();
                 if (old != null && prevUpdate == old.Update)
@@ -77,8 +81,12 @@ public sealed class GameStateView
                 else
                 {
                     var prev = d["previous"].AsByteArray();
-                    Previous = prev.Length > 0 ? StateApi.Decode(prev) : Current;
+                    Previous = prev.Length > 0 ? StateApi.Decode(prev, Spare()) : Current;
                 }
+                Release(old);
+                Release(oldPrev);
+                // a cache by reference would take a reused snapshot for the one it saw
+                _pairedFor = null;
                 _update = Current?.Update ?? update;
                 Decoded++;
                 Error = "";
@@ -98,6 +106,30 @@ public sealed class GameStateView
 
     private long _arrived;
     private double _interval = 1.0 / 30;
+
+    /// <summary>
+    /// Snapshots no longer Current or Previous, decoded into again (their objects, lists and
+    /// arrays reused: a decode then allocates next to nothing, where a fresh one made ~250 KiB of
+    /// garbage at Besaid, an object and a matrix per bone). The views keep last frame's Current
+    /// and Previous (and objects of theirs, compared by reference) until they see the new ones;
+    /// those two are never decoded into.
+    /// </summary>
+    private readonly List<Snapshot> _spares = new();
+
+    private Snapshot? Spare()
+    {
+        if (_spares.Count == 0)
+            return null;
+        var s = _spares[^1];
+        _spares.RemoveAt(_spares.Count - 1);
+        return s;
+    }
+
+    private void Release(Snapshot? s)
+    {
+        if (s != null && !ReferenceEquals(s, Current) && !ReferenceEquals(s, Previous) && !_spares.Contains(s))
+            _spares.Add(s);
+    }
 
     private static bool IsCut(Snapshot? p, Snapshot? c)
     {

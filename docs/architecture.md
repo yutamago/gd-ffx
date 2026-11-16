@@ -147,6 +147,14 @@ encoding.
   interpolates each frame between the two by the time since the newest
   came (`alpha` = age / interval): Godot renders at the display's rate,
   one update behind the game.
+- Decoding reuses storage: each class's `Read(ref r, into)` fills an
+  object read before, its lists (items by index), matrices, byte arrays
+  and unchanged strings, so a decode allocates almost nothing.
+  `GameStateView` decodes into a spare snapshot, one no longer `Current`
+  or `Previous`; the views only keep last frame's two. A reused object can
+  come back holding a newer update, so the views' caches compare
+  `GameStateView.Decoded` (the decode count), not references (the bone
+  poses' per-actor cache drops entries more than one decode old).
 - Spaces: the game's field space has y down; its render space negates x
   and y and is Godot's (right-handed, y up, the camera along -z). A field
   point (x, y, z) is (-x, -y, z) in Godot (`GameStateView.FieldPoint`,
@@ -295,16 +303,36 @@ between the last two snapshots), shown while the game draws it. Besaid's
 birds (objects 18..32, at the origin in the file) fly where the game has
 them; the Besaid check counts the meshes placed (45).
 
+Some map meshes morph (docs/importer.md, "Morphing meshes"): the import
+gives a mesh its instance's `m_objID`, `m_animCt`, `m_mimeCt` and
+`m_dObjFlag` and a position morph its morph target. `StateView3D` finds the
+meshes the game's morph manager registers (`MorphManager_registerClusterMorphs`:
+`m_animCt` above 0; `m_mimeCt` 1 with a target, 4 or 3 with a material of
+the weight, else `m_dObjFlag` `0x400` with a material of the UV offset)
+and sets each from its object's display-object value (`SceneObject.morph`,
+`morph_v`, interpolated; 0 for an object that is not a display object), as
+`MorphManager_setWeights` does by `m_objID`: the blend shape (weights `1 -
+w`, `w` are base plus `w` times the target), or the map shader's instance
+uniforms `ffx_morph` (`UV_MORPH`, `VERTEX_COLOR_MORPH`) and
+`ffx_uv_offset` (`UV_SCROLL`; ClassicMaterials). Besaid's birds flap their
+wings (the morph value runs 0..1), its shore strips (objects 0..5, 13) and
+the bsil06 ground (8 meshes) move. The checks print the morphing meshes;
+`--no-morph` keeps every mesh in its stored pose, `--look-at-object=N`
+points the camera at object N (Besaid's birds fly far above the save 7
+view: `FFX_SHOT_ARGS="--shots=4 --look-at-object=19" tools/compare-shot.sh`).
+
 Character models made of rigid parts without a skin (the save sphere's
 base `f001`: three meshes `MeshNode0..2`, five `SkeletonNode`s, no skin in
-the import) are placed by the game per mesh
-(`graphicCharacterInstanceSetWorldMatrixByMdlID`), so posing bones moves
-nothing. `StateView3D` moves part `MeshNodeK` with the K-th leaf
-`SkeletonNode` (by element) instead: on f001 elements 2, 3 and 4, of which
-the game lifts 2 and 3 by 6 and turns them (the ring and its mount) and
-leaves 4 at the base. The pairing is inferred from f001, not read from the
-game; the picture then matches the original's (the ring floating above the
-pedestal). Its glowing orb is an effect, not part of the model.
+the import) are placed by the game per model, as `Ch_DrawMain`'s first walk
+does: each model not in the skin list at the character's world times its
+base element's matrix (`graphicCharacterInstanceSetWorldMatrixByMdlID`,
+which finds a model's meshes by their segments' model id, `PMeshSegment
++0x18`). The import writes that id (`extras.ffx_model_id`, docs/importer.md)
+and API 10 gives each model's base element (`Actor.models`), so
+`StateView3D` puts mesh `id` at `bones[models[id].base]` (f001: models 0, 1,
+2 on elements 2, 3, 4; the game lifts 2 and 3 by 6 and turns them, the ring
+and its mount, and leaves 4 at the base). Its glowing orb is an effect, not
+part of the model.
 
 ## The 2D layers (G5)
 
