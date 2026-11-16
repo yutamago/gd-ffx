@@ -179,9 +179,10 @@ public partial class GameHost : Node
     public static int LostFrameCollections { get; private set; }
 
     /// <summary>
-    /// A young collection right after a frame that was already a hitch, when there is garbage: a
-    /// load's leftovers (the importers' Godot dictionaries and variants, finalizable) otherwise
-    /// make the first collection while playing a long one (docs/running.md, "Benchmark").
+    /// Young collections right after a frame that was already a hitch, when there is garbage: a
+    /// load's leftovers (the importers' Godot dictionaries and variants, finalizable) and its
+    /// survivors otherwise make the first collections while playing long ones (docs/running.md,
+    /// "Benchmark").
     /// </summary>
     private void CollectWhenLost(double delta)
     {
@@ -194,6 +195,9 @@ public partial class GameHost : Node
         }
         if (delta < LostFrame || System.GC.GetTotalAllocatedBytes() - _allocatedAtCollection < LostFrameGarbage)
             return;
+        // twice: the load's survivors (its scene, kept) go on to gen2 now; left in gen1, the next
+        // young collection while playing would copy them there (2 to 3 MiB: 5 to 9 ms)
+        System.GC.Collect(1, System.GCCollectionMode.Forced, blocking: true, compacting: false);
         System.GC.Collect(1, System.GCCollectionMode.Forced, blocking: true, compacting: false);
         LostFrameCollections++;
     }
