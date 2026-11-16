@@ -256,9 +256,14 @@ pedestal). Its glowing orb is an effect, not part of the model.
   picture so far: Godot's screen texture) and the after-post pass, all in
   the 3D scene. Not drawn: the UI 2D pass (its camera, the scene's second,
   is not captured; only while a scene or movie fades) and the list no pass
-  draws. The battle self-check reports the draws seen per pass. The orb's
-  sparkles show a pink the original does not (the blend mapping is from
-  examples, effects-draw.md's open question 2).
+  draws. The battle self-check reports the draws seen per pass. The blend
+  is the game's own (FXDR version 4: each draw's technique and its shader
+  passes' D3D11 blends): `Transparent` writes premultiplied colour for a
+  source factor of one, `OptimizedTrans` straight colour for source alpha
+  (`EffectDrawView.LookOf`, `Form`). Open: the save sphere's two sparkle
+  quads (flags 0xa, the `bat_eff` atlas of 32-pixel cells) carry UVs over a
+  64-pixel block, so they show four pink frames at once; the game's VFX
+  shader must scale or pick the frame (not captured yet).
 
 - **The draw events** (the same capture): the screen fade (kind 2) is
   drawn by `ScreenFadeView`, a full-screen quad of the event's colour
