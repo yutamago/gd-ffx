@@ -240,9 +240,9 @@ pedestal). Its glowing orb is an effect, not part of the model.
   record the game starts (`Effects.running`, keyed by slot) plays where the
   game plays it, on each target or else on its character, while the game
   keeps the record. A remade effect registered for its id (docs/remake.md)
-  is instanced there; anything else gets a stand-in, a short burst of
-  particles in a colour of its id. The classic effects (the game's effect
-  programs and their models) are not imported yet. Who a character index
+  is instanced there. Otherwise the game's own draws show it (above); only
+  when they are not captured does it get a stand-in, a short burst of
+  particles in a colour of its id. Who a character index
   is: in battle the battler (below), out of battle the actor in that slot.
 - **The screen shake** (`Effects.shake_x/y`, PS2 screen pixels, 448 high)
   moves the camera's offset by the same share of the view at a subject 100
