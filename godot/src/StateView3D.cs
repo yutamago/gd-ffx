@@ -121,10 +121,78 @@ public partial class StateView3D : Node3D
         }
         ClassicMaterials.SetLook(view.Current?.Look);
         UpdateMap(host.Classic, view.Current);
+        UpdateObjects(view);
         UpdateActors(host.Classic, view);
     }
 
     // ---- the map ----------------------------------------------------------------
+
+    // ---- the map's objects ------------------------------------------------------
+
+    /// <summary>The classic map's mesh nodes by object id and mesh index (<c>N_kShape</c>).</summary>
+    private Dictionary<(uint Id, int K), Node3D>? _objectNodes;
+
+    /// <summary>Objects placed by the game this frame (for tests).</summary>
+    public int ObjectsPlaced { get; private set; }
+
+    private static readonly System.Text.RegularExpressions.Regex Fbx = new("FBXASC(\\d{3})");
+    private static readonly System.Text.RegularExpressions.Regex MeshName = new("^(\\d+)_(\\d+)Shape$");
+
+    /// <summary>A node name with FBX's <c>FBXASCnnn</c> escapes decoded.</summary>
+    public static string FbxName(string n) => Fbx.Replace(n, m => ((char)int.Parse(m.Groups[1].Value)).ToString());
+
+    private void IndexObjects()
+    {
+        _objectNodes = new();
+        if (_map == null || _map.Name != "ClassicMap")
+            return;
+        foreach (var n in _map.FindChildren("*", nameof(Node3D), true, false))
+            if (n is Node3D n3 && MeshName.Match(FbxName(n3.Name)) is { Success: true } m)
+                _objectNodes.TryAdd((uint.Parse(m.Groups[1].Value), int.Parse(m.Groups[2].Value)), n3);
+    }
+
+    /// <summary>
+    /// The map's objects where the game has them (API 8's <c>Snapshot.objects</c>): mesh k of
+    /// object N (the node <c>N_kShape</c>) at its live world matrix, interpolated between the
+    /// last two snapshots, shown while the game draws it. Scripts move objects this way, e.g.
+    /// Besaid's birds, which the file places at the origin.
+    /// </summary>
+    private void UpdateObjects(GameStateView view)
+    {
+        ObjectsPlaced = 0;
+        var s = view.Current;
+        if (s == null || _map == null)
+            return;
+        if (_objectNodes == null)
+            IndexObjects();
+        if (_objectNodes!.Count == 0)
+            return;
+        Dictionary<uint, GdFfx.Api.SceneObject>? prev = null;
+        if (view.Previous is { } p && p.World.Level == s.World.Level)
+        {
+            prev = new();
+            foreach (var o in p.Objects)
+                prev.TryAdd(o.Id, o);
+        }
+        foreach (var o in s.Objects)
+            for (int k = 0; k < o.Meshes.Count; k++)
+            {
+                if (!_objectNodes.TryGetValue((o.Id, k), out var node))
+                    continue;
+                var m = o.Meshes[k];
+                var t = GameStateView.CameraTransform(m.World);
+                if (prev != null && prev.TryGetValue(o.Id, out var po) && k < po.Meshes.Count)
+                {
+                    var a = GameStateView.CameraTransform(po.Meshes[k].World);
+                    if (a.Origin.DistanceTo(t.Origin) < GameStateView.WarpDistance * 4)
+                        t = a.InterpolateWith(t, view.Alpha);
+                }
+                if (t.Basis.Determinant() != 0)
+                    node.GlobalTransform = t;
+                node.Visible = m.Drawn;
+                ObjectsPlaced++;
+            }
+    }
 
     private void UpdateMap(ClassicLibrary? lib, Snapshot? s)
     {
@@ -139,6 +207,7 @@ public partial class StateView3D : Node3D
         var map = content.Node;
         _map?.QueueFree();
         _map = map;
+        _objectNodes = null;
         _mapLevel = level;
         if (map == null)
             return;

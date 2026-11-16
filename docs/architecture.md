@@ -165,6 +165,18 @@ remake registry and, from `GameHost.Start`, mounts the mod packs
 classic models posed by the game (docs/importer.md), markers until they
 are imported; `DebugView` is the overlay (F1).
 
+## The map's objects
+
+Scripts move map objects (`graphicObjectSetTranslation`/`Rotation`) and
+show or hide their meshes (the layer mask); the file only has where they
+start. API 8's `Snapshot.objects` gives each object id's meshes with their
+live world matrices and whether they are drawn. `StateView3D` finds the
+classic map's mesh nodes by name (`N_kShape`, FBX's `FBXASCnnn` escapes
+decoded: mesh k of object N) and places each at its matrix (interpolated
+between the last two snapshots), shown while the game draws it. Besaid's
+birds (objects 18..32, at the origin in the file) fly where the game has
+them; the Besaid check counts the meshes placed (45).
+
 ## Effects and the battle HUD (G3)
 
 - **Effects as events** (`EffectView`, under the 3D view): each effect

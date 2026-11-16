@@ -93,6 +93,14 @@ public sealed partial class Snapshot
     /// and the save screens show.
     /// </summary>
     public Save Save = new();
+    /// <summary>
+    /// The map's objects as the scene keeps them now (`PhyreScene`
+    /// `+0x1198`): each id's meshes with their live world matrices and
+    /// whether they are drawn, so objects that scripts move
+    /// (`graphicObjectSetTranslation`/`Rotation`) or show and hide (the
+    /// layer mask) can be drawn where the game draws them.
+    /// </summary>
+    public List<SceneObject> Objects = new();
 
     /// <summary>Reads one from the encoding.</summary>
     public static Snapshot Read(ref StateReader r)
@@ -125,6 +133,12 @@ public sealed partial class Snapshot
         }
         o.Look = Look.Read(ref r);
         o.Save = Save.Read(ref r);
+        {
+            int n = r.U16();
+            o.Objects = new List<SceneObject>(n);
+            for (int i = 0; i < n; i++)
+                o.Objects.Add(SceneObject.Read(ref r));
+        }
         return o;
     }
 }
@@ -1025,6 +1039,68 @@ public sealed partial class MenuWindow
         o.Cursor = r.I16();
         o.Kind = r.U8();
         o.Args = r.Bytes();
+        return o;
+    }
+}
+
+/// <summary>
+/// One map object (a key of the scene's object tree, `PhyreScene`
+/// `+0x1198`: the number in its meshes' names, `N_kShape`).
+/// </summary>
+public sealed partial class SceneObject
+{
+    /// <summary>
+    /// The object id (the tree node's key, `+0xc`).
+    /// </summary>
+    public uint Id;
+    /// <summary>
+    /// Its meshes in the scene's order (the node's list, `+0x10`).
+    /// </summary>
+    public List<SceneMesh> Meshes = new();
+
+    /// <summary>Reads one from the encoding.</summary>
+    public static SceneObject Read(ref StateReader r)
+    {
+        var o = new SceneObject();
+        o.Id = r.U32();
+        {
+            int n = r.U16();
+            o.Meshes = new List<SceneMesh>(n);
+            for (int i = 0; i < n; i++)
+                o.Meshes.Add(SceneMesh.Read(ref r));
+        }
+        return o;
+    }
+}
+
+/// <summary>
+/// One mesh instance of a map object.
+/// </summary>
+public sealed partial class SceneMesh
+{
+    /// <summary>
+    /// Its world matrix (`*(mesh +4)`), 3x4 in the camera's packing
+    /// (`PMatrix4_toWorldMatrix3x4`; render space, the map's x 10
+    /// included).
+    /// </summary>
+    public float[] World = new float[12];
+    /// <summary>
+    /// It is drawn: its draw record (`+0x1c`) points back at it (the
+    /// layer mask `+0xfb14` has its layer, `+0x48`).
+    /// </summary>
+    public bool Drawn;
+    /// <summary>
+    /// Its layer (`+0x48`).
+    /// </summary>
+    public byte Layer;
+
+    /// <summary>Reads one from the encoding.</summary>
+    public static SceneMesh Read(ref StateReader r)
+    {
+        var o = new SceneMesh();
+        o.World = r.Floats(12);
+        o.Drawn = r.Bool();
+        o.Layer = r.U8();
         return o;
     }
 }

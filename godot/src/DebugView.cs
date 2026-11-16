@@ -366,7 +366,10 @@ public sealed class BesaidTest(double timeout, string? shot) : ITest
                 break;
             case Phase.Beach when view != null && view.MapLevel == v.Current!.World.Level && view.Posed.Models > 0
                 && view.Posed.PosedBones > 40:
-                _seen = $"{v.Current.World.Level} shown, {view.Posed.Models} character model(s) posed ({view.Posed.PosedBones} bones)";
+                _seen = $"{v.Current.World.Level} shown, {view.Posed.Models} character model(s) posed ({view.Posed.PosedBones} bones), "
+                    + $"{view.ObjectsPlaced} object mesh(es) placed by the game";
+                if (view.ObjectsPlaced == 0)
+                    return Done(false, $"no map object placed by the game ({v.Current.Objects.Count} in the snapshot)");
                 GD.Print($"ffx selftest: look {SelfTest.LookLine(v.Current.Look)}");
                 GD.Print($"ffx selftest: save {SelfTest.SaveLine(game, v.Current)}");
                 Next(shot != null && DisplayServer.GetName() != "headless" ? Phase.Shot : Phase.Classic);
