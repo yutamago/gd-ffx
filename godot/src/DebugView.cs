@@ -361,6 +361,8 @@ public sealed class BesaidTest(double timeout, string? shot) : ITest
     // an autosave counts only when written by this run (the sandbox keeps earlier runs' files)
     private readonly System.DateTime _began = System.DateTime.UtcNow;
     private Vector3 _last;
+    private int _shots;
+    private const double ShotEvery = 0.1;
 
     public string Note { get; private set; } = "";
 
@@ -394,6 +396,10 @@ public sealed class BesaidTest(double timeout, string? shot) : ITest
                     + $"{view.ObjectsPlaced} object mesh(es) placed by the game";
                 if (view.ObjectsPlaced == 0)
                     return Done(false, $"no map object placed by the game ({v.Current.Objects.Count} in the snapshot)");
+                // the beach's morphing meshes (the shore, the birds: docs/importer.md, "Morphing meshes")
+                _seen += $", {view.Morphed.Meshes} morphing mesh(es) ({view.Morphed.Moved} with a weight)";
+                if (view.Morphed.Meshes == 0)
+                    return Done(false, "no morphing map mesh");
                 // the game's own effects (the save sphere's orb, the shore's strips), unless FFX_NO_VFX
                 if (System.Environment.GetEnvironmentVariable("FFX_NO_VFX") == null)
                 {
@@ -404,16 +410,22 @@ public sealed class BesaidTest(double timeout, string? shot) : ITest
                     var dv = view.GetTree().Root.FindChild("DistortionView", true, false) as DistortionView;
                     _seen += dv?.Shown.On == true ? $", the screen distortion on ({dv.Shown.Vertices} vertices, copy alpha {dv.Shown.Alpha:F2})" : ", no screen distortion";
                 }
+                GD.Print($"ffx selftest: beach {_seen}");
                 GD.Print($"ffx selftest: look {SelfTest.LookLine(v.Current.Look)}");
                 GD.Print($"ffx selftest: save {SelfTest.SaveLine(game, v.Current)}");
                 Next(shot != null && DisplayServer.GetName() != "headless" ? Phase.Shot : Phase.Classic);
                 break;
-            case Phase.Shot when _phaseTime > 1.0:
+            case Phase.Shot when _phaseTime > 1.0 + _shots * ShotEvery:
             {
+                // --shots=N: N pictures ShotEvery apart (the second as NAME-1.png, ...)
                 var img = (Engine.GetMainLoop() as SceneTree)!.Root.GetViewport().GetTexture().GetImage();
-                img.SavePng(shot!);
-                GD.Print($"ffx selftest: picture {shot}");
-                Next(Phase.Classic);
+                var file = _shots == 0 ? shot! : shot![..^4] + $"-{_shots}.png";
+                if (v.Current is { } cur)
+                    GD.Print("ffx selftest: morph values " + string.Join(" ", cur.Objects.Where(o => o.Dobj && o.Morph != 0).Select(o => $"{o.Id}:{o.Morph:F2}@{(o.Meshes.Count > 0 ? GameStateView.CameraTransform(o.Meshes[0].World).Origin : Vector3.Zero)}")));
+                img.SavePng(file);
+                GD.Print($"ffx selftest: picture {file}");
+                if (++_shots >= (int.TryParse(GameSettings.Arg("shots"), out var n) ? System.Math.Max(1, n) : 1))
+                    Next(Phase.Classic);
                 break;
             }
             case Phase.Classic:
@@ -534,7 +546,7 @@ public sealed class MapTest(double timeout, string? shot) : ITest
             GD.Print($"ffx selftest: picture {shot}");
         }
         return Done(true, $"{(c.World.Battle ? "battle" : "field")} {c.World.Level} (map {c.World.Map:x}): {view.Posed.Models} models "
-            + $"({view.Posed.PosedBones} bones), {view.ObjectsPlaced} objects, {fx?.Shown.Draws ?? 0} effect draws "
+            + $"({view.Posed.PosedBones} bones), {view.ObjectsPlaced} objects, {view.Morphed.Meshes} morphing ({view.Morphed.Moved} with a weight), {fx?.Shown.Draws ?? 0} effect draws "
             + $"({fx?.Shown.Textured ?? 0} textured), distortion {(dv?.Shown.On == true ? "on" : "off")}{Layers(view)}, at {_total:F0} s");
     }
 

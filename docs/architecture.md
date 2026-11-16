@@ -272,6 +272,24 @@ between the last two snapshots), shown while the game draws it. Besaid's
 birds (objects 18..32, at the origin in the file) fly where the game has
 them; the Besaid check counts the meshes placed (45).
 
+Some map meshes morph (docs/importer.md, "Morphing meshes"): the import
+gives a mesh its instance's `m_objID`, `m_animCt`, `m_mimeCt` and
+`m_dObjFlag` and a position morph its morph target. `StateView3D` finds the
+meshes the game's morph manager registers (`MorphManager_registerClusterMorphs`:
+`m_animCt` above 0; `m_mimeCt` 1 with a target, 4 or 3 with a material of
+the weight, else `m_dObjFlag` `0x400` with a material of the UV offset)
+and sets each from its object's display-object value (`SceneObject.morph`,
+`morph_v`, interpolated; 0 for an object that is not a display object), as
+`MorphManager_setWeights` does by `m_objID`: the blend shape (weights `1 -
+w`, `w` are base plus `w` times the target), or the map shader's instance
+uniforms `ffx_morph` (`UV_MORPH`, `VERTEX_COLOR_MORPH`) and
+`ffx_uv_offset` (`UV_SCROLL`; ClassicMaterials). Besaid's birds flap their
+wings (the morph value runs 0..1), its shore strips (objects 0..5, 13) and
+the bsil06 ground (8 meshes) move. The checks print the morphing meshes;
+`--no-morph` keeps every mesh in its stored pose, `--look-at-object=N`
+points the camera at object N (Besaid's birds fly far above the save 7
+view: `FFX_SHOT_ARGS="--shots=4 --look-at-object=19" tools/compare-shot.sh`).
+
 Character models made of rigid parts without a skin (the save sphere's
 base `f001`: three meshes `MeshNode0..2`, five `SkeletonNode`s, no skin in
 the import) are placed by the game per mesh
