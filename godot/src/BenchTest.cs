@@ -332,7 +332,7 @@ public sealed class BenchTest : ITest
             + $"LOH threshold {AppContext.GetData("GCLOHThreshold") ?? AppContext.GetData("System.GC.LOHThreshold")}");
         var pauses = _pauses.OrderBy(x => x).ToList();
         Print($"gc pauses: {pauses.Count} seen, mean {(pauses.Count > 0 ? pauses.Average() : 0):F2} ms, max {(pauses.Count > 0 ? pauses[^1] : 0):F2} ms, "
-            + $"over 4 ms {pauses.Count(x => x > 4)}; {(GCSettings.IsServerGC ? "server" : "workstation")} GC, latency {GCSettings.LatencyMode}, "
+            + $"over 4 ms {pauses.Count(x => x > 4)}; collected in lost frames (loads) {GameHost.LostFrameCollections}; {(GCSettings.IsServerGC ? "server" : "workstation")} GC, latency {GCSettings.LatencyMode}, "
             + $"concurrent {AppContext.GetData("System.GC.Concurrent") ?? "(default)"}, .NET {System.Environment.Version}, "
             + $"{(Debugger.IsAttached ? "debugger, " : "")}{(IsDebugBuild() ? "Debug" : "Release")} build, "
             + $"Godot objects {Performance.GetMonitor(Performance.Monitor.ObjectCount)}, nodes {Performance.GetMonitor(Performance.Monitor.ObjectNodeCount)}, "

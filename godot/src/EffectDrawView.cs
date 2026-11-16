@@ -586,11 +586,12 @@ void fragment() {
             if (Material(tex, look) is not { } mat)
                 continue; // its texture is still being read
             // straight from the kept arrays into Godot's packed arrays (no array of the exact size made)
-            _arrays[(int)Mesh.ArrayType.Vertex] = surf.Positions.AsSpan(0, surf.VertexCount);
-            _arrays[(int)Mesh.ArrayType.Color] = surf.Colours.AsSpan(0, surf.VertexCount);
-            _arrays[(int)Mesh.ArrayType.TexUV] = surf.Uvs.AsSpan(0, surf.VertexCount);
-            _arrays[(int)Mesh.ArrayType.Index] = surf.Indices.AsSpan(0, surf.IndexCount);
-            mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, _arrays);
+            // (the variants disposed once copied, no blend shapes or LODs made: Variants)
+            Variants.Set(_arrays, (int)Mesh.ArrayType.Vertex, surf.Positions.AsSpan(0, surf.VertexCount));
+            Variants.Set(_arrays, (int)Mesh.ArrayType.Color, surf.Colours.AsSpan(0, surf.VertexCount));
+            Variants.Set(_arrays, (int)Mesh.ArrayType.TexUV, surf.Uvs.AsSpan(0, surf.VertexCount));
+            Variants.Set(_arrays, (int)Mesh.ArrayType.Index, surf.Indices.AsSpan(0, surf.IndexCount));
+            Variants.AddSurface(mesh, Mesh.PrimitiveType.Triangles, _arrays);
             mesh.SurfaceSetMaterial(mesh.GetSurfaceCount() - 1, mat);
             if (tex == FrameBufferName || _textures.TryGetValue(tex, out var t) && t != null)
             {

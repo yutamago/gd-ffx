@@ -339,8 +339,9 @@ void fragment() {
         Vector3 Dir(int i) => i < l.Lights.Count ? Turn(l.Lights[i]) : Vector3.Zero;
         Vector3 Col(int i) => i < l.Lights.Count ? l.Lights[i].Colour * l.Lights[i].Level : Vector3.Zero;
         // Basis(x, y, z) takes columns
-        RenderingServer.GlobalShaderParameterSet(G_ffx_light_dirs, new Basis(Dir(0), Dir(1), Dir(2)));
-        RenderingServer.GlobalShaderParameterSet(G_ffx_light_colours, new Basis(Col(0), Col(1), Col(2)));
+        // (a Basis variant holds native memory: disposed at once, not left to a finalizer)
+        Variants.SetGlobal(G_ffx_light_dirs, new Basis(Dir(0), Dir(1), Dir(2)));
+        Variants.SetGlobal(G_ffx_light_colours, new Basis(Col(0), Col(1), Col(2)));
         RenderingServer.GlobalShaderParameterSet(G_ffx_light_sign, LightSign);
     }
 

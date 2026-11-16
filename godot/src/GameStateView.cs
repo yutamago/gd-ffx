@@ -65,23 +65,23 @@ public sealed class GameStateView
         if (update != _update)
         {
             // held by the extension until its next call: copied into this side's kept buffers
-            var d = game.SnapshotsHeld();
+            using var d = game.SnapshotsHeld();
             _arrived = System.Diagnostics.Stopwatch.GetTimestamp()
-                - (long)(d["age"].AsDouble() * System.Diagnostics.Stopwatch.Frequency);
-            _interval = Math.Max(d["interval"].AsDouble(), 1e-3);
+                - (long)(Variants.Get(d, "age").AsDouble() * System.Diagnostics.Stopwatch.Frequency);
+            _interval = Math.Max(Variants.Get(d, "interval").AsDouble(), 1e-3);
             try
             {
-                int curLen = Held.CopyInto(d["current_address"].AsInt64(), d["current_len"].AsInt64(), ref _curBytes);
+                int curLen = Held.CopyInto(Variants.Get(d, "current_address").AsInt64(), Variants.Get(d, "current_len").AsInt64(), ref _curBytes);
                 var (old, oldPrev) = (Current, Previous);
                 // decoded into a spare snapshot (Spare): never one this frame's views saw last
                 Current = curLen > 0 ? StateApi.Decode(_curBytes.AsSpan(0, curLen), Spare()) : null;
                 // the previous one is usually the last current, already decoded (not copied again)
-                var prevUpdate = d["previous_update"].AsInt64();
+                var prevUpdate = Variants.Get(d, "previous_update").AsInt64();
                 if (old != null && prevUpdate == old.Update)
                     Previous = old;
                 else
                 {
-                    int prevLen = Held.CopyInto(d["previous_address"].AsInt64(), d["previous_len"].AsInt64(), ref _prevBytes);
+                    int prevLen = Held.CopyInto(Variants.Get(d, "previous_address").AsInt64(), Variants.Get(d, "previous_len").AsInt64(), ref _prevBytes);
                     Previous = prevLen > 0 ? StateApi.Decode(_prevBytes.AsSpan(0, prevLen), Spare()) : Current;
                 }
                 Release(old);
