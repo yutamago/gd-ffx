@@ -236,7 +236,7 @@ public sealed class SelfTest(double timeout) : ITest
     public static string LookLine(GdFfx.Api.Look l)
     {
         var lights = string.Join("; ", l.Lights.ConvertAll(x => $"dir {x.Direction} colour {x.Colour} level {x.Level:F2} pitch {x.Pitch} yaw {x.Yaw}"));
-        return $"valid {l.Valid} scale {l.ColourScale} ambient {l.Ambient} fog {l.FogColour} {l.FogNear}..{l.FogFar} curve {l.FogCurve} limit {l.FogLimit} "
+        return $"valid {l.Valid} glow {l.GlowNone}..{l.GlowFull} gain {l.GlowGain} spread {l.GlowSpread} scale {l.ColourScale} ambient {l.Ambient} fog {l.FogColour} {l.FogNear}..{l.FogFar} curve {l.FogCurve} limit {l.FogLimit} "
             + $"chr ambient {l.CharacterAmbient} lights [{lights}]";
     }
 

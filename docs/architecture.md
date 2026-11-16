@@ -183,6 +183,12 @@ one, `reflection3`), its six faces from the archive (`FfxGame.classic_texture`,
 ffx-phyre's `face_png`); without one, the cube's mean colour stands in. The
 D3D cube's z is mirrored into Godot's (`cube_axes`).
 
+The glow pass: the map's glow values (API 9's `Look.glow_*`: Besaid none
+below 0.5, full at 1, gain 0.11, spread 0.34) drive Godot's environment glow
+(additive, three blurred levels, the threshold at `NoGlowThreshold`;
+`--no-glow` turns it off). On the save sphere's orb it brings the patch
+closer to the original (29.9 -> 24.0).
+
 The screen is cleared to the map's background colour (`Look.background`,
 the `GlobalCamera`'s `m_bgColor`; Besaid 0.306, 0.357, 0.537).
 
