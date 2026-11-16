@@ -68,6 +68,10 @@ pub enum TextureAsk {
     Runtime(String),
 }
 
+/// A texture read in the background: the caller's id and the pixels
+/// (`None`: not in the archive, or no such face).
+pub type TextureDone = (i64, Option<Pixels>);
+
 /// The importer, its cache and the imports under way.
 #[derive(Default)]
 pub struct Classic {
@@ -75,7 +79,7 @@ pub struct Classic {
     asked: Mutex<HashSet<(Kind, String)>>,
     done: Arc<Mutex<Vec<Done>>>,
     /// Textures read in the background, by the caller's id.
-    textures: Arc<Mutex<Vec<(i64, Option<Pixels>)>>>,
+    textures: Arc<Mutex<Vec<TextureDone>>>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -185,7 +189,7 @@ impl Classic {
     /// The textures read since the last call, by id (`None`: not in the
     /// archive, or no such face).
     #[must_use]
-    pub fn textures_finished(&self) -> Vec<(i64, Option<Pixels>)> {
+    pub fn textures_finished(&self) -> Vec<TextureDone> {
         std::mem::take(&mut *lock(&self.textures))
     }
 

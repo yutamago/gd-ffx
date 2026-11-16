@@ -245,7 +245,10 @@ fn poll_pads(bridge: &Bridge) {
 fn texture_ask(kind: &GString, name: &GString, face: i64) -> Option<crate::classic::TextureAsk> {
     use crate::classic::TextureAsk;
     match kind.to_string().as_str() {
-        "face" => Some(TextureAsk::Face(name.to_string(), usize::try_from(face).ok()?)),
+        "face" => Some(TextureAsk::Face(
+            name.to_string(),
+            usize::try_from(face).ok()?,
+        )),
         "runtime" => Some(TextureAsk::Runtime(name.to_string())),
         _ => None,
     }
@@ -253,16 +256,16 @@ fn texture_ask(kind: &GString, name: &GString, face: i64) -> Option<crate::class
 
 /// A texture's pixels as Godot's dictionary (`texture_request`).
 fn pixels_dict(id: i64, px: Option<ffx_import::Pixels>) -> VarDictionary {
-    match px {
-        Some(p) => vdict! {
-            "id" => id,
-            "found" => true,
-            "width" => i64::from(p.width),
-            "height" => i64::from(p.height),
-            "faces" => i64::try_from(p.faces).unwrap_or(1),
-            "rgba" => &PackedByteArray::from(p.rgba.as_slice()),
-        },
-        None => vdict! { "id" => id, "found" => false },
+    let Some(p) = px else {
+        return vdict! { "id" => id, "found" => false };
+    };
+    vdict! {
+        "id" => id,
+        "found" => true,
+        "width" => i64::from(p.width),
+        "height" => i64::from(p.height),
+        "faces" => i64::try_from(p.faces).unwrap_or(1),
+        "rgba" => &PackedByteArray::from(p.rgba.as_slice()),
     }
 }
 
@@ -550,7 +553,9 @@ impl FfxGame {
     fn runtime_texture(&self, name: GString) -> PackedByteArray {
         classic()
             .runtime_texture_png(&name.to_string())
-            .map_or_else(PackedByteArray::new, |b| PackedByteArray::from(b.as_slice()))
+            .map_or_else(PackedByteArray::new, |b| {
+                PackedByteArray::from(b.as_slice())
+            })
     }
 
     /// A texture's pixels: `kind` `face` (a material texture by its path,
