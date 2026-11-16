@@ -75,6 +75,8 @@ vec3 ffx_fog_apply(vec3 c, float depth) {
     // TEXCOORD0); VERTEX_COLOR_MORPH (COLOR_MORPH here), COLOR0 + VertexColorMorphWeight x (COLOR1 -
     // COLOR0), COLOR1 imported as CUSTOM0; UV_SCROLL, TEXCOORD0 + (UvOffsetX, UvOffsetY), v
     // negated for the export's flip.
+    // TEXCOORD0 reads the UV set the instance binds (the import's ffx_texcoords; UV0_SET1: glTF
+    // TEXCOORD_1, Godot's UV2): bsil06's ground keeps its UVs in set 1, set 0 all zero.
     private const string MapBody = @"
 #if defined(UV_MORPH) || defined(COLOR_MORPH)
 instance uniform float ffx_morph = 0.0;
@@ -86,10 +88,14 @@ uniform float uv_morph_set = 1.0;
 #ifdef UV_SCROLL
 instance uniform vec2 ffx_uv_offset = vec2(0.0);
 #endif
-#if defined(UV_MORPH) || defined(COLOR_MORPH) || defined(UV_SCROLL)
+#if defined(UV_MORPH) || defined(COLOR_MORPH) || defined(UV_SCROLL) || defined(UV0_SET1)
 void vertex() {
+	vec2 uv_set0 = UV;
+#ifdef UV0_SET1
+	UV = UV2;
+#endif
 #ifdef UV_MORPH
-	UV += (mix(UV, UV2, uv_morph_set) - UV) * ffx_morph;
+	UV += (mix(uv_set0, UV2, uv_morph_set) - UV) * ffx_morph;
 #endif
 #ifdef COLOR_MORPH
 	COLOR += (CUSTOM0 - COLOR) * ffx_morph;
@@ -140,14 +146,19 @@ void fragment() {
     // (the import's ffx_texcoords: 0 UV, 1 UV2), plus its ScrollSpeed x GlobalTime (v negated
     // for the export's v flip). The material names no cube map (bound outside it): the map's
     // reflection cube map; without one, env_colour stands in for it.
-    // The refraction variant (REFRACTION_ENABLED, drawn after the scene in postTransparent)
-    // mixes the toned colour by its alpha over the colour buffer read at an offset from the
-    // bent normal (x -0.025, y 0.0125 x -dot(N, V) of its view-space direction, / max(view
-    // depth, 10), clamped to 0.05; only where the depth behind both test points is far). Godot's
-    // 3D screen texture is copied before the transparent pass, while the game's buffer holds the
-    // transparent draws too (bsil00's shallow-water layer under the beach sea): the mix over that
-    // copy wiped them out. So it blends over the frame as it is (the game's result at offset 0),
-    // after every other transparent part of the map, without the offset.
+    // The refraction variant (REFRACTION_ENABLED, drawn after the scene in postTransparent; the
+    // bsil00 variant's pixel program) writes mix(the colour buffer at an offset, the toned colour,
+    // its alpha). The offset: n' = normalize(8 N.x, N.y, 8 N.z) of the bent normal through
+    // WorldView (the instance's world too, as the game does), (-0.0125 n'x, 0.00625 (-dot(N, V))
+    // n'y) / max(view depth, 10), clamped to +-0.05, its y faded by clamp((clip y + 0.9) 10);
+    // the buffer read at (u + x, 1 - (v + y)) of the y-up screen uv. Its depth test reads the w
+    // of the depth buffer (R24G8: 1), so it always passes. Godot's 3D screen texture S is a copy
+    // taken before the transparent pass, while the game's buffer F holds the transparent draws
+    // too (bsil00's shallow-water layer under the beach sea): a mix over S would wipe them out.
+    // So the frame keeps them at offset 0 and gets the shift of what is behind them, D = S(at)
+    // - S(here): a x water + (1 - a) x (F + D), in two passes so the signed D survives an 8-bit
+    // buffer: this material (premultiplied) adds a x water + (1 - a) max(D, 0), its next pass
+    // (REFRACTION_SUB, subtract, drawn after it: PostPriority + 1) takes (1 - a) max(-D, 0).
     private const string WaterBody = @"
 uniform vec4 material_colour = vec4(1.0);
 uniform vec3 specular_colour = vec3(0.65);
@@ -168,6 +179,9 @@ uniform vec2 scroll1 = vec2(0.0);
 uniform vec2 scroll2 = vec2(0.0);
 // the cube map's axes against render space (D3D's left-handed faces in Godot's cube)
 uniform vec3 cube_axes = vec3(1.0, 1.0, -1.0);
+#ifdef REFRACTION
+uniform sampler2D ffx_screen : hint_screen_texture, filter_linear;
+#endif
 vec2 ffx_scroll(vec2 s, float t) { return vec2(fract(s.x * t), -fract(s.y * t)); }
 void fragment() {
 	vec3 N = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
@@ -205,8 +219,25 @@ void fragment() {
 #endif
 	c = clamp(c * vec4(ffx_colour_scale, 1.0), 0.0, 1.0);
 	vec3 o = ffx_out(ffx_curve(c.rgb));
+#ifdef REFRACTION
+	vec3 Pw = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	vec3 V = normalize(CAMERA_POSITION_WORLD - Pw);
+	vec3 nf = normalize(vec3(8.0 * Nw.x, Nw.y, 8.0 * Nw.z));
+	vec2 nv = (VIEW_MATRIX * (MODEL_MATRIX * vec4(nf, 0.0))).xy;
+	vec2 off = clamp(vec2(-0.0125 * nv.x, 0.00625 * -dot(Nw, V) * nv.y) / max(-VERTEX.z, 10.0), -0.05, 0.05);
+	off.y *= clamp((abs(PROJECTION_MATRIX[1][1]) * VERTEX.y + 0.9) * 10.0, 0.0, 1.0);
+	vec3 d = texture(ffx_screen, SCREEN_UV + vec2(off.x, -off.y)).rgb - texture(ffx_screen, SCREEN_UV).rgb;
+#ifdef REFRACTION_SUB
+	ALBEDO = (1.0 - c.a) * max(-d, vec3(0.0));
+	ALPHA = 1.0;
+#else
+	ALBEDO = c.a * o + (1.0 - c.a) * max(d, vec3(0.0));
+	ALPHA = c.a;
+#endif
+#else
 	ALBEDO = o;
 	ALPHA = c.a;
+#endif
 }
 ";
 
@@ -585,6 +616,7 @@ void fragment() {
             var colour = Floats(p, "MaterialColour", [1, 1, 1, 1]);
             var threshold = Floats(p, "AlphaThreshold", [0])[0];
             ShaderMaterial s;
+            Shader? refractionSub = null;
             if (effect.Contains("prerendered"))
             {
                 s = new ShaderMaterial { Shader = LayerShader(extras["ffx_effect"].AsString()) };
@@ -620,8 +652,16 @@ void fragment() {
                 if (water)
                 {
                     if (Switch(extras, "TEXTURE_ENABLED")) defines.Add("TEXTURE");
-                    if (Switch(extras, "REFRACTION_ENABLED")) last.Add(i);
+                    bool refraction = Switch(extras, "REFRACTION_ENABLED");
+                    if (refraction)
+                    {
+                        last.Add(i);
+                        defines.Add("REFRACTION");
+                        modes = modes.Replace("blend_mix", "blend_premul_alpha");
+                    }
                     s = new ShaderMaterial { Shader = MapShader(modes, WaterBody, defines) };
+                    if (refraction)
+                        refractionSub = MapShader(modes.Replace("blend_premul_alpha", "blend_sub"), WaterBody, [.. defines, "REFRACTION_SUB"]);
                     WaterTextures(s, extras, p, texDir);
                     var sc = Floats(p, "SpecularColor", [0.65f, 0.65f, 0.65f]);
                     s.SetShaderParameter("specular_colour", new Vector3(sc[0], sc[1], sc[2]));
@@ -642,6 +682,7 @@ void fragment() {
                     if (Switch(extras, "UV_MORPH")) defines.Add("UV_MORPH");
                     if (Switch(extras, "VERTEX_COLOR_MORPH") && InputSet(extras, "ffx_colors", "COLOR1", 0) > 0) defines.Add("COLOR_MORPH");
                     if (Switch(extras, "UV_SCROLL")) defines.Add("UV_SCROLL");
+                    if (InputSet(extras, "ffx_texcoords", "TEXCOORD0", 0) == 1) defines.Add("UV0_SET1");
                     // the sampler's address modes (the import's ffx_wrap): Godot has one for both axes
                     if (extras.TryGetValue("ffx_wrap", out var wv) && wv.AsGodotDictionary().TryGetValue("TextureSampler", out var tw)
                         && tw.AsGodotArray().Any(x => x.AsString() == "CLAMP" || x.AsString() == "BORDER"))
@@ -665,6 +706,13 @@ void fragment() {
             }
             s.SetShaderParameter("tex", std.AlbedoTexture);
             s.SetShaderParameter("material_colour", ToColor(colour));
+            // the refraction's second pass: the same parameters, its own shader
+            if (refractionSub != null && s.Duplicate() is ShaderMaterial sub)
+            {
+                sub.Shader = refractionSub;
+                sub.RenderPriority = PostPriority + 1;
+                s.NextPass = sub;
+            }
             replace[godotMats[i]] = s;
         }
         Swap(root, replace);
@@ -713,12 +761,12 @@ void fragment() {
         var post = Of(last);
         foreach (var (mi, order) in placed)
         {
-            int sorted = Math.Clamp(1 + keys.IndexOf(Key(order)), 1, 126);
+            int sorted = Math.Clamp(1 + keys.IndexOf(Key(order)), 1, PostPriority - 1);
             for (int s = 0; s < mi.Mesh.GetSurfaceCount(); s++)
             {
                 if (mi.GetSurfaceOverrideMaterial(s) is not { } m || !blended.Contains(m))
                     continue;
-                int priority = post.Contains(m) ? 127 : sorted;
+                int priority = post.Contains(m) ? PostPriority : sorted;
                 if (!copies.TryGetValue((m, priority), out var c))
                 {
                     c = (Material)m.Duplicate();
@@ -729,6 +777,13 @@ void fragment() {
             }
         }
     }
+
+    /// <summary>
+    /// The render priority of the parts the game draws after the scene (postTransparent: the
+    /// refraction water; its second pass one more); only the effects come later
+    /// (<see cref="EffectDrawView.Priority"/>).
+    /// </summary>
+    public const int PostPriority = EffectDrawView.Priority - 2;
 
     /// <summary>Face 0 of cube maps already read by <see cref="MapCube"/>.</summary>
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, TextureFetcher.Pixels> FaceZero = new();

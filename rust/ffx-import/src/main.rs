@@ -159,21 +159,35 @@ fn model(imp: &ffx_import::Importer, path: &str) -> bool {
                     hi[k] = hi[k].max(p[k]);
                 }
             }
-            let (mut ulo, mut uhi) = ([f32::MAX; 2], [f32::MIN; 2]);
-            for uv in &seg.uvs {
-                for k in 0..2 {
-                    ulo[k] = ulo[k].min(uv[k]);
-                    uhi[k] = uhi[k].max(uv[k]);
+            let range = |uvs: &[[f32; 2]]| {
+                let (mut lo, mut hi) = ([f32::MAX; 2], [f32::MIN; 2]);
+                for uv in uvs {
+                    for k in 0..2 {
+                        lo[k] = lo[k].min(uv[k]);
+                        hi[k] = hi[k].max(uv[k]);
+                    }
                 }
-            }
+                (lo, hi)
+            };
+            let (ulo, uhi) = range(&seg.uvs);
+            // the other UV streams (sets as the segment names them: `uv_sets`)
+            let extra: Vec<String> = seg
+                .extra_uvs
+                .iter()
+                .map(|u| {
+                    let (lo, hi) = range(u);
+                    format!("{lo:?}..{hi:?}")
+                })
+                .collect();
             let mut colours: Vec<[u8; 4]> = seg.colors.clone();
             colours.sort_unstable();
             colours.dedup();
             colours.truncate(4);
             println!(
-                "  segment {s} material {mat:?} verts {} tris {} pos {lo:?}..{hi:?} uv {ulo:?}..{uhi:?} colours {colours:?}",
+                "  segment {s} material {mat:?} verts {} tris {} pos {lo:?}..{hi:?} uv {ulo:?}..{uhi:?} more uv {extra:?} uv sets {:?} colours {colours:?}",
                 seg.positions.len(),
                 seg.indices.len() / 3,
+                seg.uv_sets,
             );
         }
     }

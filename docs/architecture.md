@@ -194,7 +194,10 @@ for a blended pass that writes depth, as nearly all blended map parts do;
 per combination of modes and defines. The shader body is the map shader's
 math as its bytecode has it (`ffx-import effect --wgsl`):
 
-- texture x `MaterialColour` x vertex colour (all four), the fog x `fgEff`
+- texture x `MaterialColour` x vertex colour (all four), the texture at
+  the UV set `TEXCOORD0` reads (the import's `ffx_texcoords`: bsil06's
+  ground, flat patches of single texels before, keeps its UVs in glTF
+  `TEXCOORD_1`), the fog x `fgEff`
   when the pixel program reads `fgEff`, x the colour scale, the tone curve.
   `IGNORE_FOG` variants still fog in their programs; their materials have
   `fgEff` 0 (`lchb00`, `klyt00`);
@@ -223,7 +226,8 @@ such as sky domes, which the game moves into that class at map init; then
 `ro % 1000`, then `(ro % 100000) / 1000`), then far to near, after the
 characters' transparent parts. Each distinct order gets a priority from 1
 up (characters keep 0), each (material, priority) its own copy of the
-material; the refraction water (drawn after the scene) gets 127.
+material; the refraction water (drawn after the scene) gets 125, its second
+pass 126, and the game's effects, drawn after everything, 127 (below).
 
 ## Water
 
@@ -245,15 +249,29 @@ water writes depth; 121 parts are `MASK_DEPTH`). `phyrewaveshader` (4
 parts) is drawn with the water shader.
 
 The refraction variant (`REFRACTION_ENABLED`, the beach sea; drawn after
-the scene, `postTransparent`) mixes the toned colour by its alpha over the
-colour buffer read at an offset from the bent normal (x -0.025, y 0.0125 x
--dot(N, V) of its view-space direction, / max(view depth, 10), clamped to
-0.05, only where the depth behind is far). Godot's 3D screen texture is a
-copy taken before the transparent pass; mixing over it wiped out the
-transparent parts the game's buffer holds (Besaid's shallow-water layer
-under the sea darkened it). So it blends over the frame as it is (the game's
-result at offset 0), after every other transparent map part; the small
-distortion is left out.
+the scene, `postTransparent`; bsil00's variant `C1C2...`) writes
+mix(colour buffer at an offset, toned colour, alpha). The offset, from its
+pixel program: n' = normalize(8 N.x, N.y, 8 N.z) of the bent normal, taken
+through `WorldView` (the instance's world, scale 10, included, as the game
+does it), (-0.0125 n'x, 0.00625 (-dot(N, V)) n'y) / max(view depth, 10),
+clamped to ±0.05, the y part faded by clamp((clip y + 0.9) x 10); the
+buffer is read at (u + x, 1 - (v + y)) of the y-up screen uv. Its depth
+check (two reads at 2 and 1.2 times the offset, the shift kept only when
+their product is above 0.95) reads the `w` of the depth buffer, which for a
+D3D11 depth view (R24G8) is 1: it always passes, and gd-ffx leaves it out.
+
+Godot's 3D screen texture S is a copy taken before the transparent pass,
+while the game's buffer F holds the transparent draws too (Besaid's
+shallow-water layer under the sea): a mix over S wiped them out. So the
+water keeps the frame as it is at offset 0 and adds the shift of what is
+behind: a x water + (1 - a) x (F + S(offset) - S(here)). The difference is
+signed, so it takes two passes (an 8-bit buffer clamps what a pass writes):
+the material (premultiplied blend) adds a x water + (1 - a) max(D, 0), its
+next pass (subtract, `REFRACTION_SUB`) takes (1 - a) max(-D, 0). The
+transparent layers between (the shallow water) are not shifted, which the
+game does; at Besaid the shift is a few pixels and the picture scores the
+same (sea patch 22.0 without, 21.9 and 24.1 with: the waves' phase moves it
+by about that much).
 
 The material names no cube map (its sampler is bound outside it): the
 map's own `reflection*` cube map is used (Besaid has one, `reflection3`), its
@@ -436,8 +454,18 @@ the game gets from `ViewProjection2` (traced only as the main camera's).
   (`FfxGame.effect_draws_held` and `effect_draws_address`, the `FXDR`
   encoding held by the node until its next call, copied into a buffer C#
   keeps, as the snapshots are), which builds one mesh a
-  frame, a surface per (texture, blend): unshaded, two-sided, no depth
-  write, the vertex colour doubled (0.5 is the PS2's 0x80). Blend from the
+  frame, a part (child `MeshInstance3D`) per run of draws with the same
+  texture and blend: unshaded, two-sided, no depth write, the vertex colour
+  doubled (0.5 is the PS2's 0x80). The game draws them after the whole
+  scene, so they take render priority 127, above every blended map part,
+  and keep the game's order among themselves by their sorting offset
+  (Godot sorts the transparent pass by priority, then far to near, and
+  does not keep the order of equal keys). With priority 0 the map's blended
+  parts were drawn over the save sphere's orb wherever they lay behind it:
+  it looked cut flat and behind the ring; it is round and inside the ring
+  now. The subtract family (0x18) writes premultiplied colour in both
+  techniques, which removed a dark wedge on the shallow water (Besaid's
+  sea patch 30.9 -> 22.0, the picture 14.2 -> 13.9). Blend from the
   flags: bit 0x10 subtracts, else bit 0x2 adds, else alpha (from the
   examples 0x18, 0xa/0x2, 0x8/0x9). Textures by the name the game holds
   (`FfxGame.runtime_texture`). At Besaid: 30 draws, 28 textured, 6

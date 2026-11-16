@@ -52,7 +52,13 @@ variant (`PMaterial.m_effectVariant`, the cluster
 - `ffx_texcoords`: which glTF `TEXCOORD_n` each `TEXCOORD` input reads (the
   instance's segment context binds the water's `TEXCOORD4/6/7` to stream
   sets: `PMeshInstanceSegmentStreamBinding`), from the first primitive
-  drawn with the material;
+  drawn with the material. A material's other primitives can bind other
+  streams or hold their streams in another order (bsil06's ground: one
+  instance has UV sets 0 and 1 and binds set 1, its set 0 all zero; another
+  has set 1 alone; a third set 0 alone): their `TEXCOORD_n` attributes are
+  re-pointed so the material's numbers hold for each (the accessors are
+  shared). The map shader reads `TEXCOORD0` from the set this names
+  (docs/architecture.md, "Map materials");
 - `ffx_wrap`: each texture sampler's address modes (u, v) from the
   material's sampler state (`WRAP`, `CLAMP`, `MIRROR`, `BORDER`).
 
