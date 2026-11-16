@@ -178,8 +178,11 @@ it kept for their finalizers, the GC handles; the allocations sampled by
 type; and a census of Godot's disposables (read from Godot's
 `DisposablesTracker` by reflection) made by each probed section over 100
 frames of the window (`--bench-census-all`: every frame after those, all
-threads). The trace allocates itself: its run's allocation figures are
-higher.
+threads); and for each background load (a map, a character, a map's 2D
+layers: `gc load:` lines) the Godot disposables and object wrappers it left
+registered when it ended (all finalizable; those a collection during the
+load already found dead are not counted). The trace allocates itself: its
+run's allocation figures are higher.
 
 The frame rate is not tied to the game's 30 updates a second: Godot draws as
 fast as vsync lets it (the project sets no `max_fps`; physics is unused), and
@@ -327,7 +330,8 @@ with them. The census (`--bench-gc-trace`) named the makers:
   `AddSurfaceFromArrays` binding makes when they are left out), the light
   `Basis` globals, the snapshot pair's dictionary and its string keys;
 - a load: the importers' walks over the scene (`GetChildren`: a new array a
-  node), the glTF extras read by string keys and meta names.
+  node), the glTF extras read through Godot's dictionaries (now
+  `GltfExtras`, below).
 
 `Variants` (godot/src/Variants.cs) holds the remedies: keys and names made
 once (`Variants.Key`, `Variants.Name`), the empty blend shapes and LODs
@@ -395,15 +399,63 @@ The frames with a collection: before 10 to 26 ms on average, up to 38 ms;
 after 0.6 to 2 ms on average, at most 3 ms (the walk's "frames with one"
 include the lost-frame collections in the next map's 360 to 500 ms load).
 
-Open: a background load while playing (the next map's or characters'
-scenes prepared on worker threads) still makes finalizable garbage:
-`ClassicMaterials` reads the glTF JSON (materials, extras, passes) through
-Godot dictionaries and arrays, a new `Variant` with a finalizer for every
-value that is not a plain number. In one of two Release walks three young
-collections during it found 20,000 to 27,000 and took 8.8 to 21 ms. The
-remedy is reading that JSON with System.Text.Json (or once into C#
-records) instead of Godot's dictionaries. The battle's HUD and menu
-allocate 2.4 KiB a frame (no finalizable objects: 0.4 to 1 ms
+**Background loads.** The next map's or characters' scenes are prepared on
+worker threads while playing. `ClassicMaterials` used to read the glTF JSON
+(materials, extras, passes) through `GltfState.Json`, and `StateView3D` and
+the transparent sort each mesh's extras through its `extras` metadata: a
+Godot dictionary, array or string variant for every value that is not a
+plain number, each finalizable. In one of two Release walks three young
+collections during such a load found 20,000 to 27,000 and took 8.8 to
+21 ms. Now `GltfExtras` reads the .glb's JSON chunk once with
+System.Text.Json into plain C# objects (`MaterialExtras`, `PassStates`,
+`MeshExtras`); `ClassicLibrary.Load` sets each mesh's fields (object id,
+instance, morph and sort fields) on the Godot mesh as integer metadata,
+plain variants (`MeshExtras.Of` reads them back; a remade model's mesh, not
+loaded there, still by its `extras` dictionary, the variants disposed); the
+materials' shader parameters are set by names made once
+(`Variants.Name`), resources through variants disposed at once
+(`Variants.SetParameter`). The materials are the same: every surface of the
+321 cached classic scenes fingerprinted (shader code, render priority,
+uniforms, metadata, next pass) with the old and the new reader, identical;
+`ClassicMaterials.Made` the same (map 4,503, blend 1,029, characters 892,
+layers 298); the 2,916 meshes' new fields equal to Godot's `extras`.
+
+Measured (2026-11-17, headless, `--bench-gc-trace`, two runs each "a / b";
+before: fbe1e04, the old reader with the load census; after: cba76b6; the
+census's `gc load:` lines, a lower bound; the machine shared with another
+agent's sweep in the Debug runs):
+
+| Load | | Godot disposables left | object wrappers |
+|---|---|---|---|
+| bsil00 (the map, at the start) | before | 7,173 / 7,170 (Variant String 2,392, Dictionary 1,191, StringName 793, Array 758, ...) | 524 |
+| | after | 333 to 412 (StringName 219 to 298, made once and kept; Variant String 74) | 524 |
+| bsil02 (the walk's next map) | before | 5,995 / 5,995 | 330 |
+| | after | 73 / 73 (StringName 70) | 330 |
+| c001 (a character) | before | 256 to 333 | 107 |
+| | after | 2 to 80 | 107 |
+| titl00 2D layers | before / after | 642 / 390 (StringName 385) | 90 / 90 |
+
+The walk's collections (the 20 s window, the next map's load in it):
+
+| Build | | most finalizable objects in one | its pause | longest pause |
+|---|---|---|---|---|
+| Release (`BENCH_PROGRAM`, .NET 9) | before | 6,923 / 6,362 | 3.7 / 3.0 ms | 3.7 / 3.0 ms |
+| | after | 191 / 186 (and 191 / 186 in two more runs) | 1.4 / 1.0 ms | 1.6 / 3.5 ms (2.2 / 1.8) |
+| Debug (`godot --path`, .NET 10) | before | 6,458 / 7,167 | 4.3 / 6.2 ms | 15.2 / 5.4 ms |
+| | after | 503 / 744 (the start's load) | 3.2 / 4.6 ms | 14.4 / 6.0 ms |
+
+(The Debug runs' longest pauses, with no finalizable objects pending,
+came with the other agent's work on the machine.) Frame rates and
+allocations a frame did not change beyond the runs' noise; offscreen
+pictures of developer saves 7, 10 and 52 differ before/after no more than
+two runs of the same build (Besaid's score 13.9 / 255 both).
+
+What is left in a load: a Godot wrapper for each material, mesh and node
+the loader touches (the `ShaderMaterial`s made, the scene's walk), the
+names each new shader parameter or meta needs once, and the texture
+fetcher's answers (main thread, a dictionary a texture).
+
+The battle's HUD and menu allocate 2.4 KiB a frame (no finalizable objects: 0.4 to 1 ms
 collections, 3 a second at 3,600 fps, about one every 25 s at 60).
 
 ## Comparing with the original
