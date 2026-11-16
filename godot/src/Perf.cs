@@ -32,6 +32,7 @@ public static class Perf
         BattleMenu,
         BattleHud,
         FieldMenu,
+        BattleEnd,
         SphereGrid,
         Filter,
         Debug,

@@ -194,9 +194,13 @@ math as its bytecode has it (`ffx-import effect --wgsl`):
   (`ffx_wrap`: clamp or repeat; Godot has one mode for both axes);
 - `phyreuvanimationshader` (the scrolling clouds): UV + `ScrollSpeed_X/Y` x
   time, the v scroll negated for the export's v flip (v' = 1 - v), each
-  term `fract`ed. The time is Godot's `TIME`; the game's `GlobalTime`
-  starts at 0 on each map and wraps at 2400 s, so the clouds' phase is not
-  the game's.
+  term `fract`ed. The time is the game's `GlobalTime` (API 10's
+  `Look.global_time`): the global shader uniform `ffx_time`, set every frame
+  by `ClassicMaterials.SetTime`, interpolated between the last two snapshots
+  (across a jump, 0 again after a map change, the wrap at 2400 s, a pause or
+  a load, the newest value as it is). So the clouds and the water stand
+  still while the game does not run, start over on each map, and have the
+  game's phase. The map check reports it (`global time`).
 
 Blended parts draw in Godot's transparent pass, which sorts by render
 priority, then far to near. The game sorts the map's transparent instances by
@@ -212,7 +216,7 @@ material; the refraction water (drawn after the scene) gets 127.
 `ClassicMaterials`' water shader is `PhyreWaterShader`'s math as its
 bytecode has it (Besaid's two variants, the textured `kino02`/`lchb02` and
 the textured refraction variant of `bika00`): the two normal maps scrolled by
-`ScrollSpeed_nml1/2` x time, their sum recentred as the normal in the
+`ScrollSpeed_nml1/2` x `ffx_time` (above), their sum recentred as the normal in the
 surface's frame, the view ray reflected off it into the map's cube map. The
 colour is ((`TextureSampler` + `TextureSampler1` when `TEXTURE_ENABLED`) +
 (0, 0, 0, 1)) x `MultiTexBlendFactor` x `MaterialColour` x the cube map at
@@ -259,6 +263,25 @@ before the tone curve is about 0.27 there (0.3835 x the cube's ~0.7 x the
 vertex green ~1), which the curve darkens: a factor or the vertex colour
 set the water reads is missing. The game's own draw data (the effect
 capture's next step) will settle it.
+
+## Characters the game does not draw
+
+A character is shown while the game draws it: API 10's `Actor.drawn`, what
+the last `Ch_DrawMain` handed to `graphicCharacterInstanceSetVisible` after
+the hide byte, `flags2` bit 0x20, the distance cull, the alpha and its
+per-id cases (`GameStateView.Drawn`; the hide byte, the alpha and a matrix
+with a size stay as a guard). Before, the hide byte, alpha and size decided
+it, which shows a character the game culls or skips while those hold.
+`GameStateView.Skipped` collects such characters (model#slot@map) and the
+checks print them at the end ("characters the game culled or skipped");
+the map check reports `characters drawn N/M`. Measured at Besaid's path
+(developer save 11, `bsil01`): at the start 2 of 19 drawn (Tidus and the
+save sphere; the others carry the distance cull's hide bit 8), after
+walking up 25 s (`--walk=up:25`) 12 of 19; in neither, nor in the walk off
+the beach (save 7), is a character culled or skipped while the old test
+showed it. A playtester's upside-down character inside a cliff there is
+not explained by this yet. `--walk=KEYS:SECONDS` makes the map check walk
+before its picture (`FFX_SHOT_ARGS="--walk=up:25" tools/compare-shot.sh`).
 
 ## The map's objects
 
@@ -321,18 +344,18 @@ some only that (`ptkl14`, `mihn03`, `guad01`, `kami01`, `maca01`, `bvyt04`,
   `0xa0`, `0xa1`, `0x101`, `0x16c` the pass is `preTransparent` (no cut).
   The layers are drawn after the opaque world, farther first (render
   priority by depth).
-- **What the game decides at run time** is read from its memory each
-  frame with `FfxGame.Peek` (scene = `*0x00ccb9d8`, `g_PhyreScene`): the 2D
-  scene shown (`+0x11d8`; a map starts on scene 0, scripts change it with
-  `PhyreScene_change2DSceneNum`), the layers' shown flags
-  (`PhyreScene_show2DLayer`'s table at `+0x1140`, `+0x1138` entries of 8
-  bytes: shown, scene, layer id (i16), mesh), the pan b (`+0xf9bc`, f32),
-  the shift (`+0xfa34`, `+0xfa38`), `+0xf9c7`, `g_PhyreScene3D`
-  (`0x00ccb9c0`), and whether the pass runs (the 2D level loaded,
-  `+0x93c`, and `+0x93d` clear; bsil00's one layer, at depth 0.01, is not
-  drawn). These belong in the game-state API (ffx-state); until then they
-  are a developer's read. The map check (`--selftest-map`) reports
-  `2D layers shown/loaded (scene, pan)`.
+- **What the game decides at run time** comes from the game-state API's
+  `Snapshot.layers` (API 10; scene = `*g_PhyreScene`): the 2D scene shown
+  (`scene`, `+0x11d8`; a map starts on scene 0, scripts change it with
+  `PhyreScene_change2DSceneNum`), the layers' shown flags (`entries`,
+  `PhyreScene_show2DLayer`'s table: shown, scene, layer id; a layer not
+  listed is shown, the last entry for a layer wins), the pan b (`pan`), the
+  shift (`shift_x`, `shift_y`), whether the window is squeezed
+  (`squeezed`: not while `+0xf9c7` or `g_PhyreScene3D` is set), and whether
+  the pass runs (`drawn`: the 2D level loaded and the pass not switched off;
+  bsil00's one layer, at depth 0.01, is not drawn). Before API 10 these were
+  read from the game's memory with `FfxGame.Peek`. The map check
+  (`--selftest-map`) reports `2D layers shown/loaded (scene, pan)`.
 
 Measured (`tools/compare-shot.sh`, Xvfb): developer save 52 (kami01) against
 the game's screenshot of kami0100 (another moment of the same room) 11.9/255
@@ -346,8 +369,8 @@ foreground (before: grey planes, black). The sweep's 2D saves (14, 34, 35,
 
 Not done yet: the layers' texture animation (`textureanimation.ags`, the
 `_<frame>` textures), `PhyreScene_changeLayerOffset`/`Scale` (scripts moving
-or scaling a layer), the order against the 3D world by `+0xd4` (drawn before
-the 3D world when set; here by depth only), and the depth order of the cut-outs
+or scaling a layer), the order against the 3D world by `+0xd4` (`Layers.before_world`, now in
+the snapshot but not used: here by depth only), and the depth order of the cut-outs
 the game gets from `ViewProjection2` (traced only as the main camera's).
 
 ## Effects and the battle HUD (G3)
@@ -469,7 +492,17 @@ stats' order); the abilities screen each member's own learnt commands
 (`PartyMember.commands`, `0x3000 + i`, named from the kernel's command
 table; the shared ones from `0x3060` are summons and aeons' commands and
 stay out), and the overdrive screen each member's mode, the modes obtained
-and the gauge (`--menu-screen=abilities|overdrive|status`). API 8's
+and the gauge (`--menu-screen=abilities|overdrive|status`). The config screen (API 10's
+`menus.config`, while the mask has `0x400`) lists its rows: each row's
+title and options decoded from the game's text, the chosen option in
+brackets, the game's cursor marked, disabled rows dimmed. The PC row
+(`pc_row`, row 0) has localisation ids only (title `0x1cd`, options
+`0x1d0`, `0x1ce`; the remaster's localisation is not read): it shows as
+"PC settings" with "Option 1", "Option 2". `--menu-screen=config` goes down
+the main menu to option id 8 (`TkMenuMainOpenOption` opens slot 0xa), as
+ffx-rust's test does, confirms, and checks that one Down moves the marked
+row (measured at Besaid: 8 rows; subtitles, their names, the cursor, help,
+summons, the guide map, vibration). API 8's
 `menus.windows` (`g_TkMenuWindows` in use) gives the screens' lists and
 cursors: on the item screen the list is the window of kind 0 with 56 rows,
 its cursor taken as the inventory slot and marked (0 at the start, 1 after
@@ -484,6 +517,25 @@ with its node's name (`sphere_grid.cursor`, `+0x112fc`; the name from the
 kernel's `panel.bin`, `g_AbmapNodeKinds`: `FfxGame.grid_node_name`, kind 0
 "Lv. 3 Lock", 2 "Strength +1", 0x60 "Dispel"; at Besaid the cursor starts
 on Tidus's Cheer).
+
+## The battle results (G4)
+
+`BattleEndView` draws the results screen while API 10's `menus.battle_end`
+runs (main-mask bit `0x20000`, slot 0x11): each character row the game
+draws (kinds 0 and 5 are not) by the name the player gave, the AP it still
+has to count (the game counts them down) and its sphere levels, "Level up!"
+while the row's flash counter runs (0xf when the AP reach a sphere level,
+down each draw); the gil counted so far of the gil won (and the party's);
+the items won named from the kernel tables with their counts, and the gear
+won by id (`MsGetSaveWeapon`'s ids; no kernel names). FFX has no EXP.
+`--selftest-battle --to-results` attacks on (confirm tapped) until the
+battle is won and the screen runs, lets the AP count down, then taps
+confirm once a second until the gil is paid. Measured on the deck's battle
+(developer save 7, `--battle=3,0,0`): first Tidus's row with 3 AP (state
+0xa), then Tidus and Wakka at 0 AP (0xd), the gil 5 counted after a confirm
+(party 665 -> 670), the spoils one Ability Sphere; the states 0xa .. 0xe,
+0xf, 0x14 .. 0x1b, then the field. No level-up in that battle: the flash is
+untested.
 
 ## The G0 state read-out
 

@@ -33,6 +33,9 @@ public partial class StateView3D : Node3D
     /// <summary>Character space (the field's, y down) to Godot's: half a turn about z.</summary>
     private static readonly Basis FlipXY = new(new Vector3(-1, 0, 0), new Vector3(0, -1, 0), new Vector3(0, 0, 1));
 
+    /// <summary>The shaders' clock set this frame (the game's <c>GlobalTime</c>, interpolated; -1 none).</summary>
+    public float GlobalTime { get; private set; } = -1f;
+
     /// <summary>The level whose map is shown ("" none yet).</summary>
     public string MapLevel => _mapLevel;
 
@@ -159,8 +162,10 @@ public partial class StateView3D : Node3D
                 ApplyGlow(look);
             }
         }
+        // the scrolling UVs' and the water's clock, every frame (between snapshots too)
+        GlobalTime = ClassicMaterials.SetTime(view.Previous, view.Current, view.Alpha);
         UpdateMap(host.Classic, view.Current);
-        _layers.Tick(host.Game, view.Current?.World.Map ?? -1, _camera.Far);
+        _layers.Tick(view.Current, view.Current?.World.Map ?? -1, _camera.Far);
         Perf.End(Perf.Section.View3D, t0);
         t0 = Perf.Start();
         UpdateObjects(view);
