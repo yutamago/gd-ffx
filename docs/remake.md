@@ -11,7 +11,8 @@ a remade character on a classic map, or the other way round.
 |---|---|---|---|
 | `map` | the level the game's renderer loaded (`World.level`), or its last part | `/map/bsil/bsil00/` or `bsil00` | `res://remake/map/bsil00.tscn` |
 | `chr` | the model name (`Actor.model`) | `c001` (Tidus) | `res://remake/chr/c001.tscn` |
-| `effect`, `ui` | later | | |
+| `effect` | the effect id as eight hex digits (`EffectInstance.id`, `MsGetEffID`) | `50001800` | `res://remake/effect/50001800.tscn` |
+| `ui` | later | | |
 
 A map's level and its last part are the same id (`bsil00`). The overlay
 (F1) shows the level and each character's model name; `ffx-import devsaves`
@@ -153,12 +154,30 @@ Godot's shapes: a capsule 16 units tall in character space and a flat
 skeleton of `SkeletonNode_0..23` with a dot on each bone. It is for the
 tests and as a template; it is not registered for any id.
 
+`res://remake/examples/stand_in_effect.tscn` is a remade effect (a ring):
+an effect scene is instanced at each of the effect's targets (or its
+character) when the game starts the effect record and freed when the game
+ends it. The battle check registers it for `50001800`, the first effect of
+the deck's battle.
+
+`res://remake/examples/stand_in_map.tscn` is a remade Besaid beach (level
+`/map/bsil/bsil00/`) made of Godot's shapes only: a sand plane, the sea at
+the game's water level (render y -3.5; docs/formats/scene.md in ffx-rust,
+"The water level") where the sand runs under it, palms and a sky dome. It
+is in render space, unscaled. The sand is the plane `y = -0.0422 x - 0.0690
+z - 10`, fitted to where the game stands Besaid's characters (within 2.6
+units), so the game's walking (its own collision) keeps them on it. A real
+remade map does the same: it follows the ground the game walks on, which
+the classic import shows.
+
 ```bash
 cd godot
 # packs: load order, overrides, the convention, instantiation (no game needed)
 godot --headless --path . -- --selftest-mods --no-game
 # Tidus drawn by the stand-in and posed by the game on Besaid's classic map
 FFX_GAME_DIR=... godot --headless --path . -- --selftest-remake --devsave=7
+# Besaid beach drawn by the remade example; the player walks over it off the beach
+FFX_GAME_DIR=... godot --headless --path . -- --selftest-remake-map --devsave=7
 ```
 
 `--selftest-mods` reads load orders with disabled packs (and writes one
@@ -174,3 +193,8 @@ nothing. `--selftest-remake` registers the stand-in
 for `c001` at run time, boots to Besaid beach and checks that the player is
 drawn by it (no classic `c001` beside it), that the game poses its bones and
 keeps posing them, and that the map is still the classic one.
+`--selftest-remake-map` registers the remade beach for its level at run
+time, boots there and checks that the remade map is drawn (not the classic
+one, unscaled), that the player stands within 4 units of its sand, and
+walks the player off the beach to the next map as `--selftest-besaid` does
+(with `--shot=FILE.png` under a renderer, a picture first).

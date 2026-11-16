@@ -62,10 +62,12 @@ public partial class StateView3D : Node3D
                 AmbientLightSource = Environment.AmbientSource.Color,
                 AmbientLightColor = new Color(0.75f, 0.75f, 0.78f),
                 AmbientLightEnergy = 1.0f,
-                TonemapMode = Environment.ToneMapper.Filmic,
+                // the game draws its own colours (ClassicMaterials): no tone mapping
+                TonemapMode = Environment.ToneMapper.Linear,
             },
         };
         AddChild(env);
+        AddChild(new EffectView { Name = "EffectView" });
         AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-55, 30, 0), LightEnergy = 0.8f });
         _boneMesh = new SphereMesh { Radius = 0.6f, Height = 1.2f, RadialSegments = 6, Rings = 3 };
     }
@@ -109,7 +111,14 @@ public partial class StateView3D : Node3D
             _camera.GlobalTransform = cam.Transform;
             _camera.Fov = Mathf.RadToDeg(cam.FovY);
             _camera.Far = Mathf.Clamp(cam.Far, 100f, 20000f);
+            // the game's screen shake (Effects.ShakeX/Y, in the PS2 screen's pixels, 448 high):
+            // as the same share of the view at a subject 100 units away
+            var fx = view.Current?.Effects;
+            float unit = 2f * Mathf.Tan(Mathf.DegToRad(_camera.Fov) / 2f) * 100f / 448f;
+            _camera.HOffset = (fx?.ShakeX ?? 0f) * unit;
+            _camera.VOffset = -(fx?.ShakeY ?? 0f) * unit;
         }
+        ClassicMaterials.SetLook(view.Current?.Look);
         UpdateMap(host.Classic, view.Current);
         UpdateActors(host.Classic, view);
     }

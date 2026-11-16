@@ -1,0 +1,132 @@
+[gd_scene load_steps=10 format=3]
+
+[sub_resource type="StandardMaterial3D" id="sand"]
+albedo_color = Color(0.62, 0.55, 0.4, 1)
+roughness = 1.0
+
+[sub_resource type="PlaneMesh" id="sand_mesh"]
+material = SubResource("sand")
+size = Vector2(1600, 1600)
+subdivide_width = 8
+subdivide_depth = 8
+
+[sub_resource type="StandardMaterial3D" id="sea"]
+transparency = 1
+albedo_color = Color(0.16, 0.62, 0.72, 0.78)
+metallic_specular = 0.9
+roughness = 0.08
+
+[sub_resource type="PlaneMesh" id="sea_mesh"]
+material = SubResource("sea")
+size = Vector2(6000, 6000)
+
+[sub_resource type="StandardMaterial3D" id="trunk"]
+albedo_color = Color(0.45, 0.33, 0.2, 1)
+
+[sub_resource type="CylinderMesh" id="trunk_mesh"]
+material = SubResource("trunk")
+top_radius = 1.6
+bottom_radius = 2.4
+height = 60.0
+
+[sub_resource type="StandardMaterial3D" id="leaves"]
+albedo_color = Color(0.2, 0.52, 0.22, 1)
+
+[sub_resource type="SphereMesh" id="leaves_mesh"]
+material = SubResource("leaves")
+radius = 16.0
+height = 10.0
+
+[sub_resource type="StandardMaterial3D" id="sky"]
+shading_mode = 0
+cull_mode = 1
+albedo_color = Color(0.45, 0.68, 0.92, 1)
+
+[sub_resource type="SphereMesh" id="sky_mesh"]
+material = SubResource("sky")
+radius = 9000.0
+height = 18000.0
+
+[node name="BesaidBeach" type="Node3D"]
+
+[node name="Sky" type="MeshInstance3D" parent="."]
+mesh = SubResource("sky_mesh")
+cast_shadow = 0
+
+[node name="Sand" type="MeshInstance3D" parent="."]
+transform = Transform3D(0.99911, -0.04216, 0.00000, 0.04206, 0.99675, 0.06878, 0.00000, -0.06884, 0.99763, 150.00000, 4.37000, -300.00000)
+mesh = SubResource("sand_mesh")
+
+[node name="Sea" type="MeshInstance3D" parent="."]
+transform = Transform3D(1.00000, 0.00000, 0.00000, 0.00000, 1.00000, 0.00000, 0.00000, 0.00000, 1.00000, 150.00000, -3.50000, -300.00000)
+mesh = SubResource("sea_mesh")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.866, -0.354, 0.354, 0, 0.707, 0.707, -0.5, -0.612, 0.612, 0, 0, 0)
+light_energy = 1.1
+
+[node name="Palm0" type="Node3D" parent="."]
+transform = Transform3D(1.00000, 0.00000, 0.00000, 0.00000, 1.00000, 0.00000, 0.00000, 0.00000, 1.00000, 380.00000, 9.84400, -520.00000)
+
+[node name="Trunk" type="MeshInstance3D" parent="Palm0"]
+transform = Transform3D(1.00000, 0.00000, 0.00000, 0.00000, 1.00000, 0.00000, 0.00000, 0.00000, 1.00000, 0.00000, 30.00000, 0.00000)
+mesh = SubResource("trunk_mesh")
+
+[node name="Leaves" type="MeshInstance3D" parent="Palm0"]
+transform = Transform3D(1.00000, 0.00000, 0.00000, 0.00000, 1.00000, 0.00000, 0.00000, 0.00000, 1.00000, 0.00000, 62.00000, 0.00000)
+mesh = SubResource("leaves_mesh")
+
+[node name="Palm1" type="Node3D" parent="."]
+transform = Transform3D(1.00000, 0.00000, 0.00000, 0.00000, 1.00000, 0.00000, 0.00000, 0.00000, 1.00000, -20.00000, 8.78400, -260.00000)
+
+[node name="Trunk" type="MeshInstance3D" parent="Palm1"]
+transform = Transform3D(1.00000, 0.00000, 0.00000, 0.00000, 1.00000, 0.00000, 0.00000, 0.00000, 1.00000, 0.00000, 30.00000, 0.00000)
+mesh = SubResource("trunk_mesh")
+
+[node name="Leaves" type="MeshInstance3D" parent="Palm1"]
+transform = Transform3D(1.00000, 0.00000, 0.00000, 0.00000, 1.00000, 0.00000, 0.00000, 0.00000, 1.00000, 0.00000, 62.00000, 0.00000)
+mesh = SubResource("leaves_mesh")
+
+[node name="Palm2" type="Node3D" parent="."]
+transform = Transform3D(1.00000, 0.00000, 0.00000, 0.00000, 1.00000, 0.00000, 0.00000, 0.00000, 1.00000, 230.00000, -7.28600, -180.00000)
+
+[node name="Trunk" type="MeshInstance3D" parent="Palm2"]
+transform = Transform3D(1.00000, 0.00000, 0.00000, 0.00000, 1.00000, 0.00000, 0.00000, 0.00000, 1.00000, 0.00000, 30.00000, 0.00000)
+mesh = SubResource("trunk_mesh")
+
+[node name="Leaves" type="MeshInstance3D" parent="Palm2"]
+transform = Transform3D(1.00000, 0.00000, 0.00000, 0.00000, 1.00000, 0.00000, 0.00000, 0.00000, 1.00000, 0.00000, 62.00000, 0.00000)
+mesh = SubResource("leaves_mesh")
+
+[node name="Palm3" type="Node3D" parent="."]
+transform = Transform3D(1.00000, 0.00000, 0.00000, 0.00000, 1.00000, 0.00000, 0.00000, 0.00000, 1.00000, 420.00000, -1.50400, -380.00000)
+
+[node name="Trunk" type="MeshInstance3D" parent="Palm3"]
+transform = Transform3D(1.00000, 0.00000, 0.00000, 0.00000, 1.00000, 0.00000, 0.00000, 0.00000, 1.00000, 0.00000, 30.00000, 0.00000)
+mesh = SubResource("trunk_mesh")
+
+[node name="Leaves" type="MeshInstance3D" parent="Palm3"]
+transform = Transform3D(1.00000, 0.00000, 0.00000, 0.00000, 1.00000, 0.00000, 0.00000, 0.00000, 1.00000, 0.00000, 62.00000, 0.00000)
+mesh = SubResource("leaves_mesh")
+
+[node name="Palm4" type="Node3D" parent="."]
+transform = Transform3D(1.00000, 0.00000, 0.00000, 0.00000, 1.00000, 0.00000, 0.00000, 0.00000, 1.00000, 40.00000, 22.81200, -500.00000)
+
+[node name="Trunk" type="MeshInstance3D" parent="Palm4"]
+transform = Transform3D(1.00000, 0.00000, 0.00000, 0.00000, 1.00000, 0.00000, 0.00000, 0.00000, 1.00000, 0.00000, 30.00000, 0.00000)
+mesh = SubResource("trunk_mesh")
+
+[node name="Leaves" type="MeshInstance3D" parent="Palm4"]
+transform = Transform3D(1.00000, 0.00000, 0.00000, 0.00000, 1.00000, 0.00000, 0.00000, 0.00000, 1.00000, 0.00000, 62.00000, 0.00000)
+mesh = SubResource("leaves_mesh")
+
+[node name="Palm5" type="Node3D" parent="."]
+transform = Transform3D(1.00000, 0.00000, 0.00000, 0.00000, 1.00000, 0.00000, 0.00000, 0.00000, 1.00000, 300.00000, -14.38000, -120.00000)
+
+[node name="Trunk" type="MeshInstance3D" parent="Palm5"]
+transform = Transform3D(1.00000, 0.00000, 0.00000, 0.00000, 1.00000, 0.00000, 0.00000, 0.00000, 1.00000, 0.00000, 30.00000, 0.00000)
+mesh = SubResource("trunk_mesh")
+
+[node name="Leaves" type="MeshInstance3D" parent="Palm5"]
+transform = Transform3D(1.00000, 0.00000, 0.00000, 0.00000, 1.00000, 0.00000, 0.00000, 0.00000, 1.00000, 0.00000, 62.00000, 0.00000)
+mesh = SubResource("leaves_mesh")

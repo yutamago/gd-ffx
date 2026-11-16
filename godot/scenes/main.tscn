@@ -1,10 +1,12 @@
-[gd_scene load_steps=6 format=3]
+[gd_scene load_steps=8 format=3]
 
 [ext_resource type="Script" path="res://src/StateView3D.cs" id="1_view"]
 [ext_resource type="Script" path="res://src/DebugView.cs" id="2_debug"]
 [ext_resource type="Script" path="res://src/MessageView.cs" id="3_msg"]
 [ext_resource type="Script" path="res://src/BattleMenuView.cs" id="4_btl"]
 [ext_resource type="Script" path="res://src/ScreenFilterView.cs" id="5_flt"]
+[ext_resource type="Script" path="res://src/BattleHudView.cs" id="6_hud"]
+[ext_resource type="Script" path="res://src/FieldMenuView.cs" id="7_menu"]
 
 [node name="Main" type="Node"]
 
@@ -39,6 +41,26 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 script = ExtResource("4_btl")
+
+[node name="BattleHudView" type="Control" parent="Overlay"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("6_hud")
+
+[node name="FieldMenuView" type="Control" parent="Overlay"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("7_menu")
 
 [node name="DebugView" type="Control" parent="Overlay"]
 layout_mode = 3

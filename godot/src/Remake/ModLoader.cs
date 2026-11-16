@@ -76,6 +76,8 @@ public partial class ModLoader : Node
     {
         if (GameSettings.Flag("selftest-mods"))
             ModSelfTest.Run(this);
+        else if (GameSettings.Flag("selftest-saves"))
+            SaveFilesSelfTest.Run(this);
     }
 
     /// <summary>Mounts the enabled packs of every folder of <see cref="Dirs"/>, once.</summary>

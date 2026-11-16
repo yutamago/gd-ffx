@@ -67,6 +67,9 @@ public partial class FfxGame : RefCounted
     /// <summary>A battle command's, item's or monster ability's name (the battle menu's ids) in <paramref name="language"/>.</summary>
     public string KernelName(int id, string language) => Node.Call("kernel_name", id, language).AsString();
 
+    /// <summary>The save list's place name <paramref name="index"/> (a save header's location), decoded; empty without the archive.</summary>
+    public string PlaceName(int index, string language) => Node.Call("place_name", index, language).AsString();
+
     /// <summary>Asks the game to start battle <paramref name="field"/>/<paramref name="group"/>/<paramref name="formation"/> as an encounter would.</summary>
     public bool RequestBattle(int field, int group, int formation) =>
         Node.Call("request_battle", field, group, formation).AsBool();

@@ -59,13 +59,16 @@ interleaved stereo f32 in blocks of 1,600 frames (ffx-rust's `docs/host.md`,
 - **The queue** (`AudioQueue` in `rust/ffx-gd/src/platform.rs`, behind one
   mutex) is kept as ffx-rust's WASAPI output keeps its own
   (`rust_audio_out.rs`): at most half a second (24,000 frames), the oldest
-  dropped; nothing goes out until 4,800 frames (100 ms) are queued, and
-  again after an underrun (Godot's mix asked for more than was queued).
+  dropped; nothing goes out until the feeder's target (below) is queued,
+  and again after an underrun (Godot's mix asked for more than was
+  queued).
   It starts empty when a player attaches and is emptied when the game
   ends (no stale tail, no underruns for the silence after).
 - **The feeder** (ffx-rust's, on the game's side) looks every 4 ms and
-  mixes blocks while `audio_queued` is under 6,400 frames (its
-  `FEED_TARGET`: the prefill and one block), while `audio_running` is
+  mixes 1,600-frame blocks while `audio_queued` is under the target that
+  `GodotPlatform::audio_target` gives it: 4,800 frames (100 ms; ffx-rust's
+  own default, `FEED_TARGET`, is 6,400, sized for WASAPI's buffer), or
+  `FFX_AUDIO_TARGET` (frames, 1,600 to 24,000), while `audio_running` is
   true; otherwise it follows the wall clock and the blocks are dropped.
   The output runs only once Godot's player is attached, so a muted
   frontend (or one without a player) never fills a queue nobody drains.
@@ -87,8 +90,9 @@ interleaved stereo f32 in blocks of 1,600 frames (ffx-rust's `docs/host.md`,
   latency (its driver's buffer, `audio/driver/output_latency`, 15 ms by
   default, as the driver grants it). The queue's time average while
   playing (`audio_mean_queued`; by Little's law the mean delay of a frame)
-  stays at the feeder's target and up to a block over: about 7,000
-  frames, 147 ms (the headless self-check: `mean 7060`). `FfxGame.state()`
+  stays at the feeder's target and up to a block over: about 5,500
+  frames, 114 ms (the headless self-check: `mean 5462`; 147 ms with
+  ffx-rust's default target). `FfxGame.state()`
   has `audio_mean_queued_ms`, `audio_output_latency_ms` and their sum
   `audio_latency_ms`; the overlay's sound line shows them.
 - `GameHost` adds the player before it starts the game, unless muted
@@ -101,15 +105,22 @@ Godot frame sat after the queue: about 16,600 frames, 0.35 s, between the
 mixer and the driver, and a Godot frame over 0.2 s was a gap (the
 generator's skips: 169 in the headless self-check, none now).
 
-**The floor is ffx-rust's.** The feeder's target, 6,400 frames (133 ms),
-is a constant in ffx-rust (`crates/ffx-host/src/audio.rs`, `FEED_TARGET`,
-used by `feed_due`); `audio_queued` can only make it cover the whole
-pipeline, not lower it. A pull on Godot's audio thread needs much less: a
-platform hook, e.g. `Platform::audio_target(&self) -> usize` with
-`FEED_TARGET` as its default, read by the feeder in place of the constant
-(and the frontend's prefill lowered to match), would let gd-ffx keep two
-blocks (3,200 frames: 67–100 ms queued, against stalls of the feeder up
-to about 55 ms). Proposed, not made: a change on ffx-rust's side.
+**The target.** Measured at Besaid over 60 s headless (developer save
+7, `--selftest-besaid --no-walk --selftest-timeout=60`, the game at 30
+updates/s):
+
+| Target (frames) | Mean delay | Underruns |
+|---|---|---|
+| 6,400 (ffx-rust's default) | 147 ms | 0 |
+| 4,800 (gd-ffx's) | 114 ms | 0 |
+| 4,000 | 97 ms | 78 |
+| 3,200 | 68 ms | 699 |
+
+Headless, Godot's dummy driver takes 4,096 frames at once, so it needs a
+target above that. A real device takes much smaller pieces, so a lower
+target may hold there (not measured: that means playing sound aloud);
+`FFX_AUDIO_TARGET` tries one. Below a block (1,600 frames, the mixer's
+unit) nothing can go.
 
 The game's sound requests (G3's later steps: music and effects as Godot
 streams, positional sound) are not routed yet: Godot plays the finished
@@ -154,6 +165,27 @@ remake registry and, from `GameHost.Start`, mounts the mod packs
 classic models posed by the game (docs/importer.md), markers until they
 are imported; `DebugView` is the overlay (F1).
 
+## Effects and the battle HUD (G3)
+
+- **Effects as events** (`EffectView`, under the 3D view): each effect
+  record the game starts (`Effects.running`, keyed by slot) plays where the
+  game plays it, on each target or else on its character, while the game
+  keeps the record. A remade effect registered for its id (docs/remake.md)
+  is instanced there; anything else gets a stand-in, a short burst of
+  particles in a colour of its id. The classic effects (the game's effect
+  programs and their models) are not imported yet. Who a character index
+  is: in battle the battler (below), out of battle the actor in that slot.
+- **The screen shake** (`Effects.shake_x/y`, PS2 screen pixels, 448 high)
+  moves the camera's offset by the same share of the view at a subject 100
+  units away.
+- **The battle HUD** (`BattleHudView`): the party's HP and MP (KO red, a
+  quarter or less yellow) by the names the player gave (`Save.members`),
+  the turn order by the turn counter (lowest next), and damage numbers: a
+  battler's HP change between snapshots, popped over its body (damage
+  white, healing green), rising and fading over 1.2 s. Party battler `i`
+  is the party actor with id `i + 1`; monster `0x14 + k` the k-th monster
+  actor by slot (seen in the deck's battle; `BattleHudView.ActorOf`).
+
 ## Native UI (G4)
 
 The game-state API 3 adds the menus' state and the event script's
@@ -161,8 +193,44 @@ message windows (ffx-rust's docs/state-api.md, "Menus and messages").
 `MessageView` draws the open windows as Godot panels; their text is the
 game's own encoding, decoded by `FfxGame.decode_text` with ffx-text's
 character set for `World.language`, read from the player's archive
-(`ffx-import`'s `Importer::charset`). The menus (field menu, battle
-commands, save and load) come next on the same state.
+(`ffx-import`'s `Importer::charset`). `BattleMenuView` draws the battle's
+command window (the ids named from the kernel tables), the main menu's
+options and a save/load list; `FieldMenuView` (API 8's `Save`) draws the
+party beside the open main menu: front line then back line by the names
+the player gave, HP, MP and sphere levels, the gil and the play time
+(`--selftest-menu` opens it with V at Besaid). An open sub-screen shows as
+its menu slot's bit in `Menus.main_mask`, the main menu's own (slot 1)
+cleared: Items is slot 3 (measured: Items, confirm, the mask goes from
+`0x2` to `0x8`). While it is open `FieldMenuView` lists the inventory
+(`Save.items`, the game's order) named from the kernel tables, with the
+counts; the menu check goes on into it. The PC save and load screens
+(`Menus.save_*`) list the files as the game does (`SaveFiles`, from
+gd-ffx's documents sandbox: loading, the autosave `ffx_000` then the
+manual saves newest first by modification time; saving, a new file's row
+then the manual saves), five rows from `save_top` with the cursor, each
+with the player's name, the party by the names in that file, the play
+time, gil and the place name (`FfxGame.place_name`: `ffx-import`'s
+`place_name`, section 11 of the language's `menu/macrodic.dcp`, as
+`AtelGetSaveDicName` reads it; entry 1 is "Zanarkand - Stadium");
+`--selftest-saves --no-game` checks the header reader on made-up files,
+and `--selftest-besaid --check-autosave` on a real one: the autosave the
+game writes on entering the map after the beach, read back as the load
+list's first row with the game's gil, party and names, at "Besaid Island -
+Crossroads" (the developer save does not write one; entering a map does). 
+The main menu's screens by their bit (measured: each option picked, a
+character chosen where it asks; `FieldMenuView.Screens`): sphere grid
+`0x80000` (slot 0x13), items `0x8` (3), abilities `0x4` (2), overdrive
+`0x200000` (0x15), status `0x40` (6), config `0x400` (0xa), help `0x800`
+(0xb). The status screen shows every party member's HP, MP, the 8 stats,
+AP, sphere levels and overdrive gauge side by side (`--selftest-menu
+--menu-screen=status`; Tidus and Wakka's start values, which confirm the
+stats' order); the abilities screen each member's own learnt commands
+(`PartyMember.commands`, `0x3000 + i`, named from the kernel's command
+table; the shared ones from `0x3060` are summons and aeons' commands and
+stay out), and the overdrive screen each member's mode, the modes obtained
+and the gauge (`--menu-screen=abilities|overdrive|status`). Which member
+the game shows, the sphere grid's contents and the screens' cursors are not
+in the API yet.
 
 ## The G0 state read-out
 

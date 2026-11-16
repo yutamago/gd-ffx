@@ -108,6 +108,15 @@ impl Classic {
         self.decode(language, &name)
     }
 
+    /// The save list's place name `index` in `language`, decoded
+    /// (`ffx_import::Importer::place_name`).
+    #[must_use]
+    pub fn place_name(&self, language: &str, index: u16) -> Option<String> {
+        let open = lock(&self.open).clone()?;
+        let name = open.importer.place_name(language, index)?;
+        self.decode(language, &name)
+    }
+
     /// Whether the archive is open.
     #[must_use]
     pub fn is_open(&self) -> bool {

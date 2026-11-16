@@ -478,6 +478,16 @@ impl FfxGame {
             .map_or_else(GString::new, |s| GString::from(s.as_str()))
     }
 
+    /// The save list's place name `index` (a save header's location) in
+    /// `language`; empty without the archive.
+    #[func]
+    fn place_name(&self, index: i64, language: GString) -> GString {
+        u16::try_from(index)
+            .ok()
+            .and_then(|i| classic().place_name(&language.to_string(), i))
+            .map_or_else(GString::new, |s| GString::from(s.as_str()))
+    }
+
     /// Asks the game to start a battle (`field` the battle field's record,
     /// its `group` and `formation`) as a random encounter would; refused
     /// while one runs. `request_results` reports it.

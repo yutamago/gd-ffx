@@ -123,6 +123,9 @@ public sealed class ClassicLibrary
             GD.PrintErr($"ffx: cannot load {path}");
             return null;
         }
-        return doc.GenerateScene(state) as Node3D;
+        var scene = doc.GenerateScene(state) as Node3D;
+        if (scene != null)
+            ClassicMaterials.Apply(state, scene);
+        return scene;
     }
 }
