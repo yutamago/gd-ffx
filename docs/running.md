@@ -232,7 +232,11 @@ What remains:
   `StringName` for each call into the extension and each shader global set
   a frame (`FfxGame.M`, `ClassicMaterials`, `MapLayers`, the morph
   parameters; a `StringName` is finalizable, so it outlives its first
-  collection), `EffectView`'s set and list a frame.
+  collection), `EffectView`'s set and list a frame. With no full
+  collection while playing, the Godot objects C# dropped (materials,
+  textures) waited for their finalizers until shutdown, after the
+  rendering server had stopped (leaked RIDs at exit on 10 developer
+  saves): `GameHost._ExitTree` collects and runs the finalizers first.
 
   Measured (2026-11-16, Debug, headless, the machine shared; two runs
   each, "a / b"; before: `main` at 822ef56; collections and pauses in the
