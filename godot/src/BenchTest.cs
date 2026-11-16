@@ -75,6 +75,9 @@ public sealed class BenchTest : ITest
     private int[] _gc0 = [];
     private TimeSpan _pause0;
     private long _totalAlloc0;
+    private int[] _gcEnd = [];
+    private TimeSpan _pauseEnd;
+    private long _allocEnd;
     private long _gcIndex = -1;
     private readonly List<string> _collections = new();
     private readonly List<double> _pauses = new();
@@ -167,6 +170,11 @@ public sealed class BenchTest : ITest
             return null;
         if (_walk)
             Keys(false);
+        // the window's collections, pauses and allocations now: the report allocates (sorted copies
+        // of every frame's figures) and would add collections of its own
+        _gcEnd = [GC.CollectionCount(0) - _gc0[0], GC.CollectionCount(1) - _gc0[1], GC.CollectionCount(2) - _gc0[2]];
+        _pauseEnd = GC.GetTotalPauseDuration() - _pause0;
+        _allocEnd = GC.GetTotalAllocatedBytes() - _totalAlloc0;
         Report(game, s, v, view);
         return Done(true, $"{_window.Count} frames in {_total - _windowAt:F1} s at {c?.World.Level}");
     }
@@ -346,10 +354,10 @@ public sealed class BenchTest : ITest
         Print($"cpu ms/frame, all views: {sum:F3} (frames with a new snapshot {snapFrames:F3}, others {otherFrames:F3}); "
             + $"the rest of the frame (Godot's own work) {mean - sum:F3}");
         var allocs = w.Select(f => (double)f.Alloc).OrderBy(x => x).ToList();
-        int[] gc = [GC.CollectionCount(0) - _gc0[0], GC.CollectionCount(1) - _gc0[1], GC.CollectionCount(2) - _gc0[2]];
-        var pause = GC.GetTotalPauseDuration() - _pause0;
+        var gc = _gcEnd;
+        var pause = _pauseEnd;
         Print($"gc: main thread allocates {allocs.Average() / 1024:F1} KiB/frame (p99 {Pct(allocs, 0.99) / 1024:F1}, "
-            + $"max {allocs[^1] / 1024:F1}), all threads {(GC.GetTotalAllocatedBytes() - _totalAlloc0) / seconds / 1048576:F2} MiB/s; "
+            + $"max {allocs[^1] / 1024:F1}), all threads {_allocEnd / seconds / 1048576:F2} MiB/s; "
             + $"collections gen0 {gc[0]} gen1 {gc[1]} gen2 {gc[2]}, paused {pause.TotalMilliseconds:F1} ms in all; "
             + $"frames with a collection: mean {w.Where(f => f.Gc >= 0).Select(f => f.Ms).DefaultIfEmpty(0).Average():F2} ms, "
             + $"max {w.Where(f => f.Gc >= 0).Select(f => f.Ms).DefaultIfEmpty(0).Max():F2} ms; "
