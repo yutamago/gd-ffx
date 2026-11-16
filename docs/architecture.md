@@ -257,8 +257,13 @@ cursors: on the item screen the list is the window of kind 0 with 56 rows,
 its cursor taken as the inventory slot and marked (0 at the start, 1 after
 one Down: measured; whether the game's own picture marks that entry or a
 row of two is not checked, as gd-ffx does not draw the game's menu). Which member
-the game shows, the sphere grid's contents and the screens' cursors are not
-in the API yet.
+the status screen shows is not in the API yet. The sphere grid screen
+(`SphereGridView`, API 8's `sphere_grid`: the game's own grid while it is
+up, read from `*g_Abmap`) draws the 828 nodes and 834 links fitted to the
+screen, coloured by kind, the nodes the shown character activated marked
+(the node's flags, bit 8 + character: observed), and the character's name
+(`--selftest-menu --menu-screen=sphere-grid`). The node kinds' names (the
+kernel's node table) and the grid's cursor come next.
 
 ## The G0 state read-out
 

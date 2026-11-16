@@ -67,6 +67,9 @@ public partial class FfxGame : RefCounted
     /// <summary>A battle command's, item's or monster ability's name (the battle menu's ids) in <paramref name="language"/>.</summary>
     public string KernelName(int id, string language) => Node.Call("kernel_name", id, language).AsString();
 
+    /// <summary>A developer's look at <paramref name="len"/> bytes of game memory (read only; empty while no game runs).</summary>
+    public byte[] Peek(long address, int len) => Node.Call("peek", address, len).AsByteArray();
+
     /// <summary>The save list's place name <paramref name="index"/> (a save header's location), decoded; empty without the archive.</summary>
     public string PlaceName(int index, string language) => Node.Call("place_name", index, language).AsString();
 

@@ -661,6 +661,25 @@ public sealed class MenuTest(double timeout, string? shot) : ITest
         // then into a screen: Items (one down, confirm), or Status with --menu-screen=status
         // (four down, confirm, confirm the first character)
         var screen = GameSettings.Arg("menu-screen") ?? "items";
+        if (screen == "sphere-grid")
+        {
+            // the first option, confirm, confirm the first character: the game's grid and the native view
+            _probe += delta;
+            double w = _probe - delta;
+            void P(Key key, bool d) => Godot.Input.ParseInputEvent(new InputEventKey { PhysicalKeycode = key, Keycode = key, Pressed = d });
+            foreach (var t in new[] { 1.0, 2.5 })
+            {
+                if (w < t && _probe >= t) P(Key.Enter, true);
+                if (w < t + 0.3 && _probe >= t + 0.3) P(Key.Enter, false);
+            }
+            var grid = root?.FindChild("SphereGridView", true, false) as SphereGridView;
+            if (grid == null || grid.Shown.Nodes == 0 || _probe < 6)
+                return _probe > 20 ? Done(false, $"no sphere grid drawn (mask {c.Menus.MainMask:x}, open {c.SphereGrid.Open})") : null;
+            if (shot != null && DisplayServer.GetName() != "headless")
+                root!.GetViewport().GetTexture().GetImage().SavePng(shot);
+            return Done(grid.Shown.Marked > 0,
+                $"{_main}; the sphere grid: {grid.Shown.Nodes} nodes, {grid.Shown.Links} links, {grid.Shown.Marked} marked for character {c.SphereGrid.Current}");
+        }
         bool status = screen is "status" or "abilities" or "overdrive";
         _probe += delta;
         void Press(Key key, bool d) => Godot.Input.ParseInputEvent(new InputEventKey { PhysicalKeycode = key, Keycode = key, Pressed = d });

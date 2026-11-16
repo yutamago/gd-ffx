@@ -42,7 +42,7 @@ FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/selftest.sh    # headless check (open
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-besaid --devsave=7)   # G2 check
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-remake --devsave=7)  # G6: a remade c001 posed by the game
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-remake-map --devsave=7)  # G6: the remade Besaid beach example
-(cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-menu --devsave=7)        # G4: the field menu panel (party, gil, time), then Items (--menu-screen=status|abilities|overdrive)
+(cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-menu --devsave=7)        # G4: the field menu panel (party, gil, time), then Items (--menu-screen=status|abilities|overdrive|sphere-grid)
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-battle --devsave=7 --battle=3,0,0)  # G3/G4: battle, HUD, attack, effects
 (cd godot && godot --headless --path . -- --selftest-saves --no-game)  # G4: the save list reader (no game)
 (cd godot && godot --headless --path . -- --selftest-mods --no-game)   # G6: mod packs, load order, registry (no game)

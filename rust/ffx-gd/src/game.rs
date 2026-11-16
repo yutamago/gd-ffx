@@ -478,6 +478,22 @@ impl FfxGame {
             .map_or_else(GString::new, |s| GString::from(s.as_str()))
     }
 
+    /// `len` bytes of the game's memory at `address` (a developer's look at
+    /// structures the game-state API does not carry yet; at most 64 KiB, 0
+    /// where not mapped); empty while no game runs.
+    #[func]
+    fn peek(&self, address: i64, len: i64) -> PackedByteArray {
+        let (Ok(at), Ok(n)) = (u32::try_from(address), usize::try_from(len)) else {
+            return PackedByteArray::new();
+        };
+        self.run
+            .as_ref()
+            .and_then(Run::shared)
+            .map_or_else(PackedByteArray::new, |s| {
+                PackedByteArray::from(crate::state::peek(&s, at, n).as_slice())
+            })
+    }
+
     /// The save list's place name `index` (a save header's location) in
     /// `language`; empty without the archive.
     #[func]

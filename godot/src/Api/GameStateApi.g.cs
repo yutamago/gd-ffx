@@ -101,6 +101,10 @@ public sealed partial class Snapshot
     /// layer mask) can be drawn where the game draws them.
     /// </summary>
     public List<SceneObject> Objects = new();
+    /// <summary>
+    /// The sphere grid while its screen is up (`*g_Abmap`), else empty.
+    /// </summary>
+    public SphereGrid SphereGrid = new();
 
     /// <summary>Reads one from the encoding.</summary>
     public static Snapshot Read(ref StateReader r)
@@ -139,6 +143,7 @@ public sealed partial class Snapshot
             for (int i = 0; i < n; i++)
                 o.Objects.Add(SceneObject.Read(ref r));
         }
+        o.SphereGrid = SphereGrid.Read(ref r);
         return o;
     }
 }
@@ -1039,6 +1044,107 @@ public sealed partial class MenuWindow
         o.Cursor = r.I16();
         o.Kind = r.U8();
         o.Args = r.Bytes();
+        return o;
+    }
+}
+
+/// <summary>
+/// The sphere grid screen's data (`g_Abmap` `0x02305834` holds its
+/// address; docs/formats/pc-ui.md "Sphere grid helpers"; the node
+/// fields beyond the kind read through gd-ffx, 2026-11-16).
+/// </summary>
+public sealed partial class SphereGrid
+{
+    /// <summary>
+    /// The grid is loaded (`g_Abmap` set, nodes counted).
+    /// </summary>
+    public bool Open;
+    /// <summary>
+    /// The character the screen shows (`+0x115bc`,
+    /// `TkMenuGetCurrentPlayer`).
+    /// </summary>
+    public byte Current;
+    /// <summary>
+    /// The nodes (`+0x808`, 0x28 bytes each, the count `i16` at `+2`).
+    /// </summary>
+    public List<GridNode> Nodes = new();
+    /// <summary>
+    /// The links between nodes (`+0xa808`, 0x14 bytes each, the count
+    /// `i16` at `+4`).
+    /// </summary>
+    public List<GridLink> Links = new();
+
+    /// <summary>Reads one from the encoding.</summary>
+    public static SphereGrid Read(ref StateReader r)
+    {
+        var o = new SphereGrid();
+        o.Open = r.Bool();
+        o.Current = r.U8();
+        {
+            int n = r.U16();
+            o.Nodes = new List<GridNode>(n);
+            for (int i = 0; i < n; i++)
+                o.Nodes.Add(GridNode.Read(ref r));
+        }
+        {
+            int n = r.U16();
+            o.Links = new List<GridLink>(n);
+            for (int i = 0; i < n; i++)
+                o.Links.Add(GridLink.Read(ref r));
+        }
+        return o;
+    }
+}
+
+/// <summary>
+/// One sphere grid node.
+/// </summary>
+public sealed partial class GridNode
+{
+    /// <summary>
+    /// Its place on the grid (`+0`, `+2`; y down).
+    /// </summary>
+    public short X;
+    public short Y;
+    /// <summary>
+    /// What it holds (`+6`; 0xffff an empty node), a record of the
+    /// kernel's node table (`MsGetExcelData`).
+    /// </summary>
+    public ushort Kind;
+    /// <summary>
+    /// `+0x20`: a bit per character from bit 8 (observed: set on the
+    /// nodes around the characters' starting places early in the
+    /// game; read as the characters who activated it, not checked in
+    /// the code).
+    /// </summary>
+    public ushort Flags;
+
+    /// <summary>Reads one from the encoding.</summary>
+    public static GridNode Read(ref StateReader r)
+    {
+        var o = new GridNode();
+        o.X = r.I16();
+        o.Y = r.I16();
+        o.Kind = r.U16();
+        o.Flags = r.U16();
+        return o;
+    }
+}
+
+/// <summary>
+/// One link between two sphere grid nodes (`+0`, `+2`: their indices).
+/// </summary>
+public sealed partial class GridLink
+{
+    public ushort A;
+    public ushort B;
+
+    /// <summary>Reads one from the encoding.</summary>
+    public static GridLink Read(ref StateReader r)
+    {
+        var o = new GridLink();
+        o.A = r.U16();
+        o.B = r.U16();
         return o;
     }
 }
