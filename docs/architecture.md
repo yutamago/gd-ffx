@@ -177,6 +177,14 @@ between the last two snapshots), shown while the game draws it. Besaid's
 birds (objects 18..32, at the origin in the file) fly where the game has
 them; the Besaid check counts the meshes placed (45).
 
+Not done: character models made of rigid parts without a skin. The save
+sphere's base (`f001`: three meshes `MeshNode0..2`, five
+`SkeletonNode`s, no skin in the import) is placed by the game per mesh
+(`graphicCharacterInstanceSetWorldMatrix`, docs/formats/render.md in
+ffx-rust), so posing its bones moves nothing and its ring lies flat. It
+needs the meshes' world matrices in the API (or each mesh's bone in the
+import). Its glowing orb is an effect, not part of the model.
+
 ## Effects and the battle HUD (G3)
 
 - **Effects as events** (`EffectView`, under the 3D view): each effect
