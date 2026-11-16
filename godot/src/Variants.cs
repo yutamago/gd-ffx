@@ -22,6 +22,11 @@ public static class Variants
     /// <summary>A dictionary key (or any string argument) as a variant made once and kept.</summary>
     public static Variant Key(string name) => Keys.GetOrAdd(name, static n => Variant.CreateFrom(n));
 
+    private static readonly ConcurrentDictionary<string, StringName> Names = new();
+
+    /// <summary>A <see cref="StringName"/> (a meta's, a method's) made once and kept: one from a string each call is a new finalizable object.</summary>
+    public static StringName Name(string name) => Names.GetOrAdd(name, static n => new StringName(n));
+
     /// <summary><paramref name="d"/>'s value at <paramref name="key"/> (nil when missing), without a new variant for the key.</summary>
     public static Variant Get(Godot.Collections.Dictionary d, string key) =>
         d.TryGetValue(Key(key), out var v) ? v : default;
