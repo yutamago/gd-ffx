@@ -537,7 +537,7 @@ public sealed partial class Menus
     /// The character the PS2 menus show (`TkMenuGetCurrentPlayer`:
     /// `g_TkMenuPlayers` `0x01841c14` at `g_TkMenuCurrentPlayerPos`
     /// `0x01841c28`; below 8 a party member, 8 and up an aeon); 0xff
-    /// when the position is out of the list.
+    /// when the position is 8 or more (the list is 8 bytes).
     /// </summary>
     public byte CurrentPlayer;
 
@@ -899,8 +899,8 @@ public sealed partial class Battler
 /// How the renderer colours the scene (docs/formats/render.md, "Lights
 /// and fog at run time" and "Scenery light levels"): what a frontend
 /// needs to draw the game's own shaders' result. `scene` is
-/// `g_PhyreScene`, the context its `+0xcc` (`g_PhyreApplication` +
-/// 0x50), the lighting `g_CharacterLighting`.
+/// `*g_PhyreScene`, the context its `+0xcc` (`*g_PhyreApplication +
+/// 0x50`), the lighting `*g_CharacterLighting`.
 /// </summary>
 public sealed partial class Look
 {
@@ -909,9 +909,11 @@ public sealed partial class Look
     /// </summary>
     public bool Valid;
     /// <summary>
-    /// The colour scale (`scene +0xfc78`, `PhyreScene_setColorScale`):
-    /// every map material's `clrScaleFactor`, the last multiplier
-    /// before the map shaders' tone curve.
+    /// The colour scale (`scene +0xfc78`): the scale
+    /// `PhyreScene_setColorScale` last gave the map's materials as their
+    /// `clrScaleFactor` (the tree `+0x1198`; nothing while `+0x10d4` is
+    /// 0, and materials loaded after the last call keep their file's
+    /// value), the last multiplier before the map shaders' tone curve.
     /// </summary>
     public Vector3 ColourScale;
     /// <summary>
@@ -926,15 +928,16 @@ public sealed partial class Look
     /// <summary>
     /// The fog's near and far distances (`+0x20`, `+0x24`), its curve
     /// (`+0x28`) and limit (`+0x2c`, the map's limit / 255). Without a
-    /// `GlobalCamera`: near 65536, far 65537, curve 1, limit 1.
+    /// `GlobalCamera`: colour (0.28, 0.35, 0.6), near 65536, far 65537,
+    /// curve 1, limit 1.
     /// </summary>
     public float FogNear;
     public float FogFar;
     public float FogCurve;
     public float FogLimit;
     /// <summary>
-    /// `CharacterAmbientLight` (the lighting's scene record `+0xac`:
-    /// the ambient colour times its level).
+    /// `CharacterAmbientLight` (the scene context `+0xac`, reached as
+    /// the lighting's `+0x18c`: the ambient colour times its level).
     /// </summary>
     public Vector3 CharacterAmbient;
     /// <summary>
@@ -989,7 +992,9 @@ public sealed partial class Light
     public float Level;
     /// <summary>
     /// The map's turn of this light, degrees (lighting `+0x1ac` pitch,
-    /// `+0x1b0` yaw, `+ 0xc i`): `Rx(pitch) * Ry(yaw) * direction`.
+    /// `+0x1b0` yaw, `+ 0xc i`): `Rx(pitch) * Ry(yaw) * normalize(d)`,
+    /// the degrees as `/ 180 * 3.14`, skipped while both are within
+    /// 0.001 of 0.
     /// </summary>
     public float Pitch;
     public float Yaw;
@@ -1021,9 +1026,12 @@ public sealed partial class MenuWindow
     /// </summary>
     public uint State;
     /// <summary>
-    /// Its row count (`+0x30`) and the first row shown (`+0x32`).
+    /// Its row count (`+0x30`).
     /// </summary>
     public ushort Rows;
+    /// <summary>
+    /// The first row shown (`+0x32`).
+    /// </summary>
     public short First;
     /// <summary>
     /// The cursor (`+0x48`; the row is `cursor &gt;&gt; 1` in two-column
@@ -1057,14 +1065,16 @@ public sealed partial class MenuWindow
 }
 
 /// <summary>
-/// The sphere grid screen's data (`g_Abmap` `0x02305834` holds its
-/// address; docs/formats/pc-ui.md "Sphere grid helpers"; the node
-/// fields beyond the kind read through gd-ffx, 2026-11-16).
+/// The sphere grid screen's data: `g_Abmap` (`0x02305834`) holds the
+/// address of `g_AbmapData` (set by `InitLpamng`); docs/formats/pc-ui.md
+/// "Sphere grid helpers" and docs/formats/field.md (x, y, the panel bits
+/// at `+0x21`).
 /// </summary>
 public sealed partial class SphereGrid
 {
     /// <summary>
-    /// The grid is loaded (`g_Abmap` set, nodes counted).
+    /// The grid screen runs (`g_AbmapRunning` `0x01a85f70`, which
+    /// `TOMenuTermAbilityMap2` clears; `g_Abmap` itself stays set).
     /// </summary>
     public bool Open;
     /// <summary>
@@ -1073,8 +1083,8 @@ public sealed partial class SphereGrid
     /// </summary>
     public byte Current;
     /// <summary>
-    /// The node under the cursor (`+0x112fc`, a node index; its kind
-    /// names the help line, `AbmapSetHelpMessage`).
+    /// The node under the cursor (`+0x112fc`, an index into `nodes`; its
+    /// kind names the help line, `AbmapSetHelpMessage`).
     /// </summary>
     public ushort Cursor;
     /// <summary>
@@ -1116,7 +1126,7 @@ public sealed partial class SphereGrid
 public sealed partial class GridNode
 {
     /// <summary>
-    /// Its place on the grid (`+0`, `+2`; y down).
+    /// Its place on the grid (`+0`, `+2`; observed: y grows down).
     /// </summary>
     public short X;
     public short Y;
@@ -1164,8 +1174,10 @@ public sealed partial class GridLink
 }
 
 /// <summary>
-/// One map object (a key of the scene's object tree, `PhyreScene`
-/// `+0x1198`: the number in its meshes' names, `N_kShape`).
+/// One map object: a key of the scene's object tree (`PhyreScene`
+/// `+0x1198`), each mesh instance's `+0x58` (`obj_id`;
+/// `PhyreScene_rebuildMapObjects` `0x00658ae0`). Observed at Besaid:
+/// the number in its meshes' names, `N_kShape`.
 /// </summary>
 public sealed partial class SceneObject
 {
@@ -1205,14 +1217,16 @@ public sealed partial class SceneMesh
     /// </summary>
     public float[] World = new float[12];
     /// <summary>
-    /// It is drawn: its draw record (`+0x1c`) points back at it (the
-    /// layer mask `+0xfb14` has its layer, `+0x48`).
+    /// It is drawn: its draw record (`+0x1c`) points back at it (what
+    /// `setMeshInstanceGroupIdVisible` sets from the mask `+0xfb14`);
+    /// false without a record.
     /// </summary>
     public bool Drawn;
     /// <summary>
-    /// Its layer (`+0x48`).
+    /// Its group id (`+0x48`, `m_groupID`): the bit `1 &lt;&lt; (id &amp; 31)` of
+    /// the scene's mask `+0xfb14`.
     /// </summary>
-    public byte Layer;
+    public uint Layer;
 
     /// <summary>Reads one from the encoding.</summary>
     public static SceneMesh Read(ref StateReader r)
@@ -1220,7 +1234,7 @@ public sealed partial class SceneMesh
         var o = new SceneMesh();
         o.World = r.Floats(12);
         o.Drawn = r.Bool();
-        o.Layer = r.U8();
+        o.Layer = r.U32();
         return o;
     }
 }
@@ -1246,11 +1260,12 @@ public sealed partial class Save
     public uint PlayTime;
     /// <summary>
     /// The front line: 3 character indices (`+0x3d58`,
-    /// `g_SaveInParty`; 0xff empty).
+    /// `g_SaveInParty`; observed: 0xff in an empty place).
     /// </summary>
     public byte[] Frontline = [];
     /// <summary>
-    /// The back line: 17 (`+0x3d5b`, `g_SaveOutParty`; 0xff empty).
+    /// The back line: 17 (`+0x3d5b`, `g_SaveOutParty`; observed: 0xff
+    /// in an empty place).
     /// </summary>
     public byte[] Backline = [];
     /// <summary>
@@ -1342,12 +1357,15 @@ public sealed partial class PartyMember
     /// </summary>
     public byte SphereLevels;
     /// <summary>
-    /// The limit gauge and its full value (`+0x39`, `+0x3a`).
+    /// The limit gauge and its full value (`+0x39`, `+0x3a`; copied to
+    /// and from the battle actor's `+0x5bc`/`+0x5bd` by `MsSetChrParam`
+    /// and `MsSetSaveData`).
     /// </summary>
     public byte LimitCharge;
     public byte LimitChargeMax;
     /// <summary>
-    /// Weapon and armour: their slots in `g_Equipment` (`+0x2d`, `+0x2e`).
+    /// Weapon and armour: their slots in `g_Equipment` (`+0x2d`, `+0x2e`;
+    /// 0xff none, docs/formats/battle.md "Saved parameters").
     /// </summary>
     public byte Weapon;
     public byte Armour;
@@ -1358,8 +1376,10 @@ public sealed partial class PartyMember
     /// </summary>
     public byte[] Commands = [];
     /// <summary>
-    /// The overdrive mode in use (`+0x38`) and the modes obtained, a bit
-    /// each (`+0x88`); Fahrenheit's names, not checked in the code.
+    /// The overdrive mode in use (`+0x38`, copied to the battle actor's
+    /// `+0x5bb` by `MsSetChrParam`/`MsSetSaveData`) and the modes had,
+    /// bit `k` for mode `k` (`+0x88`, `MsLimitTypeExpGet`,
+    /// `MsLimitTypeProcess`).
     /// </summary>
     public byte OverdriveMode;
     public uint OverdriveModes;
@@ -1400,7 +1420,8 @@ public sealed partial class ItemStack
     /// </summary>
     public byte Slot;
     /// <summary>
-    /// The item id (`0x2000` + the kernel's item index).
+    /// The item id (observed: `0x2000` + the kernel's item index, as the
+    /// battle menu's ids, `id &gt;&gt; 12` 2).
     /// </summary>
     public ushort Id;
     /// <summary>
