@@ -74,11 +74,11 @@ public static class ContentResolver
             var texDir = kind == "map" && id.StartsWith('/') && id.EndsWith('/') ? $"PS3Data{id}tex/" : null;
             var key = (kind, id, ticket);
             if (!Loading.TryGetValue(key, out var task))
-                Loading[key] = task = Background.Run(() =>
+                Loading[key] = task = Background.Run(() => GcTrace.Load($"{kind} {id}", () =>
                 {
                     var n = ClassicLibrary.Load(path, texDir);
                     return (n, n != null && prepare != null ? prepare(n) : null);
-                });
+                }));
             if (!task.IsCompleted)
                 return null;
             Loading.Remove(key);

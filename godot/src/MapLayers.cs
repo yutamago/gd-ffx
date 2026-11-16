@@ -85,7 +85,7 @@ public partial class MapLayers : Node3D
         if (lib.Path("map2d", level) is not { } path)
             return;
         _loadingLevel = level;
-        _loading = Background.Run(() => ClassicLibrary.Load(path));
+        _loading = Background.Run(() => GcTrace.Load($"map2d {level}", () => ClassicLibrary.Load(path)));
         Pending = _loading;
     }
 
