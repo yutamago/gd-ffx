@@ -84,7 +84,7 @@ device; what Godot shows comes from the game-state API.
 ## Sound
 
 The game's own mix (ffx-rust's FMOD mixer) plays through Godot's audio, on
-the Master bus, about 0.15 s behind the game and the output's own latency
+the Master bus, about 0.11 s behind the game and the output's own latency
 (docs/architecture.md, "Sound"). To turn it off:
 
 - `--mute` on the command line, after `--`;
@@ -94,7 +94,8 @@ Muted, the game still mixes its sound on the wall clock (as ffx-rust does
 without a device) and drops it. The debug overlay's `sound` line shows the
 seconds played, the frames queued (and their mean), the underruns (Godot's
 mix asked for more than the game's mixer had ready: a gap, then 100 ms of
-silence while the queue fills again) and the latency: the mean queue and
+silence while the queue fills again; `FFX_AUDIO_TARGET` sets the frames
+kept queued, 4,800 by default: docs/architecture.md, "Sound") and the latency: the mean queue and
 Godot's output latency, in milliseconds.
 
 ## In a window under WSL (WSLg)

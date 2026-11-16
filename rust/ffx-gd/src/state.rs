@@ -55,6 +55,17 @@ fn read<T: ffx_bridge::Value + Default>(arena: &Arc<Arena>, at: u32) -> T {
     mem.read(at)
 }
 
+/// `len` bytes of the game's memory at `at` (at most 64 KiB; 0 where not
+/// mapped): a developer's look at structures the game-state API does not
+/// carry yet. Read only.
+#[must_use]
+pub fn peek(shared: &Shared, at: u32, len: usize) -> Vec<u8> {
+    let arena = shared.arena();
+    (0..len.min(0x1_0000))
+        .map(|i| read::<u8>(arena, at.wrapping_add(u32::try_from(i).unwrap_or(0))))
+        .collect()
+}
+
 /// The values now.
 #[must_use]
 pub fn snapshot(shared: &Shared) -> Snapshot {

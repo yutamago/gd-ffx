@@ -140,9 +140,28 @@ struct PadSlot {
 
 /// The mix's sample rate (FMOD's, ffx-rust's mixer).
 pub const AUDIO_RATE: u32 = 48_000;
-/// Frames queued before the output (re)starts after an underrun: three of
-/// the mixer's blocks (100 ms), as ffx-rust's WASAPI output.
-pub const AUDIO_PREFILL: usize = 4_800;
+/// Frames the game's feeder keeps queued for Godot's player
+/// (`Platform::audio_target`): three of the mixer's 1,600-frame blocks (100 ms)
+/// instead of ffx-rust's default 6,400, sized for WASAPI's own buffer. Measured
+/// at Besaid over 60 s (headless): 6,400 frames 147 ms and no underrun, 4,800
+/// 114 ms and none, 4,000 78 underruns, 3,200 699. The floor is the mixer's
+/// block: it pushes 1,600 frames at a time.
+pub const AUDIO_TARGET: usize = 4_800;
+/// Frames queued before the output (re)starts after an underrun: the target,
+/// as `Platform::audio_target` asks.
+pub const AUDIO_PREFILL: usize = AUDIO_TARGET;
+
+/// The target in use: [`AUDIO_TARGET`], or `FFX_AUDIO_TARGET` (frames, 1,600 to
+/// 24,000) for trying another on a slow machine.
+pub fn audio_target() -> usize {
+    static T: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *T.get_or_init(|| {
+        std::env::var("FFX_AUDIO_TARGET")
+            .ok()
+            .and_then(|v| v.trim().parse::<usize>().ok())
+            .map_or(AUDIO_TARGET, |v| v.clamp(1_600, AUDIO_MAX_QUEUE))
+    })
+}
 /// Frames the queue keeps at most (half a second); older ones are dropped.
 pub const AUDIO_MAX_QUEUE: usize = 24_000;
 
@@ -322,7 +341,7 @@ impl AudioQueue {
         let mut r = lock(&self.ring);
         r.tick(now);
         let queued = r.samples.len() / 2;
-        if !r.playing && queued >= AUDIO_PREFILL {
+        if !r.playing && queued >= audio_target() {
             r.playing = true;
         }
         let n = if r.playing { queued.min(frames) } else { 0 };
@@ -1086,6 +1105,10 @@ impl Platform for GodotPlatform {
 
     fn audio_underruns(&self) -> u64 {
         self.b().audio.underruns()
+    }
+
+    fn audio_target(&self) -> usize {
+        audio_target()
     }
 
     fn audio_push(&self, block: &[f32]) {

@@ -155,6 +155,19 @@ public sealed class GameStateView
     }
 
     /// <summary>
+    /// Whether a field transform scales everything to nothing (its 3x3 all zero):
+    /// the game parks objects that way (Besaid's <c>f002</c>s until they are used),
+    /// so it draws nothing there.
+    /// </summary>
+    public static bool ZeroSize(float[] m)
+    {
+        for (int i = 0; i < 11; i++)
+            if (i % 4 != 3 && Mathf.Abs(m[i]) > 1e-6f)
+                return false;
+        return true;
+    }
+
+    /// <summary>
     /// The game camera's transform: Camera.World is
     /// [Y.x Y.y Y.z X.x | Z.x Z.y Z.z X.y | P.x P.y P.z X.z] in render space.
     /// </summary>
@@ -220,7 +233,7 @@ public sealed class GameStateView
                     for (int i = 0; i < bones.Length; i++)
                         bones[i] = BonePoint(p.World, p.Bones[i].Matrix).Lerp(bones[i], Alpha);
             }
-            list.Add(new ActorFrame(a, root, bones, a.Hidden == 0 && a.Alpha > 0));
+            list.Add(new ActorFrame(a, root, bones, a.Hidden == 0 && a.Alpha > 0 && !ZeroSize(a.World)));
         }
         return list;
     }

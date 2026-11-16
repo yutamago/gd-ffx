@@ -113,6 +113,27 @@ tools/build-extension.sh ...`) to have built that library first.
 A .NET export also needs a solution file, `godot/gd-ffx.sln`. The editor
 makes one, and `tools/export.sh` writes it when it is missing (gitignored).
 
+## Checked on Windows
+
+The Windows export runs on Windows 11 (this machine's Windows side, from
+WSL; 2026-11-16), headless, with a documents sandbox and the classic cache
+in a temporary folder and the game read through `\\wsl.localhost\...`
+(read only). It passes the same checks as on Linux:
+
+```bat
+gd-ffx.console.exe --headless -- --selftest --game-dir=GAME --documents=TMP\docs --classic=TMP\classic
+gd-ffx.console.exe --headless -- --selftest-besaid --check-autosave --devsave=7 ...
+gd-ffx.console.exe --headless -- --selftest-battle --battle=3,0,0 --devsave=7 ...
+gd-ffx.console.exe --headless -- --selftest-menu --menu-screen=abilities --devsave=7 ...
+```
+
+The opening reaches the title at 30 updates a second (1,121 updates in 42
+s) with the sound at 113 ms; Besaid's map and 12 characters come up and the
+game's autosave is read back; the battle's HUD, a damage number and its
+effects; the menu's abilities screen. Not checked on Windows yet: a window
+(D3D12 or Vulkan rendering) and a pad. From WSL the `.exe` files need the
+execute bit (`chmod +x`), or WSL refuses to run them (exit 126).
+
 ## Licences
 
 - **The default build (`dev-unicorn`) must not be distributed.** Its
@@ -136,6 +157,27 @@ makes one, and `tools/export.sh` writes it when it is missing (gitignored).
     (`tools/godot-licences.gd`);
   - `dotnet-LICENSE.txt`, `dotnet-THIRD-PARTY-NOTICES.txt`: the .NET runtime
     in the data folder (MIT), from its NuGet runtime pack.
+
+## Steam Deck
+
+The Deck runs the Linux export (SteamOS is Linux x86_64). To play there:
+
+1. Copy `build/linux/` to the Deck (desktop mode), e.g. into
+   `~/Applications/gd-ffx/`, and have the game installed through Steam
+   (gd-ffx reads it; the launcher finds Steam's library folders).
+2. Steam: "Add a Non-Steam Game" -> `gd-ffx.x86_64`, then back in game
+   mode start it from the library. Steam Input gives the Deck's controls as
+   a pad, which gd-ffx hands to the game as an XInput pad.
+3. On a Deck (Steam sets `SteamDeck=1`) gd-ffx picks the `deck` quality
+   preset: the 3D drawn at 75 % of the screen and scaled up, no MSAA, at
+   most 60 frames a second (`GameSettings.ApplyQuality`). `--quality=high`
+   in the launch options turns it off, `--quality=deck` turns it on
+   elsewhere (the project setting `ffx/render/quality` too). For a lighter
+   renderer still, add `--rendering-method mobile` to the launch options
+   (Godot chooses the renderer at start).
+
+The preset is checked headless (`SteamDeck=1 ... --selftest-besaid`: "ffx:
+quality deck", then the check passes). Not run on a Deck: no Deck here.
 
 ## macOS (not done)
 

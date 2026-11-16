@@ -55,7 +55,9 @@ public static class ContentResolver
         }
         if (classic?.Path(kind, id) is { } path)
         {
-            var node = ClassicLibrary.Load(path);
+            // a map's own textures (its cube maps) are in PS3Data/<level>tex/
+            var texDir = kind == "map" && id.StartsWith('/') && id.EndsWith('/') ? $"PS3Data{id}tex/" : null;
+            var node = ClassicLibrary.Load(path, texDir);
             return new Content(kind, id, path, false, node == null ? null : Tag(node, kind, id, path, false));
         }
         return null;

@@ -478,6 +478,61 @@ impl FfxGame {
             .map_or_else(GString::new, |s| GString::from(s.as_str()))
     }
 
+    /// `len` bytes of the game's memory at `address` (a developer's look at
+    /// structures the game-state API does not carry yet; at most 64 KiB, 0
+    /// where not mapped); empty while no game runs.
+    #[func]
+    fn peek(&self, address: i64, len: i64) -> PackedByteArray {
+        let (Ok(at), Ok(n)) = (u32::try_from(address), usize::try_from(len)) else {
+            return PackedByteArray::new();
+        };
+        self.run
+            .as_ref()
+            .and_then(Run::shared)
+            .map_or_else(PackedByteArray::new, |s| {
+                PackedByteArray::from(crate::state::peek(&s, at, n).as_slice())
+            })
+    }
+
+    /// A material texture (its path as the model stores it, e.g. from the
+    /// glTF's `extras.ffx_textures`), face `face` (0, or 0..6 for a cube
+    /// map), as PNG bytes; empty without the archive or such a face.
+    #[func]
+    fn classic_texture(&self, path: GString, face: i64) -> PackedByteArray {
+        usize::try_from(face)
+            .ok()
+            .and_then(|f| classic().texture_png(&path.to_string(), f))
+            .map_or_else(PackedByteArray::new, |b| {
+                PackedByteArray::from(b.as_slice())
+            })
+    }
+
+    /// Whether the material texture at `path` is a cube map.
+    #[func]
+    fn classic_texture_is_cube(&self, path: GString) -> bool {
+        classic().texture_is_cube(&path.to_string())
+    }
+
+    /// Sphere grid node kind `kind`'s name in `language`; empty without the
+    /// archive or such a record.
+    #[func]
+    fn grid_node_name(&self, kind: i64, language: GString) -> GString {
+        u16::try_from(kind)
+            .ok()
+            .and_then(|k| classic().grid_node_name(&language.to_string(), k))
+            .map_or_else(GString::new, |s| GString::from(s.as_str()))
+    }
+
+    /// The save list's place name `index` (a save header's location) in
+    /// `language`; empty without the archive.
+    #[func]
+    fn place_name(&self, index: i64, language: GString) -> GString {
+        u16::try_from(index)
+            .ok()
+            .and_then(|i| classic().place_name(&language.to_string(), i))
+            .map_or_else(GString::new, |s| GString::from(s.as_str()))
+    }
+
     /// Asks the game to start a battle (`field` the battle field's record,
     /// its `group` and `formation`) as a random encounter would; refused
     /// while one runs. `request_results` reports it.

@@ -220,6 +220,62 @@ impl Importer {
         t.string(id & 0x0fff, 0).map(<[u8]>::to_vec)
     }
 
+    /// The name of sphere grid node kind `kind` (a node's `+6`) in
+    /// `language`, encoded: the first string of record `kind` of the
+    /// kernel's `panel.bin` (`g_AbmapNodeKinds`, which `eiAbmLoad` loads for
+    /// the grid); `None` without the table or the record.
+    #[must_use]
+    pub fn grid_node_name(&self, language: &str, kind: u16) -> Option<Vec<u8>> {
+        let lang = ffx_text::Language::from_code(language)?;
+        let path = format!("{}panel.bin", lang.kernel_dir());
+        let t = ffx_kernel::Table::parse(&self.read(&path).ok()?).ok()?;
+        t.string(kind, 0).map(<[u8]>::to_vec)
+    }
+
+    /// The save list's place name `index` (a save's header `+0x18`,
+    /// `AtelGetSaveDic`) in `language`, encoded: as `AtelGetSaveDicName`
+    /// reads it (ffx-rust's `ffx-script` `atel_get_save_dic_name`) from the
+    /// macro dictionary (`menu/macrodic.dcp`, 16 section offsets;
+    /// `TOGetSaveDicAdrs` takes section 11, `+0x2c`): the section's first
+    /// `u16` / 4 entries, entry `i` the text at the section plus its
+    /// `u16` `2 i` (`2 i + 1` is the hiragana form), up to a 0; an index past
+    /// the count gives entry 0. `None` without the file.
+    #[must_use]
+    pub fn place_name(&self, language: &str, index: u16) -> Option<Vec<u8>> {
+        let lang = ffx_text::Language::from_code(language)?;
+        let path = format!("ffx_ps2/ffx/master/new_{}pc/menu/macrodic.dcp", lang.code());
+        let b = self.read(&path).ok()?;
+        place_name_in(&b, index)
+    }
+
+    /// A material's texture as PNG: `path` as the model stores it (the
+    /// glTF's `extras.ffx_textures`, e.g.
+    /// `PS3Data/map/bsil/bsil00/tex/reflection3.dds`), face `face` (0 for a
+    /// 2D texture, 0..6 for a cube map: D3D's +x, -x, +y, -y, +z, -z).
+    /// `None` when the texture is missing or has no such face.
+    #[must_use]
+    pub fn texture_png(&self, path: &str, face: usize) -> Option<Vec<u8>> {
+        let t = ffx_phyre::MaterialTexture {
+            sampler: String::new(),
+            path: path.to_string(),
+        };
+        let tex = ffx_phyre::Texture::parse(self.read(&t.archive_path()).ok()?).ok()?;
+        tex.face_png(face)
+    }
+
+    /// Whether the texture at `path` (as [`Importer::texture_png`]) is a cube map.
+    #[must_use]
+    pub fn texture_is_cube(&self, path: &str) -> bool {
+        let t = ffx_phyre::MaterialTexture {
+            sampler: String::new(),
+            path: path.to_string(),
+        };
+        self.read(&t.archive_path())
+            .ok()
+            .and_then(|b| ffx_phyre::Texture::parse(b).ok())
+            .is_some_and(|t| t.kind.faces() == 6)
+    }
+
     /// The model at `path` as a glTF binary with its base colour textures
     /// embedded (PNG), as stored (no axis change: see the module's doc).
     ///
@@ -355,5 +411,58 @@ mod tests {
             assert!(b.len() > 10_000, "{}: {} bytes", p.display(), b.len());
         }
         std::fs::remove_dir_all(&cache).unwrap();
+    }
+}
+
+/// [`Importer::place_name`] on the dictionary's bytes.
+#[must_use]
+pub fn place_name_in(dic: &[u8], index: u16) -> Option<Vec<u8>> {
+    const SECTION: usize = 11;
+    let u32_at = |o: usize| {
+        dic.get(o..o + 4)
+            .map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
+    };
+    let u16_at = |o: usize| dic.get(o..o + 2).map(|s| u16::from_le_bytes([s[0], s[1]]));
+    let sec = usize::try_from(u32_at(SECTION * 4)?).ok()?;
+    if sec == 0 {
+        return None;
+    }
+    let count = usize::from(u16_at(sec)? >> 2);
+    let i = if usize::from(index) >= count {
+        0
+    } else {
+        usize::from(index)
+    };
+    let at = sec + usize::from(u16_at(sec + 4 * i)?);
+    let text = dic.get(at..)?;
+    let end = text.iter().position(|&c| c == 0).unwrap_or(text.len());
+    Some(text[..end].to_vec())
+}
+
+#[cfg(test)]
+mod place_tests {
+    use super::place_name_in;
+
+    /// A made-up dictionary: section 11 with two entries (each a name and
+    /// its hiragana form).
+    #[test]
+    fn place_names_come_from_section_11() {
+        let sec = 0x40_usize;
+        let mut d = vec![0u8; sec];
+        d[44..48].copy_from_slice(&u32::try_from(sec).unwrap().to_le_bytes());
+        // 2 entries: 4 u16 offsets (count = first / 4 = 8 / 4 = 2)
+        let offs: [u16; 4] = [8, 11, 11, 14];
+        for o in offs {
+            d.extend_from_slice(&o.to_le_bytes());
+        }
+        d.extend_from_slice(&[0x41, 0x42, 0, 0x43, 0x44, 0, 0x45, 0]);
+        assert_eq!(place_name_in(&d, 0).as_deref(), Some(&[0x41, 0x42][..]));
+        assert_eq!(place_name_in(&d, 1).as_deref(), Some(&[0x43, 0x44][..]));
+        assert_eq!(
+            place_name_in(&d, 9).as_deref(),
+            Some(&[0x41, 0x42][..]),
+            "past the count: entry 0"
+        );
+        assert_eq!(place_name_in(&[0u8; 8], 0), None);
     }
 }

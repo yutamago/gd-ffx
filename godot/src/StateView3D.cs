@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Collections.Generic;
 using GdFfx.Api;
 using GdFfx.Remake;
@@ -15,6 +16,7 @@ namespace GdFfx;
 public partial class StateView3D : Node3D
 {
     private Camera3D _camera = null!;
+    private WorldEnvironment _env = null!;
     private readonly Dictionary<ushort, ActorNode> _actors = new();
     private SphereMesh _boneMesh = null!;
     private Node3D? _map;
@@ -47,13 +49,20 @@ public partial class StateView3D : Node3D
         public (int Bone, int Element)[] BoneMap = [];
         /// <summary>The skeleton's transform in the model's space (inverted).</summary>
         public Transform3D SkeletonInModelInv = Transform3D.Identity;
+        /// <summary>
+        /// A model without a skin (rigid parts, e.g. the save sphere f001): each part node
+        /// <c>MeshNodeK</c> with the game element it follows and its parent's transform in the
+        /// model (inverted).
+        /// </summary>
+        public (Node3D Part, int Element, Transform3D ParentInv)[] Rigid = [];
     }
 
     public override void _Ready()
     {
+        GameSettings.ApplyQuality(GetViewport());
         _camera = new Camera3D { Current = true, Near = 0.5f, Far = 20000f };
         AddChild(_camera);
-        var env = new WorldEnvironment
+        _env = new WorldEnvironment
         {
             Environment = new Environment
             {
@@ -62,10 +71,12 @@ public partial class StateView3D : Node3D
                 AmbientLightSource = Environment.AmbientSource.Color,
                 AmbientLightColor = new Color(0.75f, 0.75f, 0.78f),
                 AmbientLightEnergy = 1.0f,
-                TonemapMode = Environment.ToneMapper.Filmic,
+                // the game draws its own colours (ClassicMaterials): no tone mapping
+                TonemapMode = Environment.ToneMapper.Linear,
             },
         };
-        AddChild(env);
+        AddChild(_env);
+        AddChild(new EffectView { Name = "EffectView" });
         AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-55, 30, 0), LightEnergy = 0.8f });
         _boneMesh = new SphereMesh { Radius = 0.6f, Height = 1.2f, RadialSegments = 6, Rings = 3 };
     }
@@ -109,12 +120,90 @@ public partial class StateView3D : Node3D
             _camera.GlobalTransform = cam.Transform;
             _camera.Fov = Mathf.RadToDeg(cam.FovY);
             _camera.Far = Mathf.Clamp(cam.Far, 100f, 20000f);
+            // the game's screen shake (Effects.ShakeX/Y, in the PS2 screen's pixels, 448 high):
+            // as the same share of the view at a subject 100 units away
+            var fx = view.Current?.Effects;
+            float unit = 2f * Mathf.Tan(Mathf.DegToRad(_camera.Fov) / 2f) * 100f / 448f;
+            _camera.HOffset = (fx?.ShakeX ?? 0f) * unit;
+            _camera.VOffset = -(fx?.ShakeY ?? 0f) * unit;
         }
+        ClassicMaterials.SetLook(view.Current?.Look);
+        // the game clears to the map's background colour (Look.background), drawn as it is
+        if (view.Current?.Look is { Valid: true } look)
+            _env.Environment.BackgroundColor = new Color(look.Background.X, look.Background.Y, look.Background.Z);
         UpdateMap(host.Classic, view.Current);
+        UpdateObjects(view);
         UpdateActors(host.Classic, view);
     }
 
     // ---- the map ----------------------------------------------------------------
+
+    // ---- the map's objects ------------------------------------------------------
+
+    /// <summary>The classic map's mesh nodes by object id and mesh index (<c>N_kShape</c>).</summary>
+    private Dictionary<(uint Id, int K), Node3D>? _objectNodes;
+
+    /// <summary>Objects placed by the game this frame (for tests).</summary>
+    public int ObjectsPlaced { get; private set; }
+
+    private static readonly System.Text.RegularExpressions.Regex Fbx = new("FBXASC(\\d{3})");
+    private static readonly System.Text.RegularExpressions.Regex MeshName = new("^(\\d+)_(\\d+)Shape$");
+
+    /// <summary>A node name with FBX's <c>FBXASCnnn</c> escapes decoded.</summary>
+    public static string FbxName(string n) => Fbx.Replace(n, m => ((char)int.Parse(m.Groups[1].Value)).ToString());
+
+    private void IndexObjects()
+    {
+        _objectNodes = new();
+        if (_map == null || _map.Name != "ClassicMap")
+            return;
+        foreach (var n in _map.FindChildren("*", nameof(Node3D), true, false))
+            if (n is Node3D n3 && MeshName.Match(FbxName(n3.Name)) is { Success: true } m)
+                _objectNodes.TryAdd((uint.Parse(m.Groups[1].Value), int.Parse(m.Groups[2].Value)), n3);
+    }
+
+    /// <summary>
+    /// The map's objects where the game has them (API 8's <c>Snapshot.objects</c>): mesh k of
+    /// object N (the node <c>N_kShape</c>) at its live world matrix, interpolated between the
+    /// last two snapshots, shown while the game draws it. Scripts move objects this way, e.g.
+    /// Besaid's birds, which the file places at the origin.
+    /// </summary>
+    private void UpdateObjects(GameStateView view)
+    {
+        ObjectsPlaced = 0;
+        var s = view.Current;
+        if (s == null || _map == null)
+            return;
+        if (_objectNodes == null)
+            IndexObjects();
+        if (_objectNodes!.Count == 0)
+            return;
+        Dictionary<uint, GdFfx.Api.SceneObject>? prev = null;
+        if (view.Previous is { } p && p.World.Level == s.World.Level)
+        {
+            prev = new();
+            foreach (var o in p.Objects)
+                prev.TryAdd(o.Id, o);
+        }
+        foreach (var o in s.Objects)
+            for (int k = 0; k < o.Meshes.Count; k++)
+            {
+                if (!_objectNodes.TryGetValue((o.Id, k), out var node))
+                    continue;
+                var m = o.Meshes[k];
+                var t = GameStateView.CameraTransform(m.World);
+                if (prev != null && prev.TryGetValue(o.Id, out var po) && k < po.Meshes.Count)
+                {
+                    var a = GameStateView.CameraTransform(po.Meshes[k].World);
+                    if (a.Origin.DistanceTo(t.Origin) < GameStateView.WarpDistance * 4)
+                        t = a.InterpolateWith(t, view.Alpha);
+                }
+                if (t.Basis.Determinant() != 0)
+                    node.GlobalTransform = t;
+                node.Visible = m.Drawn;
+                ObjectsPlaced++;
+            }
+    }
 
     private void UpdateMap(ClassicLibrary? lib, Snapshot? s)
     {
@@ -129,6 +218,7 @@ public partial class StateView3D : Node3D
         var map = content.Node;
         _map?.QueueFree();
         _map = map;
+        _objectNodes = null;
         _mapLevel = level;
         if (map == null)
             return;
@@ -215,7 +305,10 @@ public partial class StateView3D : Node3D
             return;
         var skels = model.FindChildren("*", nameof(Skeleton3D), true, false);
         if (skels.Count == 0 || skels[0] is not Skeleton3D skel)
+        {
+            n.Rigid = RigidParts(model);
             return;
+        }
         n.Skeleton = skel;
         // the skeleton's place in the model (the glTF nodes above it)
         Transform3D t = Transform3D.Identity;
@@ -224,6 +317,44 @@ public partial class StateView3D : Node3D
                 t = p3.Transform * t;
         n.SkeletonInModelInv = t.AffineInverse();
         n.BoneMap = BoneOrder(skel);
+    }
+
+    /// <summary>
+    /// A skinless model's parts and the elements they follow: part <c>MeshNodeK</c> follows the
+    /// K-th leaf <c>SkeletonNode_i</c> by element (f001: three parts on elements 2, 3, 4, the
+    /// leaves; the game moves 2 and 3 up 6 and turns them, 4 is the base). Seen on f001, where
+    /// the game places the parts per mesh (<c>graphicCharacterInstanceSetWorldMatrixByMdlID</c>);
+    /// the pairing is inferred, not read from the game.
+    /// </summary>
+    private static (Node3D, int, Transform3D)[] RigidParts(Node3D model)
+    {
+        const string bone = "SkeletonNode_", part = "MeshNode";
+        var leaves = new List<int>();
+        var parts = new SortedDictionary<int, Node3D>();
+        foreach (var x in model.FindChildren("*", nameof(Node3D), true, false))
+        {
+            if (x is not Node3D n3)
+                continue;
+            var name = n3.Name.ToString();
+            if (name.StartsWith(bone, System.StringComparison.Ordinal) && int.TryParse(name[bone.Length..], out var e)
+                && !n3.GetChildren().OfType<Node3D>().Any(c => c.Name.ToString().StartsWith(bone, System.StringComparison.Ordinal)))
+                leaves.Add(e);
+            else if (name.StartsWith(part, System.StringComparison.Ordinal) && int.TryParse(name[part.Length..], out var k))
+                parts[k] = n3;
+        }
+        leaves.Sort();
+        var list = new List<(Node3D, int, Transform3D)>();
+        foreach (var (k, node) in parts)
+        {
+            if (k >= leaves.Count)
+                break;
+            Transform3D t = Transform3D.Identity;
+            for (Node? p = node.GetParent(); p != null && p != model; p = p.GetParent())
+                if (p is Node3D p3)
+                    t = p3.Transform * t;
+            list.Add((node, leaves[k], t.AffineInverse()));
+        }
+        return list.ToArray();
     }
 
     /// <summary>
@@ -262,13 +393,26 @@ public partial class StateView3D : Node3D
     private static int Pose(ActorNode n, Actor a, GameStateView view)
     {
         var skel = n.Skeleton;
-        if (skel == null)
-            return 0;
         Actor? prev = null;
         if (view.Previous != null)
             foreach (var p in view.Previous.Actors)
                 if (p.Slot == a.Slot && p.Bones.Count == a.Bones.Count && view.Interpolates(p, a))
                     prev = p;
+        if (skel == null)
+        {
+            int moved = 0;
+            foreach (var (part, i, parentInv) in n.Rigid)
+            {
+                if (i >= a.Bones.Count)
+                    continue;
+                var t = RowMajor(a.Bones[i].Matrix);
+                if (prev != null)
+                    t = RowMajor(prev.Bones[i].Matrix).InterpolateWith(t, view.Alpha);
+                part.Transform = parentInv * t;
+                moved++;
+            }
+            return moved;
+        }
         int posed = 0;
         // in skeleton order, parents first: a parent's later set would move its children
         foreach (var (b, i) in n.BoneMap)

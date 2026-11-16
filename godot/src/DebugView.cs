@@ -61,8 +61,12 @@ public partial class DebugView : Control
         var timeout = GameSettings.Number("selftest-timeout", 300);
         if (GameSettings.Flag("selftest"))
             _test = new SelfTest(timeout);
+        else if (GameSettings.Flag("selftest-menu"))
+            _test = new MenuTest(timeout, GameSettings.Arg("shot"));
         else if (GameSettings.Flag("selftest-besaid"))
             _test = new BesaidTest(timeout, GameSettings.Arg("shot"));
+        else if (GameSettings.Flag("selftest-remake-map"))
+            _test = new Remake.RemakeMapTest(timeout, GameSettings.Arg("shot"));
         else if (GameSettings.Flag("selftest-remake"))
             _test = new Remake.RemakeTest(timeout);
         else if (GameSettings.Flag("selftest-battle"))
@@ -216,6 +220,26 @@ public sealed class SelfTest(double timeout) : ITest
     public string Note { get; private set; } = "";
 
     /// <summary>One frame: null while running, else whether the test passed.</summary>
+    /// <summary>The save's menu parts in one line: gil, time, the front line by name, items.</summary>
+    public static string SaveLine(FfxGame game, GdFfx.Api.Snapshot s)
+    {
+        var sv = s.Save;
+        var lang = MessageView.LanguageCode(s.World.Language);
+        string Name(int i) => i < sv.Members.Count ? MessageView.Clean(game.DecodeText(sv.Members[i].Name, lang)) : $"#{i}";
+        var front = string.Join(", ", sv.Frontline.Where(i => i != 0xff).Select(i => $"{Name(i)} {sv.Members[i].Hp}/{sv.Members[i].MaxHp}"));
+        var joined = string.Join(", ", sv.Members.Where(m => m.Joined).Select(m => Name(m.Index)));
+        return $"valid {sv.Valid} gil {sv.Gil} time {sv.PlayTime / 3600}:{sv.PlayTime / 60 % 60:00}:{sv.PlayTime % 60:00} front [{front}] "
+            + $"joined [{joined}] items {sv.Items.Count} (first {(sv.Items.Count > 0 ? $"0x{sv.Items[0].Id:x4} x{sv.Items[0].Count}" : "-")})";
+    }
+
+    /// <summary>The scene's look in one line (the colour scale, the fog, the lights).</summary>
+    public static string LookLine(GdFfx.Api.Look l)
+    {
+        var lights = string.Join("; ", l.Lights.ConvertAll(x => $"dir {x.Direction} colour {x.Colour} level {x.Level:F2} pitch {x.Pitch} yaw {x.Yaw}"));
+        return $"valid {l.Valid} scale {l.ColourScale} ambient {l.Ambient} fog {l.FogColour} {l.FogNear}..{l.FogFar} curve {l.FogCurve} limit {l.FogLimit} "
+            + $"chr ambient {l.CharacterAmbient} lights [{lights}]";
+    }
+
     public bool? Step(FfxGame game, GameState s, GameStateView v, double delta)
     {
         _total += delta;
@@ -297,14 +321,15 @@ public sealed class SelfTest(double timeout) : ITest
 /// of its level and the player's classic model come up, posed by the game's
 /// skeleton (with <c>--shot=FILE.png</c> and a renderer, a picture of it);
 /// then the player walks down and left, as the original's replay does, off
-/// the beach to the next map (0x14, <c>bsil0200</c>).
+/// the beach to the next map (0x14, <c>bsil0200</c>). With <c>--check-autosave</c>, then
+/// the autosave the game writes there, read back as the load list's first row.
 /// </summary>
 public sealed class BesaidTest(double timeout, string? shot) : ITest
 {
     public const int MapBeach = 0x46;
     public const int MapNext = 0x14;
 
-    private enum Phase { Boot, Beach, Classic, Shot, Walk }
+    private enum Phase { Boot, Beach, Classic, Shot, Walk, AutoSave }
 
     private Phase _phase = Phase.Boot;
     private double _phaseTime;
@@ -341,7 +366,12 @@ public sealed class BesaidTest(double timeout, string? shot) : ITest
                 break;
             case Phase.Beach when view != null && view.MapLevel == v.Current!.World.Level && view.Posed.Models > 0
                 && view.Posed.PosedBones > 40:
-                _seen = $"{v.Current.World.Level} shown, {view.Posed.Models} character model(s) posed ({view.Posed.PosedBones} bones)";
+                _seen = $"{v.Current.World.Level} shown, {view.Posed.Models} character model(s) posed ({view.Posed.PosedBones} bones), "
+                    + $"{view.ObjectsPlaced} object mesh(es) placed by the game";
+                if (view.ObjectsPlaced == 0)
+                    return Done(false, $"no map object placed by the game ({v.Current.Objects.Count} in the snapshot)");
+                GD.Print($"ffx selftest: look {SelfTest.LookLine(v.Current.Look)}");
+                GD.Print($"ffx selftest: save {SelfTest.SaveLine(game, v.Current)}");
                 Next(shot != null && DisplayServer.GetName() != "headless" ? Phase.Shot : Phase.Classic);
                 break;
             case Phase.Shot when _phaseTime > 1.0:
@@ -364,7 +394,30 @@ public sealed class BesaidTest(double timeout, string? shot) : ITest
                 var moved = _start.DistanceTo(_last);
                 if (moved < 5f)
                     return Done(false, $"map {MapNext:x} came without the player moving ({moved:F1} units)");
-                return Done(true, $"{_seen}; walked {moved:F0} units off the beach to map {MapNext:x} in {_phaseTime:F1} s");
+                _seen = $"{_seen}; walked {moved:F0} units off the beach to map {MapNext:x} in {_phaseTime:F1} s";
+                if (!GameSettings.Flag("check-autosave"))
+                    return Done(true, _seen);
+                Next(Phase.AutoSave);
+                break;
+            }
+            // --check-autosave: the game writes ffx_000 on entering the map; the load list
+            // reads it back as its first row, the header as the game's own state
+            case Phase.AutoSave:
+            {
+                var list = SaveFiles.List(GameSettings.DocumentsDir(), saving: false);
+                if (list.Count == 0 || list[0] is not { Slot: 0 } auto || v.Current == null)
+                {
+                    if (_phaseTime > 30)
+                        return Done(false, $"no autosave 30 s after map {MapNext:x} ({_seen})");
+                    break;
+                }
+                var sv = v.Current.Save;
+                if (auto.Gil != sv.Gil || auto.Party[0] != sv.Frontline[0] || auto.Party[1] != sv.Frontline[1])
+                    return Done(false, $"the autosave (gil {auto.Gil}, party {auto.Party[0]},{auto.Party[1]}) is not the game's (gil {sv.Gil}, {sv.Frontline[0]},{sv.Frontline[1]})");
+                if (auto.Name(0).Length == 0 || !auto.Name(0).SequenceEqual(sv.Members[0].Name))
+                    return Done(false, "the autosave's first name is not the game's");
+                var row = BattleMenuView.SaveRow(game, auto, MessageView.LanguageCode(v.Current.World.Language));
+                return Done(true, $"{_seen}; the autosave's row: {row}");
             }
             case Phase.Walk:
                 if (v.Current?.World.Map == MapBeach)
@@ -452,13 +505,35 @@ public sealed class MessageTest(double timeout, string? shot) : ITest
 /// G3/G4's battle check (<c>--selftest-battle --devsave=7 --battle=3,0,0</c>):
 /// from Besaid the deck's battle starts; its classic battle map and the
 /// characters (party, monsters) come up posed, and the native command menu
-/// shows Tidus's commands named from the kernel tables with the game's cursor
+/// shows Tidus's commands named from the kernel tables with the game's cursor,
+/// and the HUD the party's HP and MP and the turn order; then Tidus attacks
+/// (Enter tapped) until a damage number pops; the battle's effects play on their
+/// targets, effect 50001800 by the example remade effect (registered at the start)
 /// (with <c>--shot=FILE.png</c> under a renderer, a picture).
 /// </summary>
-public sealed class BattleTest(double timeout, string? shot) : ITest
+public sealed class BattleTest : ITest
 {
+    private readonly double timeout;
+    private readonly string? shot;
+
+    public BattleTest(double timeout, string? shot)
+    {
+        this.timeout = timeout;
+        this.shot = shot;
+        Remake.RemakeRegistry.Register("effect", RemadeId, ExampleEffect, "selftest-battle");
+        GD.Print($"ffx selftest: effect {RemadeId} registered to {ExampleEffect}");
+    }
+
     private double _total;
     private double _seen = -1;
+    private string _first = "";
+    /// <summary>The effect this battle starts first (seen in the deck's battle 3,0,0), remade by the example.</summary>
+    public const string RemadeId = "50001800";
+    private double _tap;
+
+    /// <summary>The example remade effect (a ring; docs/remake.md).</summary>
+    public const string ExampleEffect = "res://remake/examples/stand_in_effect.tscn";
+    private bool _down;
 
     public string Note { get; private set; } = "";
 
@@ -470,24 +545,201 @@ public sealed class BattleTest(double timeout, string? shot) : ITest
         var root = (Engine.GetMainLoop() as SceneTree)?.Root;
         var menu = root?.FindChild("BattleMenuView", true, false) as BattleMenuView;
         var view3d = root?.FindChild("StateView3D", true, false) as StateView3D;
+        var hud = root?.FindChild("BattleHudView", true, false) as BattleHudView;
         var c = v.Current;
         if (_total > timeout)
             return Done(false, $"timed out: battle {c?.World.Battle}, level {c?.World.Level}, map shown {view3d?.MapLevel}, "
                 + $"models {view3d?.Posed.Models}, menu [{string.Join(", ", menu?.Shown ?? [])}]");
-        if (c == null || menu == null || view3d == null || !c.World.Battle || menu.Shown.Count < 2
-            || view3d.MapLevel != c.World.Level || view3d.Posed.Models < 2)
+        if (c == null || menu == null || view3d == null || hud == null || !c.World.Battle || menu.Shown.Count < 2
+            || view3d.MapLevel != c.World.Level || view3d.Posed.Models < 2 || hud.Shown.Count == 0 || hud.Order.Length == 0)
             return null;
         if (_seen < 0)
             _seen = _total;
         if (_total - _seen < 0.3)
             return null;
-        if (shot != null && DisplayServer.GetName() != "headless")
+        if (_first.Length == 0)
         {
-            root!.GetViewport().GetTexture().GetImage().SavePng(shot);
-            GD.Print($"ffx selftest: picture {shot}");
+            if (shot != null && DisplayServer.GetName() != "headless")
+            {
+                root!.GetViewport().GetTexture().GetImage().SavePng(shot);
+                GD.Print($"ffx selftest: picture {shot}");
+            }
+            _first = $"battle {c.World.Level}: {view3d.Posed.Models} models posed ({view3d.Posed.PosedBones} bones); "
+                + $"the command menu: {string.Join(" | ", menu.Shown)}; the HUD: {string.Join(" | ", hud.Shown)}; next: {hud.Order}";
+            GD.Print($"ffx selftest: {_first}; attacking");
         }
-        return Done(true, $"battle {c.World.Level}: {view3d.Posed.Models} models posed ({view3d.Posed.PosedBones} bones); "
-            + $"the command menu: {string.Join(" | ", menu.Shown)}");
+        var effects = root?.FindChild("EffectView", true, false) as EffectView;
+        // Attack: confirm (Enter) tapped until a damage number pops
+        if (hud.Popped > 0)
+        {
+            Tap(false);
+            return Done(true, $"{_first}; {hud.Popped} damage number(s) popped; {effects?.Started ?? 0} effect(s) started "
+                + $"({effects?.RemadeStarted ?? 0} remade as {RemadeId})");
+        }
+        _tap += delta;
+        if (_tap > 0.25)
+        {
+            _tap = 0;
+            Tap(!_down);
+        }
+        return null;
+    }
+
+    private void Tap(bool down)
+    {
+        _down = down;
+        Godot.Input.ParseInputEvent(new InputEventKey { PhysicalKeycode = Godot.Key.Enter, Keycode = Godot.Key.Enter, Pressed = down });
+    }
+
+    private bool Done(bool pass, string note)
+    {
+        Note = note;
+        return pass;
+    }
+}
+
+/// <summary>
+/// G4's field menu check (<c>--selftest-menu --devsave=7</c>): on Besaid beach with the
+/// control, the menu key (V) opens the game's main menu; the native panel then shows the
+/// party by the names the player gave, with HP and MP, and the gil and play time
+/// (<see cref="FieldMenuView"/>), and the options list (<see cref="BattleMenuView"/>); then
+/// Items (one down, confirm) opens the game's item screen and the native list of the
+/// inventory, named from the kernel tables.
+/// With <c>--shot=FILE.png</c> under a renderer, a picture.
+/// </summary>
+public sealed class MenuTest(double timeout, string? shot) : ITest
+{
+    private double _total;
+    private double _tap;
+    private bool _down;
+    private double _open = -1;
+    private double _probe;
+    private string _main = "";
+    private double _listAt = -1;
+    private string _first = "";
+
+    public string Note { get; private set; } = "";
+
+    public bool? Step(FfxGame game, GameState s, GameStateView v, double delta)
+    {
+        _total += delta;
+        if (!s.Running && s.Seconds > 1)
+            return Done(false, $"the game ended: {s.Outcome}");
+        var root = (Engine.GetMainLoop() as SceneTree)?.Root;
+        var panel = root?.FindChild("FieldMenuView", true, false) as FieldMenuView;
+        var options = root?.FindChild("BattleMenuView", true, false) as BattleMenuView;
+        var c = v.Current;
+        if (_total > timeout)
+            return Done(false, $"timed out: map {c?.World.Map:x}, menu mask {c?.Menus.MainMask:x}, panel [{string.Join(" | ", panel?.Shown ?? [])}]");
+        if (c == null || panel == null || options == null || c.World.Map != BesaidTest.MapBeach
+            || _open < 0 && !c.World.PlayerControl && (c.Menus.MainMask & 2) == 0)
+            return null;
+        if (_open < 0 && ((c.Menus.MainMask & 2) == 0 || panel.Shown.Count == 0))
+        {
+            // tap the menu key until the game opens its menu
+            _tap += delta;
+            if (_tap > 0.3)
+            {
+                _tap = 0;
+                Tap(!_down);
+            }
+            return null;
+        }
+        Tap(false);
+        if (_open < 0)
+            _open = _total;
+        if (_total - _open < 0.5)
+            return null;
+        if (_main.Length == 0)
+        {
+            if (!panel.Footer.Contains("Gil"))
+                return Done(false, $"no gil line ({panel.Footer})");
+            _main = $"the menu: [{string.Join(" | ", options.Shown)}]; the party: [{string.Join(" | ", panel.Shown)}]; {panel.Footer}";
+            if (shot != null && DisplayServer.GetName() != "headless")
+                root!.GetViewport().GetTexture().GetImage().SavePng(shot);
+        }
+        // then into a screen: Items (one down, confirm), or Status with --menu-screen=status
+        // (four down, confirm, confirm the first character)
+        var screen = GameSettings.Arg("menu-screen") ?? "items";
+        if (screen == "sphere-grid")
+        {
+            // the first option, confirm, confirm the first character: the game's grid and the native view
+            _probe += delta;
+            double w = _probe - delta;
+            void P(Key key, bool d) => Godot.Input.ParseInputEvent(new InputEventKey { PhysicalKeycode = key, Keycode = key, Pressed = d });
+            foreach (var t in new[] { 1.0, 2.5 })
+            {
+                if (w < t && _probe >= t) P(Key.Enter, true);
+                if (w < t + 0.3 && _probe >= t + 0.3) P(Key.Enter, false);
+            }
+            var grid = root?.FindChild("SphereGridView", true, false) as SphereGridView;
+            if (grid == null || grid.Shown.Nodes == 0 || _probe < 6)
+                return _probe > 20 ? Done(false, $"no sphere grid drawn (mask {c.Menus.MainMask:x}, open {c.SphereGrid.Open})") : null;
+            if (shot != null && DisplayServer.GetName() != "headless")
+                root!.GetViewport().GetTexture().GetImage().SavePng(shot);
+            return Done(grid.Shown.Marked > 0 && grid.CursorName.Length > 0,
+                $"{_main}; the sphere grid: {grid.Shown.Nodes} nodes, {grid.Shown.Links} links, {grid.Shown.Marked} marked for character {c.SphereGrid.Current}, "
+                + $"the cursor on node {c.SphereGrid.Cursor} ({grid.CursorName})");
+        }
+        bool status = screen is "status" or "abilities" or "overdrive";
+        _probe += delta;
+        void Press(Key key, bool d) => Godot.Input.ParseInputEvent(new InputEventKey { PhysicalKeycode = key, Keycode = key, Pressed = d });
+        double was = _probe - delta;
+        int downs = screen switch { "abilities" => 2, "overdrive" => 3, "status" => 4, _ => 1 };
+        for (int i = 0; i < downs; i++)
+        {
+            double t = 1.0 + 0.6 * i;
+            if (was < t && _probe >= t) Press(Key.Down, true);
+            if (was < t + 0.3 && _probe >= t + 0.3) Press(Key.Down, false);
+        }
+        double e = 1.5 + 0.6 * downs;
+        // the status screen: the second character (one down in the character choice)
+        bool second = screen == "status";
+        if (second && was < e + 0.7 && _probe >= e + 0.7) Press(Key.Down, true);
+        if (second && was < e + 0.9 && _probe >= e + 0.9) Press(Key.Down, false);
+        foreach (var t in status ? new[] { e, e + 1.4 } : new[] { e })
+        {
+            if (was < t && _probe >= t) Press(Key.Enter, true);
+            if (was < t + 0.3 && _probe >= t + 0.3) Press(Key.Enter, false);
+        }
+        if (status)
+        {
+            if (FieldMenuView.OpenScreen(c.Menus.MainMask) != screen || panel.Status.Count == 0)
+                return _probe > 15
+                    ? Done(false, $"the {screen} screen did not come (mask {c.Menus.MainMask:x}, {FieldMenuView.OpenScreen(c.Menus.MainMask)}); {_main}")
+                    : null;
+            if (second && (c.Menus.CurrentPlayer != c.Save.Frontline[1] || !panel.Status[0].StartsWith($"HP: {c.Save.Members[c.Save.Frontline[1]].Hp}/")))
+                return Done(false, $"the status screen shows character {c.Menus.CurrentPlayer}, not the second ({c.Save.Frontline[1]}): [{string.Join(" | ", panel.Status)}]");
+            return Done(true, $"{_main}; the {screen} screen (character {c.Menus.CurrentPlayer}): [{string.Join(" | ", panel.Status)}]");
+        }
+        if ((c.Menus.MainMask & FieldMenuView.ItemsMask) == 0 || panel.Items.Count == 0)
+        {
+            if (_probe > 10)
+                return Done(false, $"the item screen did not come (mask {c.Menus.MainMask:x}, cursor {c.Menus.MainCursor}); {_main}");
+            return null;
+        }
+        // in the list: the cursor starts on slot 0; one down moves it to slot 1 (measured)
+        if (_listAt < 0)
+            _listAt = _probe;
+        double l = _probe - _listAt, lw = l - delta;
+        if (lw < 0.8 && l >= 0.8)
+            _first = panel.ItemAtCursor;
+        if (lw < 1.0 && l >= 1.0) Press(Key.Down, true);
+        if (lw < 1.3 && l >= 1.3) Press(Key.Down, false);
+        if (l < 2.5)
+            return null;
+        var cur = FieldMenuView.ItemList(c)?.Cursor ?? -1;
+        if (cur != 1 || _first.Length == 0 || panel.ItemAtCursor.Length == 0 || panel.ItemAtCursor == _first)
+            return Done(false, $"the item cursor: [{_first}] then [{panel.ItemAtCursor}] (slot {cur}, not 1)");
+        return Done(true, $"{_main}; the cursor on [{_first}], one down on [{panel.ItemAtCursor}]; the items: [{string.Join(" | ", panel.Items.Take(4))}{(panel.Items.Count > 4 ? " | ..." : "")}] ({panel.Items.Count})");
+    }
+
+    private void Tap(bool down)
+    {
+        if (_down == down)
+            return;
+        _down = down;
+        Godot.Input.ParseInputEvent(new InputEventKey { PhysicalKeycode = Key.V, Keycode = Key.V, Pressed = down });
     }
 
     private bool Done(bool pass, string note)

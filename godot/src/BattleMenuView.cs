@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Collections.Generic;
 using Godot;
 
@@ -46,6 +47,22 @@ public partial class BattleMenuView : Control
         box.AddChild(_rows);
     }
 
+    private List<SaveFiles.Header?>? _saveList;
+    private bool _saveListSaving;
+    private double _saveListAt;
+
+    /// <summary>A save list row: the player's name, the party, the play time, gil, the location id.</summary>
+    public static string SaveRow(FfxGame game, SaveFiles.Header? h, string lang)
+    {
+        if (h == null)
+            return "New save";
+        string Decode(byte[] b) => b.Length == 0 ? "" : MessageView.Clean(game.DecodeText(b, lang));
+        var party = string.Join(" ", h.Party.Where(i => i != 0xff).Select(i => Decode(h.Name(i))));
+        var label = h.Slot == 0 ? "Autosave" : $"File {h.Slot}";
+        var place = MessageView.Clean(game.PlaceName(h.Location, lang));
+        return $"{label}  {Decode(h.PlayerName)}  [{party}]  {FieldMenuView.Time(h.PlayTime)}  {h.Gil} gil  {(place.Length > 0 ? place : $"@{h.Location:x}")}";
+    }
+
     private string CommandName(FfxGame game, ushort id, byte language)
     {
         if (!_names.TryGetValue((id, language), out var n))
@@ -85,10 +102,19 @@ public partial class BattleMenuView : Control
         }
         else if (m.SaveState != 0)
         {
-            title = m.SaveState >= 0xb && m.SaveState <= 0x11 ? "Load" : "Save";
-            for (int i = 0; i < m.SaveRows; i++)
-                rows.Add($"File {i + 1}");
-            cursor = m.SaveTop + m.SaveCursor;
+            var saving = !(m.SaveState >= 0xb && m.SaveState <= 0x11);
+            title = saving ? "Save" : "Load";
+            var lang = MessageView.LanguageCode(s.World.Language);
+            if (_saveList == null || _saveListSaving != saving || _saveListAt + 2.0 < Time.GetTicksMsec() / 1000.0)
+            {
+                _saveList = SaveFiles.List(GameSettings.DocumentsDir(), saving);
+                _saveListSaving = saving;
+                _saveListAt = Time.GetTicksMsec() / 1000.0;
+            }
+            // the screen shows five rows from save_top
+            for (int i = m.SaveTop; i < m.SaveTop + 5 && i < _saveList.Count; i++)
+                rows.Add(SaveRow(host.Game, _saveList[i], lang));
+            cursor = m.SaveCursor;
         }
         else if ((m.MainMask & 0x2) != 0)
         {
