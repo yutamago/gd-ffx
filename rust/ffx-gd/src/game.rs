@@ -120,6 +120,10 @@ fn run_game(
         Err(e) => return format!("boot: {e}"),
     };
     crate::snapshots::observe(exec.shared());
+    // the effects' draws (ffx_host::vfx), drawn by EffectDrawView; FFX_NO_VFX turns it off
+    if std::env::var_os("FFX_NO_VFX").is_none() {
+        exec.shared().vfx.set_enabled(true);
+    }
     if let Ok(mut s) = shared.lock() {
         *s = Some(Arc::clone(exec.shared()));
     }
@@ -507,10 +511,37 @@ impl FfxGame {
             })
     }
 
+    /// A texture by the name the game holds at run time (an effect draw's)
+    /// as PNG bytes; empty when it is not in the archive.
+    #[func]
+    fn runtime_texture(&self, name: GString) -> PackedByteArray {
+        classic()
+            .runtime_texture_png(&name.to_string())
+            .map_or_else(PackedByteArray::new, |b| PackedByteArray::from(b.as_slice()))
+    }
+
     /// Whether the material texture at `path` is a cube map.
     #[func]
     fn classic_texture_is_cube(&self, path: GString) -> bool {
         classic().texture_is_cube(&path.to_string())
+    }
+
+    /// The effects' draws of the frame that drew update `update` (the
+    /// snapshot's `update`), else the newest, encoded as `ffx_host::vfx`'s
+    /// `Frame::encode` (docs/state-api.md "Effect draws" in ffx-rust); empty
+    /// without a game or a captured frame.
+    #[func]
+    fn effect_draws(&self, update: i64) -> PackedByteArray {
+        let Some(shared) = self.run.as_ref().and_then(Run::shared) else {
+            return PackedByteArray::new();
+        };
+        let frame = u32::try_from(update)
+            .ok()
+            .and_then(|u| shared.vfx.frame(u))
+            .or_else(|| shared.vfx.latest());
+        frame.map_or_else(PackedByteArray::new, |f| {
+            PackedByteArray::from(f.encode().as_slice())
+        })
     }
 
     /// Sphere grid node kind `kind`'s name in `language`; empty without the

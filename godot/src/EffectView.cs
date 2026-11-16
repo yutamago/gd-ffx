@@ -12,8 +12,8 @@ namespace GdFfx;
 /// <list type="bullet">
 /// <item>a remade effect registered for its id (kind <c>effect</c>, id the effect id as eight
 /// hex digits, e.g. <c>00030102</c>; docs/remake.md), instanced there;</item>
-/// <item>otherwise a stand-in: a short burst of particles in a colour of its id (the
-/// classic effects are not imported yet).</item>
+/// <item>otherwise the game's own draws (<see cref="EffectDrawView"/>), or, when those are
+/// not captured, a stand-in: a short burst of particles in a colour of its id.</item>
 /// </list>
 /// Who a character index is: in battle the battler (<see cref="BattleHudView.ActorOf"/>), out
 /// of battle the actor in that slot.
@@ -116,6 +116,11 @@ public partial class EffectView : Node3D
         }
     }
 
+    /// <summary>Whether the game's own effect draws are being drawn (<see cref="EffectDrawView"/>).</summary>
+    private bool ClassicDrawn() =>
+        GetParent()?.GetNodeOrNull<EffectDrawView>("EffectDrawView") is { } v && System.Environment.GetEnvironmentVariable("FFX_NO_VFX") == null
+        && v.Shown.Draws > 0;
+
     private void Start(GdFfx.Api.Snapshot s, GdFfx.Api.EffectInstance e)
     {
         var p = new Playing { Id = e.Id };
@@ -136,6 +141,8 @@ public partial class EffectView : Node3D
                 node = n;
                 remade = true;
             }
+            else if (ClassicDrawn())
+                continue; // the game's own draws show it (EffectDrawView)
             else
                 node = StandIn(e.Id);
             node.Position = w;

@@ -263,6 +263,17 @@ impl Importer {
         tex.face_png(face)
     }
 
+    /// A texture by the name the game holds at run time (an effect
+    /// segment's, e.g. `../../../FFX_Data/GameData/PS3Data/map/bsil/bsil00/fp/tex/D3D11/x.dds.phyre`):
+    /// its top level as PNG; `None` when it is not in the archive.
+    #[must_use]
+    pub fn runtime_texture_png(&self, name: &str) -> Option<Vec<u8>> {
+        let lower = name.replace('\\', "/").to_ascii_lowercase();
+        let at = lower.find("ffx_data/")?;
+        let tex = ffx_phyre::Texture::parse(self.read(&lower[at..]).ok()?).ok()?;
+        Some(tex.to_png())
+    }
+
     /// Whether the texture at `path` (as [`Importer::texture_png`]) is a cube map.
     #[must_use]
     pub fn texture_is_cube(&self, path: &str) -> bool {

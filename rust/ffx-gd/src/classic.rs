@@ -133,6 +133,13 @@ impl Classic {
         open.importer.texture_png(path, face)
     }
 
+    /// A texture by its run-time name as PNG (`ffx_import::Importer::runtime_texture_png`).
+    #[must_use]
+    pub fn runtime_texture_png(&self, name: &str) -> Option<Vec<u8>> {
+        let open = lock(&self.open).clone()?;
+        open.importer.runtime_texture_png(name)
+    }
+
     /// Whether a material texture is a cube map.
     #[must_use]
     pub fn texture_is_cube(&self, path: &str) -> bool {

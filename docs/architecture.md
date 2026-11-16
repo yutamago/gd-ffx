@@ -219,6 +219,23 @@ pedestal). Its glowing orb is an effect, not part of the model.
 
 ## Effects and the battle HUD (G3)
 
+- **The game's own effects** (`EffectDrawView`): ffx-rust's effect-draw
+  capture (`ffx_host::vfx`, switched on at boot; `FFX_NO_VFX` leaves it
+  off) records every draw of `PhyreScene_DrawMostVFX`: positions in render
+  space, colours, UVs, indices, the texture name and the VSP flags. The
+  extension hands the frame of the shown snapshot's update to C#
+  (`FfxGame.effect_draws`, the `FXDR` encoding), which builds one mesh a
+  frame, a surface per (texture, blend): unshaded, two-sided, no depth
+  write, the vertex colour doubled (0.5 is the PS2's 0x80). Blend from the
+  flags: bit 0x10 subtracts, else bit 0x2 adds, else alpha (from the
+  examples 0x18, 0xa/0x2, 0x8/0x9). Textures by the name the game holds
+  (`FfxGame.runtime_texture`). At Besaid: 30 draws, 28 textured, 6
+  textures; the save sphere's orb (field program 15) and the shore's sea
+  strips (which gave the shallow water its cyan) come from here. Not drawn
+  yet: the draw events (buffer copies, fades, character draws) and the
+  other VFX lists; the orb's sparkles show a pink the original does not
+  (the blend mapping is from examples, effects-draw.md's open question 2).
+
 - **Effects as events** (`EffectView`, under the 3D view): each effect
   record the game starts (`Effects.running`, keyed by slot) plays where the
   game plays it, on each target or else on its character, while the game

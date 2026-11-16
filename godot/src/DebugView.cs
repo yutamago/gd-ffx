@@ -370,6 +370,14 @@ public sealed class BesaidTest(double timeout, string? shot) : ITest
                     + $"{view.ObjectsPlaced} object mesh(es) placed by the game";
                 if (view.ObjectsPlaced == 0)
                     return Done(false, $"no map object placed by the game ({v.Current.Objects.Count} in the snapshot)");
+                // the game's own effects (the save sphere's orb, the shore's strips), unless FFX_NO_VFX
+                if (System.Environment.GetEnvironmentVariable("FFX_NO_VFX") == null)
+                {
+                    var fx = view.GetNodeOrNull<EffectDrawView>("EffectDrawView");
+                    if (fx == null || fx.Shown.Draws == 0 || fx.Shown.Textured == 0)
+                        return Done(false, $"no effect draws shown ({fx?.Shown})");
+                    _seen += $", {fx.Shown.Draws} effect draws ({fx.Shown.Textured} textured, {fx.Textures.Count} textures)";
+                }
                 GD.Print($"ffx selftest: look {SelfTest.LookLine(v.Current.Look)}");
                 GD.Print($"ffx selftest: save {SelfTest.SaveLine(game, v.Current)}");
                 Next(shot != null && DisplayServer.GetName() != "headless" ? Phase.Shot : Phase.Classic);

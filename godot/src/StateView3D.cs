@@ -77,6 +77,7 @@ public partial class StateView3D : Node3D
         };
         AddChild(_env);
         AddChild(new EffectView { Name = "EffectView" });
+        AddChild(new EffectDrawView { Name = "EffectDrawView" });
         AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-55, 30, 0), LightEnergy = 0.8f });
         _boneMesh = new SphereMesh { Radius = 0.6f, Height = 1.2f, RadialSegments = 6, Rings = 3 };
     }
