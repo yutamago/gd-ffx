@@ -381,29 +381,51 @@ void fragment() {
     /// <summary>The texture name of draws that sample the frame copy (the DTT pass).</summary>
     public const string FrameBufferName = "FrameBuffer";
 
-    private Texture2D? Tex(FfxGame game, string name)
+    /// <summary>Textures being read on worker threads (their image: PNG decoded, mipmaps made).</summary>
+    private readonly Dictionary<string, System.Threading.Tasks.Task<Image?>> _loading = new();
+
+    /// <summary>
+    /// A draw's texture: true with it (null: none or not in the archive) once read; false while it
+    /// is still being read in the background (its draws wait a frame or two rather than the frame
+    /// waiting for the read).
+    /// </summary>
+    private bool TryTex(string name, out Texture2D? t)
     {
-        if (_textures.TryGetValue(name, out var t))
-            return t;
-        t = null;
-        if (name.Length > 0 && name != "NoTexture")
+        if (_textures.TryGetValue(name, out t))
+            return true;
+        if (name.Length == 0 || name == "NoTexture")
         {
-            var png = game.RuntimeTexture(name);
-            var img = new Image();
-            if (png.Length > 0 && img.LoadPngFromBuffer(png) == Error.Ok)
-            {
-                img.GenerateMipmaps();
-                t = ImageTexture.CreateFromImage(img);
-            }
+            _textures[name] = null;
+            return true;
         }
+        if (!_loading.TryGetValue(name, out var task))
+            _loading[name] = task = System.Threading.Tasks.Task.Run(() => ReadImage(name));
+        if (!task.IsCompleted)
+            return false;
+        _loading.Remove(name);
+        var img = task.IsCompletedSuccessfully ? task.Result : null;
+        t = img == null ? null : ImageTexture.CreateFromImage(img);
         _textures[name] = t;
-        return t;
+        return true;
     }
 
-    private ShaderMaterial Material(FfxGame game, string texture, Look look)
+    /// <summary>A run-time texture's image from the archive, with mipmaps (a worker thread).</summary>
+    private static Image? ReadImage(string name)
+    {
+        if (TextureFetcher.Fetch("runtime", name) is not { } px)
+            return null;
+        var img = px.ToImage();
+        img.GenerateMipmaps();
+        return img;
+    }
+
+    /// <summary>The material of a (texture, look), null while its texture is still being read.</summary>
+    private ShaderMaterial? Material(string texture, Look look)
     {
         if (_materials.TryGetValue((texture, look), out var m))
             return m;
+        if (texture != FrameBufferName && !_textures.ContainsKey(texture) && !TryTex(texture, out _))
+            return null;
         m = new ShaderMaterial { Shader = Shaders[look.Blend] };
         m.SetShaderParameter("form", look.Form);
         m.SetShaderParameter("alpha_one", look.AlphaOne);
@@ -417,7 +439,8 @@ void fragment() {
             _materials[(texture, look)] = m;
             return m;
         }
-        var t = Tex(game, texture);
+        if (!TryTex(texture, out var t))
+            return null;
         m.SetShaderParameter("textured", t != null);
         if (t != null)
             { m.SetShaderParameter("tex", t); m.SetShaderParameter("tex_clamp", t); }
@@ -534,13 +557,14 @@ void fragment() {
             }
             if (surf.IndexCount == 0)
                 continue;
+            if (Material(tex, look) is not { } mat)
+                continue; // its texture is still being read
             // straight from the kept arrays into Godot's packed arrays (no array of the exact size made)
             _arrays[(int)Mesh.ArrayType.Vertex] = surf.Positions.AsSpan(0, surf.VertexCount);
             _arrays[(int)Mesh.ArrayType.Color] = surf.Colours.AsSpan(0, surf.VertexCount);
             _arrays[(int)Mesh.ArrayType.TexUV] = surf.Uvs.AsSpan(0, surf.VertexCount);
             _arrays[(int)Mesh.ArrayType.Index] = surf.Indices.AsSpan(0, surf.IndexCount);
             mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, _arrays);
-            var mat = Material(game, tex, look);
             mesh.SurfaceSetMaterial(mesh.GetSurfaceCount() - 1, mat);
             if (tex == FrameBufferName || _textures.TryGetValue(tex, out var t) && t != null)
             {

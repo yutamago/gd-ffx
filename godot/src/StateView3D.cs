@@ -21,6 +21,9 @@ public partial class StateView3D : Node3D
     private WorldEnvironment _env = null!;
     private readonly Dictionary<ushort, ActorNode> _actors = new();
     private readonly HashSet<ushort> _seen = new();
+
+    /// <summary>Character models added to the scene in one frame at most.</summary>
+    private const int AttachesPerFrame = 3;
     private SphereMesh _boneMesh = null!;
     private Node3D? _map;
     private string _mapLevel = "";
@@ -43,6 +46,8 @@ public partial class StateView3D : Node3D
         public required Label3D Label;
         public ushort Id;
         public bool LabelPlayer;
+        /// <summary>The model asked for (it may still be loading).</summary>
+        public string Asked = "";
         public string ModelName = "";
         public Node3D? Model;
         public Skeleton3D? Skeleton;
@@ -206,12 +211,17 @@ public partial class StateView3D : Node3D
 
     private void IndexObjects()
     {
-        _objectNodes = new();
-        if (_map == null || _map.Name != "ClassicMap")
-            return;
-        foreach (var n in _map.FindChildren("*", nameof(Node3D), true, false))
+        _objectNodes = _map == null || _map.Name != "ClassicMap" ? new() : ObjectIndex(_map);
+    }
+
+    /// <summary>A classic map's mesh nodes by object id and mesh index (on the loading worker thread: a search of every node).</summary>
+    private static Dictionary<(uint Id, int K), Node3D> ObjectIndex(Node3D map)
+    {
+        var index = new Dictionary<(uint Id, int K), Node3D>();
+        foreach (var n in map.FindChildren("*", nameof(Node3D), true, false))
             if (n is Node3D n3 && MeshName.Match(FbxName(n3.Name)) is { Success: true } m)
-                _objectNodes.TryAdd((uint.Parse(m.Groups[1].Value), int.Parse(m.Groups[2].Value)), n3);
+                index.TryAdd((uint.Parse(m.Groups[1].Value), int.Parse(m.Groups[2].Value)), n3);
+        return index;
     }
 
     /// <summary>
@@ -266,13 +276,16 @@ public partial class StateView3D : Node3D
             return;
         if (level == _mapLevel)
             return;
+        // a map still loading in the background that the game left already
+        if (_wantedLevel.Length > 0 && _wantedLevel != level)
+            ContentResolver.Forget("map", _wantedLevel);
         _wantedLevel = level;
-        if (ContentResolver.Resolve(lib, "map", level) is not { } content)
+        if (ContentResolver.Resolve(lib, "map", level, prepare: ObjectIndex) is not { } content)
             return;
         var map = content.Node;
         _map?.QueueFree();
         _map = map;
-        _objectNodes = null;
+        _objectNodes = content.Remade ? null : content.Prepared as Dictionary<(uint Id, int K), Node3D>;
         _mapLevel = level;
         if (map == null)
             return;
@@ -288,7 +301,7 @@ public partial class StateView3D : Node3D
     {
         var seen = _seen;
         seen.Clear();
-        int models = 0, posed = 0;
+        int models = 0, posed = 0, attached = 0;
         foreach (var f in view.Actors())
         {
             var a = f.Actor;
@@ -296,14 +309,24 @@ public partial class StateView3D : Node3D
             if (!_actors.TryGetValue(a.Slot, out var n) || n.Id != a.Id)
             {
                 if (n != null)
-                    Free(n);
+                    Free(n, a.Slot);
                 n = Make(a.Slot, a.Kind);
                 n.Id = a.Id;
                 _actors[a.Slot] = n;
             }
-            if (n.Model == null && a.Model.Length > 0 && n.ModelName != a.Model
-                && ContentResolver.Resolve(lib, "chr", a.Model) is { } content)
-                AttachModel(n, a.Model, content);
+            if (n.Model == null && a.Model.Length > 0 && n.ModelName != a.Model)
+            {
+                // each character its own instance (the slot is its ticket), loaded in the background
+                if (n.Asked.Length > 0 && n.Asked != a.Model)
+                    ContentResolver.Forget("chr", n.Asked, a.Slot);
+                n.Asked = a.Model;
+                // a few models enter the scene a frame (a scene's dozen at once was a 30 ms frame)
+                if (attached < AttachesPerFrame && ContentResolver.Resolve(lib, "chr", a.Model, a.Slot) is { } content)
+                {
+                    AttachModel(n, a.Model, content);
+                    attached++;
+                }
+            }
             n.Root.GlobalTransform = f.Root;
             var hasModel = n.Model != null;
             n.Root.Visible = f.Shown;
@@ -330,7 +353,7 @@ public partial class StateView3D : Node3D
             {
                 if (!seen.Contains(slot))
                 {
-                    Free(_actors[slot]);
+                    Free(_actors[slot], slot);
                     _actors.Remove(slot);
                 }
         }
@@ -558,8 +581,10 @@ public partial class StateView3D : Node3D
     private static Transform3D Solid(Transform3D t) =>
         Mathf.Abs(t.Basis.Determinant()) < 1e-12f ? new Transform3D(Basis.FromScale(Vector3.One * 1e-4f), t.Origin) : t;
 
-    private static void Free(ActorNode n)
+    private static void Free(ActorNode n, ushort slot)
     {
+        if (n.Model == null && n.Asked.Length > 0)
+            ContentResolver.Forget("chr", n.Asked, slot);
         n.Root.QueueFree();
         n.Bones.QueueFree();
         n.Label.QueueFree();

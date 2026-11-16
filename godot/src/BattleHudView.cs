@@ -84,7 +84,7 @@ public partial class BattleHudView : Control
             return;
         var l = new Label { Text = Mathf.Abs(change).ToString(), MouseFilter = MouseFilterEnum.Ignore };
         l.AddThemeFontSizeOverride("font_size", 30);
-        l.AddThemeColorOverride("font_color", change < 0 ? new Color(1f, 1f, 1f) : new Color(0.5f, 1f, 0.55f));
+        Ui.SetColour(l, change < 0 ? new Color(1f, 1f, 1f) : new Color(0.5f, 1f, 0.55f));
         l.AddThemeColorOverride("font_outline_color", Colors.Black);
         l.AddThemeConstantOverride("outline_size", 6);
         AddChild(l);
@@ -181,8 +181,8 @@ public partial class BattleHudView : Control
             l.Visible = i < party.Count;
             if (i >= party.Count)
                 continue;
-            l.Text = party[i].Text;
-            l.AddThemeColorOverride("font_color", party[i].Colour);
+            Ui.SetText(l, party[i].Text);
+            Ui.SetColour(l, party[i].Colour);
             Shown.Add(l.Text);
         }
         _panel.Visible = party.Count > 0;
@@ -198,7 +198,7 @@ public partial class BattleHudView : Control
             if (order.Count < 8)
                 order.Add(index >= FirstMonster ? $"[{Name(index)}]" : Name(index));
         Order = string.Join(" > ", order);
-        _order.Text = "Next: " + Order;
+        Ui.SetText(_order, "Next: " + Order);
         _order.Visible = order.Count > 0;
         _order.Position = new Vector2(view.X - _order.GetCombinedMinimumSize().X - view.X * 0.04f, view.Y * 0.04f);
     }

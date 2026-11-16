@@ -274,6 +274,40 @@ impl Importer {
         Some(tex.to_png())
     }
 
+    /// A material's texture face as RGBA8 rows, top row first, as
+    /// [`Importer::texture_png`] without the PNG: width, height, the
+    /// texture's faces (6 for a cube map) and the pixels.
+    #[must_use]
+    pub fn texture_rgba(&self, path: &str, face: usize) -> Option<Pixels> {
+        let t = ffx_phyre::MaterialTexture {
+            sampler: String::new(),
+            path: path.to_string(),
+        };
+        let tex = ffx_phyre::Texture::parse(self.read(&t.archive_path()).ok()?).ok()?;
+        let rgba = tex.face_rgba(face)?;
+        Some(Pixels {
+            width: tex.width,
+            height: tex.height,
+            faces: tex.kind.faces(),
+            rgba,
+        })
+    }
+
+    /// A run-time texture's top level as RGBA8 rows, as
+    /// [`Importer::runtime_texture_png`] without the PNG.
+    #[must_use]
+    pub fn runtime_texture_rgba(&self, name: &str) -> Option<Pixels> {
+        let lower = name.replace('\\', "/").to_ascii_lowercase();
+        let at = lower.find("ffx_data/")?;
+        let tex = ffx_phyre::Texture::parse(self.read(&lower[at..]).ok()?).ok()?;
+        Some(Pixels {
+            width: tex.width,
+            height: tex.height,
+            faces: tex.kind.faces(),
+            rgba: tex.to_rgba(),
+        })
+    }
+
     /// Whether the texture at `path` (as [`Importer::texture_png`]) is a cube map.
     #[must_use]
     pub fn texture_is_cube(&self, path: &str) -> bool {
@@ -378,6 +412,17 @@ impl Importer {
 fn file_stem(path: &str) -> String {
     let file = path.rsplit('/').next().unwrap_or(path);
     file.strip_suffix(".dae.phyre").unwrap_or(file).to_string()
+}
+
+/// A texture face's pixels ([`Importer::texture_rgba`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pixels {
+    pub width: u32,
+    pub height: u32,
+    /// The texture's faces (1, or 6 for a cube map).
+    pub faces: usize,
+    /// RGBA8 rows, top row first.
+    pub rgba: Vec<u8>,
 }
 
 #[cfg(test)]

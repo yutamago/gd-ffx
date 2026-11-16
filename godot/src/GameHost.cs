@@ -173,6 +173,8 @@ public partial class GameHost : Node
 
     public override void _Process(double delta)
     {
+        // the worker threads' texture asks (answered "none" without a game)
+        TextureFetcher.Poll(Game);
         if (Game == null)
             return;
         var t0 = Perf.Start();

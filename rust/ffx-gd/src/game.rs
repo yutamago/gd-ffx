@@ -241,6 +241,31 @@ fn poll_pads(bridge: &Bridge) {
     }
 }
 
+/// A texture ask from Godot's strings (`face` or `runtime`).
+fn texture_ask(kind: &GString, name: &GString, face: i64) -> Option<crate::classic::TextureAsk> {
+    use crate::classic::TextureAsk;
+    match kind.to_string().as_str() {
+        "face" => Some(TextureAsk::Face(name.to_string(), usize::try_from(face).ok()?)),
+        "runtime" => Some(TextureAsk::Runtime(name.to_string())),
+        _ => None,
+    }
+}
+
+/// A texture's pixels as Godot's dictionary (`texture_request`).
+fn pixels_dict(id: i64, px: Option<ffx_import::Pixels>) -> VarDictionary {
+    match px {
+        Some(p) => vdict! {
+            "id" => id,
+            "found" => true,
+            "width" => i64::from(p.width),
+            "height" => i64::from(p.height),
+            "faces" => i64::try_from(p.faces).unwrap_or(1),
+            "rgba" => &PackedByteArray::from(p.rgba.as_slice()),
+        },
+        None => vdict! { "id" => id, "found" => false },
+    }
+}
+
 // Godot passes the arguments of a `#[func]` by value; some read the
 // process's state, not the node's.
 #[allow(clippy::needless_pass_by_value, clippy::unused_self)]
@@ -391,7 +416,8 @@ impl FfxGame {
 
     /// The game-state API's newest two snapshots, encoded
     /// (`ffx_state::Snapshot::encode`; C#: `GdFfx.Api.StateApi.Decode`):
-    /// `update` (the newest's number, -1 none yet), `previous`, `current`
+    /// `update` (the newest's number, -1 none yet), `previous_update` (the
+    /// previous one's, -1 none), `previous`, `current`
     /// (`PackedByteArray`, empty when none), `age` (seconds since the
     /// current came), `interval` (seconds between updates, smoothed).
     #[func]
@@ -408,8 +434,15 @@ impl FfxGame {
                 PackedByteArray::from(b.as_slice())
             })
         };
+        // the previous one's update (-1 none): C# reuses its decoding when it is the one it had
+        let previous_update = previous
+            .as_ref()
+            .and_then(|b| b.get(8..12))
+            .and_then(|b| b.try_into().ok())
+            .map_or(-1, |b| i64::from(u32::from_le_bytes(b)));
         vdict! {
             "update" => s.update(),
+            "previous_update" => previous_update,
             "previous" => &bytes(previous),
             "current" => &bytes(current),
             "age" => age,
@@ -518,6 +551,38 @@ impl FfxGame {
         classic()
             .runtime_texture_png(&name.to_string())
             .map_or_else(PackedByteArray::new, |b| PackedByteArray::from(b.as_slice()))
+    }
+
+    /// A texture's pixels: `kind` `face` (a material texture by its path,
+    /// face `face`) or `runtime` (by the name the game holds, `face`
+    /// unused). Read on a thread of the extension's own and handed over by
+    /// `textures_finished` with `id`: Godot's main thread does not wait for
+    /// the archive or the block decoding (and Godot's worker threads may
+    /// not call into the extension). False when it cannot be asked.
+    #[func]
+    fn texture_request(&self, id: i64, kind: GString, name: GString, face: i64) -> bool {
+        texture_ask(&kind, &name, face).is_some_and(|ask| classic().texture_request(id, ask))
+    }
+
+    /// The textures read since the last call (`texture_request`): `id`,
+    /// `found`, `width`, `height`, `faces` (6 for a cube map) and `rgba`
+    /// (RGBA8 rows, top row first).
+    #[func]
+    fn textures_finished(&self) -> Array<VarDictionary> {
+        classic()
+            .textures_finished()
+            .into_iter()
+            .map(|(id, px)| pixels_dict(id, px))
+            .collect()
+    }
+
+    /// A texture's pixels now, as `textures_finished`'s entries (id 0).
+    #[func]
+    fn texture_now(&self, kind: GString, name: GString, face: i64) -> VarDictionary {
+        pixels_dict(
+            0,
+            texture_ask(&kind, &name, face).and_then(|ask| classic().texture_rgba(&ask)),
+        )
     }
 
     /// Whether the material texture at `path` is a cube map.

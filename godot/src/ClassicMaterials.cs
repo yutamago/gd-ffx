@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Collections.Generic;
 using Godot;
 using Godot.Collections;
@@ -206,6 +207,7 @@ void fragment() {
 
     /// <summary>Materials made, by kind (for tests and the overlay).</summary>
     public static (int Map, int Blend, int Char) Made;
+    private static readonly object MadeLock = new();
 
     private static float[] Floats(Dictionary p, string name, float[] fallback)
     {
@@ -246,7 +248,8 @@ void fragment() {
                 s = new ShaderMaterial { Shader = Char };
                 s.SetShaderParameter("vertex_colour", ToColor(Floats(p, "VertexColorOrigin", [1, 1, 1, 1])));
                 s.SetShaderParameter("alpha_threshold", threshold);
-                Made.Char++;
+                lock (MadeLock)
+                    Made.Char++;
             }
             else
             {
@@ -266,7 +269,8 @@ void fragment() {
                 s.SetShaderParameter("alpha_threshold", masked ? threshold : 0f);
                 var fg = Floats(p, "fgEff", [1, 1, 1]);
                 s.SetShaderParameter("fog_effect", (fg[0] + fg[1] + fg[2]) / 3f);
-                if (water) Made.Blend++; else Made.Map++;
+                lock (MadeLock)
+                    if (water) Made.Blend++; else Made.Map++;
             }
             s.SetShaderParameter("tex", std.AlbedoTexture);
             s.SetShaderParameter("material_colour", ToColor(colour));
@@ -275,62 +279,74 @@ void fragment() {
         Swap(root, replace);
     }
 
+    /// <summary>Face 0 of cube maps already read by <see cref="MapCube"/>.</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, TextureFetcher.Pixels> FaceZero = new();
+
+    /// <summary>The textures read so far (locked: maps and characters load on worker threads).</summary>
     private static readonly System.Collections.Generic.Dictionary<string, Texture?> Textures = new();
 
     /// <summary>A material texture (its path in <c>extras.ffx_textures</c>) from the player's archive: a cube map's six faces, or a 2D texture with mipmaps; null when it cannot be read.</summary>
     private static Texture? ClassicTexture(string path)
     {
-        if (Textures.TryGetValue(path, out var t))
-            return t;
-        var game = GameHost.Instance?.Game;
-        t = null;
-        if (game != null)
+        lock (Textures)
+            if (Textures.TryGetValue(path, out var known))
+                return known;
+        Texture? t = null;
+        // any thread: the classic content loads on worker threads (TextureFetcher)
+        var first = FaceZero.TryRemove(path, out var known0) ? known0 : TextureFetcher.Fetch("face", path, 0);
+        if (first is { Faces: 6 })
         {
-            Image? Face(int f)
-            {
-                var png = game.ClassicTexture(path, f);
-                if (png.Length == 0)
-                    return null;
-                var img = new Image();
-                return img.LoadPngFromBuffer(png) == Error.Ok ? img : null;
-            }
-            if (game.ClassicTextureIsCube(path))
-            {
-                var faces = new Godot.Collections.Array<Image>();
-                for (int f = 0; f < 6; f++)
-                    if (Face(f) is { } img)
-                    {
-                        // the faces come upright like 2D textures; the game uploads a cube's
-                        // rows as stored, so D3D's faces are these mirrored vertically
-                        img.FlipY();
-                        img.GenerateMipmaps();
-                        faces.Add(img);
-                    }
-                if (faces.Count == 6)
+            // the other five faces asked at once
+            var rest = TextureFetcher.FetchMany("face", path, [1, 2, 3, 4, 5]);
+            var faces = new Godot.Collections.Array<Image>();
+            foreach (var px in new[] { first }.Concat(rest))
+                if (px != null)
                 {
-                    var cube = new Cubemap();
-                    if (cube.CreateFromImages(faces) == Error.Ok)
-                        t = cube;
+                    var img = px.ToImage();
+                    // the faces come upright like 2D textures; the game uploads a cube's
+                    // rows as stored, so D3D's faces are these mirrored vertically
+                    img.FlipY();
+                    img.GenerateMipmaps();
+                    faces.Add(img);
                 }
-            }
-            else if (Face(0) is { } img)
+            if (faces.Count == 6)
             {
-                img.GenerateMipmaps();
-                t = ImageTexture.CreateFromImage(img);
+                var cube = new Cubemap();
+                if (cube.CreateFromImages(faces) == Error.Ok)
+                    t = cube;
             }
         }
-        Textures[path] = t;
+        else if (first != null)
+        {
+            var img = first.ToImage();
+            img.GenerateMipmaps();
+            t = ImageTexture.CreateFromImage(img);
+        }
+        // two loads may read the same texture at once: the first one kept is used
+        lock (Textures)
+        {
+            if (Textures.TryGetValue(path, out var kept))
+                return kept;
+            Textures[path] = t;
+        }
         return t;
     }
 
     /// <summary>The map's reflection cube map: the first of reflection, reflection1..4 in its texture folder.</summary>
     private static string? MapCube(string? texDir)
     {
-        if (texDir == null || GameHost.Instance?.Game is not { } game)
+        if (texDir == null || GameHost.Instance?.Game == null)
             return null;
         foreach (var n in new[] { "reflection", "reflection1", "reflection2", "reflection3", "reflection4" })
-            if (game.ClassicTextureIsCube($"{texDir}{n}.dds"))
-                return $"{texDir}{n}.dds";
+        {
+            var path = $"{texDir}{n}.dds";
+            if (TextureFetcher.Fetch("face", path, 0) is { Faces: 6 } px)
+            {
+                // ClassicTexture takes these pixels instead of reading them again
+                FaceZero[path] = px;
+                return path;
+            }
+        }
         return null;
     }
 

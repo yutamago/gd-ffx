@@ -234,7 +234,7 @@ public partial class FieldMenuView : Control
         {
             var l = new Label();
             l.AddThemeFontSizeOverride("font_size", 19);
-            l.AddThemeColorOverride("font_color", new Color(0.92f, 0.94f, 1f));
+            Ui.SetColour(l, new Color(0.92f, 0.94f, 1f));
             _statusGrid.AddChild(l);
         }
         for (int i = 0; i < _statusGrid.GetChildCount(); i++)
@@ -242,7 +242,7 @@ public partial class FieldMenuView : Control
             var l = (Label)_statusGrid.GetChild(i);
             l.Visible = i < cells.Count;
             if (i < cells.Count)
-                l.Text = cells[i];
+                Ui.SetText(l, cells[i]);
         }
         _statusPanel.Visible = true;
         var view = GetViewportRect().Size;
@@ -277,7 +277,7 @@ public partial class FieldMenuView : Control
         {
             var l = new Label();
             l.AddThemeFontSizeOverride("font_size", 20);
-            l.AddThemeColorOverride("font_color", new Color(0.92f, 0.94f, 1f));
+            Ui.SetColour(l, new Color(0.92f, 0.94f, 1f));
             _itemGrid.AddChild(l);
         }
         for (int i = 0; i < _itemGrid.GetChildCount(); i++)
@@ -286,8 +286,8 @@ public partial class FieldMenuView : Control
             l.Visible = i < Items.Count;
             if (i < Items.Count)
             {
-                l.Text = (i == at ? "▶ " : "   ") + Items[i];
-                l.AddThemeColorOverride("font_color", i == at ? new Color(1f, 0.95f, 0.6f) : new Color(0.92f, 0.94f, 1f));
+                Ui.SetText(l, (i == at ? "▶ " : "   ") + Items[i]);
+                Ui.SetColour(l, i == at ? new Color(1f, 0.95f, 0.6f) : new Color(0.92f, 0.94f, 1f));
             }
         }
         _itemsPanel.Visible = true;
@@ -350,11 +350,11 @@ public partial class FieldMenuView : Control
             l.Visible = r < rows.Count;
             if (r >= rows.Count)
                 continue;
-            l.Text = rows[r].Text;
-            l.AddThemeColorOverride("font_color", rows[r].Colour);
+            Ui.SetText(l, rows[r].Text);
+            Ui.SetColour(l, rows[r].Colour);
             Shown.Add(l.Text);
         }
-        _footer.Text = $"Gil {sv.Gil}    Time {Time(sv.PlayTime)}";
+        Ui.SetText(_footer, $"Gil {sv.Gil}    Time {Time(sv.PlayTime)}");
         _panel.Visible = true;
         var view = GetViewportRect().Size;
         var size = _panel.GetCombinedMinimumSize();

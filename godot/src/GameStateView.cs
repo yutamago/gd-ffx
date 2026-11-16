@@ -68,13 +68,17 @@ public sealed class GameStateView
             try
             {
                 var cur = d["current"].AsByteArray();
-                var prev = d["previous"].AsByteArray();
                 var old = Current;
                 Current = cur.Length > 0 ? StateApi.Decode(cur) : null;
-                // the previous one is usually the last current, already decoded
-                Previous = prev.Length == 0 ? Current
-                    : old != null && prev.Length >= 12 && BitConverter.ToUInt32(prev, 8) == old.Update ? old
-                    : StateApi.Decode(prev);
+                // the previous one is usually the last current, already decoded (not copied again)
+                var prevUpdate = d["previous_update"].AsInt64();
+                if (old != null && prevUpdate == old.Update)
+                    Previous = old;
+                else
+                {
+                    var prev = d["previous"].AsByteArray();
+                    Previous = prev.Length > 0 ? StateApi.Decode(prev) : Current;
+                }
                 _update = Current?.Update ?? update;
                 Decoded++;
                 Error = "";

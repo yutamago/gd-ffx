@@ -139,7 +139,7 @@ public partial class BattleMenuView : Control
             _panel.Visible = false;
             return;
         }
-        _title.Text = title;
+        Ui.SetText(_title, title);
         while (_rows.GetChildCount() < rows.Count)
         {
             var l = new Label();
@@ -153,8 +153,8 @@ public partial class BattleMenuView : Control
             if (i >= rows.Count)
                 continue;
             var on = i == cursor;
-            l.Text = (on ? "▶ " : "   ") + rows[i];
-            l.AddThemeColorOverride("font_color", on ? new Color(1f, 0.95f, 0.6f) : new Color(0.92f, 0.94f, 1f));
+            Ui.SetText(l, (on ? "▶ " : "   ") + rows[i]);
+            Ui.SetColour(l, on ? new Color(1f, 0.95f, 0.6f) : new Color(0.92f, 0.94f, 1f));
             Shown.Add(l.Text);
         }
         _panel.Visible = true;
