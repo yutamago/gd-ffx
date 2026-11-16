@@ -16,7 +16,7 @@ namespace GdFfx;
 public partial class StateView3D : Node3D
 {
     private Camera3D _camera = null!;
-    private Snapshot? _lookOf;
+    private long _lookOf = -1;
     private (bool On, float None, float Full, float Gain) _glow = (false, -1, -1, -1);
     private WorldEnvironment _env = null!;
     private readonly Dictionary<ushort, ActorNode> _actors = new();
@@ -61,6 +61,8 @@ public partial class StateView3D : Node3D
         public Transform3D[] Globals = [];
         /// <summary>The local poses of the character's two newest snapshots (<see cref="Locals"/>).</summary>
         public (Actor? Of, BoneLocal[] Bones) LocalsA = (null, []), LocalsB = (null, []);
+        /// <summary>The decode (<see cref="GameStateView.Decoded"/>) the locals were last made at: older ones may name reused actors.</summary>
+        public long LocalsAt = -1;
         /// <summary>The skeleton's transform in the model's space (inverted).</summary>
         public Transform3D SkeletonInModelInv = Transform3D.Identity;
         /// <summary>
@@ -146,9 +148,9 @@ public partial class StateView3D : Node3D
             _camera.VOffset = -(fx?.ShakeY ?? 0f) * unit;
         }
         // the look changes with the snapshot (30 a second), not every frame
-        if (!ReferenceEquals(view.Current, _lookOf))
+        if (view.Decoded != _lookOf)
         {
-            _lookOf = view.Current;
+            _lookOf = view.Decoded;
             ClassicMaterials.SetLook(view.Current?.Look);
             // the game clears to the map's background colour (Look.background), drawn as it is
             if (view.Current?.Look is { Valid: true } look)
@@ -208,7 +210,7 @@ public partial class StateView3D : Node3D
     /// <summary>The classic map's morphing meshes (<see cref="MapObjects"/>).</summary>
     private List<Morph> _morphs = [];
 
-    private Snapshot? _objectsPrevOf;
+    private long _objectsPrevOf = -1;
     private readonly Dictionary<uint, GdFfx.Api.SceneObject> _objectsPrev = new();
     private readonly Dictionary<uint, GdFfx.Api.SceneObject> _objectsCur = new();
 
@@ -367,9 +369,9 @@ public partial class StateView3D : Node3D
             IndexObjects();
         if (_objectNodes!.Count == 0 && _morphs.Count == 0)
             return;
-        if (!ReferenceEquals(_objectsPrevOf, s))
+        if (_objectsPrevOf != view.Decoded)
         {
-            _objectsPrevOf = s;
+            _objectsPrevOf = view.Decoded;
             _objectsPrev.Clear();
             _objectsCur.Clear();
             if (view.Previous is { } p && !ReferenceEquals(p, s) && p.World.Level == s.World.Level)
@@ -653,7 +655,17 @@ public partial class StateView3D : Node3D
             return moved;
         }
         // each snapshot's bones are split into local poses once (Locals); a frame only
-        // interpolates position, rotation and scale between the two
+        // interpolates position, rotation and scale between the two. Locals of an older pair
+        // than the last may be keyed by an actor object reused for a newer snapshot: dropped.
+        if (n.LocalsAt != view.Decoded)
+        {
+            if (view.Decoded - n.LocalsAt > 1)
+            {
+                n.LocalsA = (null, n.LocalsA.Bones);
+                n.LocalsB = (null, n.LocalsB.Bones);
+            }
+            n.LocalsAt = view.Decoded;
+        }
         var cur = Locals(n, skel, a);
         var from = prev != null ? Locals(n, skel, prev) : null;
         int posed = 0;

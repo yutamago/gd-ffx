@@ -18,9 +18,12 @@ public static partial class StateApi
     /// <summary>An encoded snapshot's first four bytes (<c>FFXS</c>).</summary>
     public const uint Magic = 0x53584646;
 
-    /// <summary>Decodes a snapshot (<c>Snapshot::encode</c>'s bytes).</summary>
+    /// <summary>
+    /// Decodes a snapshot (<c>Snapshot::encode</c>'s bytes), into <paramref name="into"/> when
+    /// given: a snapshot no longer in use, whose objects are then overwritten.
+    /// </summary>
     /// <exception cref="FormatException">Not a snapshot, or another API version.</exception>
-    public static Snapshot Decode(ReadOnlySpan<byte> bytes)
+    public static Snapshot Decode(ReadOnlySpan<byte> bytes, Snapshot? into = null)
     {
         var r = new StateReader(bytes);
         if (r.U32() != Magic)
@@ -28,7 +31,7 @@ public static partial class StateApi
         var version = r.U32();
         if (version != Version)
             throw new FormatException($"game-state API {version}, these bindings read {Version}");
-        return Snapshot.Read(ref r);
+        return Snapshot.Read(ref r, into);
     }
 }
 
@@ -113,44 +116,78 @@ public sealed partial class Snapshot
     public Layers Layers = new();
 
     /// <summary>Reads one from the encoding.</summary>
-    public static Snapshot Read(ref StateReader r)
+    public static Snapshot Read(ref StateReader r) => Read(ref r, null);
+
+    /// <summary>
+    /// Reads one into <paramref name="into"/> (a new one when null): its objects, lists,
+    /// arrays and unchanged strings are reused, so a decode allocates next to nothing.
+    /// </summary>
+    public static Snapshot Read(ref StateReader r, Snapshot? into)
     {
-        var o = new Snapshot();
+        var o = into ?? new Snapshot();
         o.Update = r.U32();
         o.GameTime = r.F64();
-        o.World = World.Read(ref r);
-        o.Camera = Camera.Read(ref r);
-        o.Input = Input.Read(ref r);
+        o.World = World.Read(ref r, o.World);
+        o.Camera = Camera.Read(ref r, o.Camera);
+        o.Input = Input.Read(ref r, o.Input);
         {
             int n = r.U16();
-            o.Actors = new List<Actor>(n);
+            var l = o.Actors;
             for (int i = 0; i < n; i++)
-                o.Actors.Add(Actor.Read(ref r));
+            {
+                if (i < l.Count)
+                    l[i] = Actor.Read(ref r, l[i]);
+                else
+                    l.Add(Actor.Read(ref r, null));
+            }
+            if (l.Count > n)
+                l.RemoveRange(n, l.Count - n);
         }
-        o.Menus = Menus.Read(ref r);
+        o.Menus = Menus.Read(ref r, o.Menus);
         {
             int n = r.U16();
-            o.Messages = new List<Message>(n);
+            var l = o.Messages;
             for (int i = 0; i < n; i++)
-                o.Messages.Add(Message.Read(ref r));
+            {
+                if (i < l.Count)
+                    l[i] = Message.Read(ref r, l[i]);
+                else
+                    l.Add(Message.Read(ref r, null));
+            }
+            if (l.Count > n)
+                l.RemoveRange(n, l.Count - n);
         }
-        o.Effects = Effects.Read(ref r);
+        o.Effects = Effects.Read(ref r, o.Effects);
         {
             int n = r.U16();
-            o.Battlers = new List<Battler>(n);
+            var l = o.Battlers;
             for (int i = 0; i < n; i++)
-                o.Battlers.Add(Battler.Read(ref r));
+            {
+                if (i < l.Count)
+                    l[i] = Battler.Read(ref r, l[i]);
+                else
+                    l.Add(Battler.Read(ref r, null));
+            }
+            if (l.Count > n)
+                l.RemoveRange(n, l.Count - n);
         }
-        o.Look = Look.Read(ref r);
-        o.Save = Save.Read(ref r);
+        o.Look = Look.Read(ref r, o.Look);
+        o.Save = Save.Read(ref r, o.Save);
         {
             int n = r.U16();
-            o.Objects = new List<SceneObject>(n);
+            var l = o.Objects;
             for (int i = 0; i < n; i++)
-                o.Objects.Add(SceneObject.Read(ref r));
+            {
+                if (i < l.Count)
+                    l[i] = SceneObject.Read(ref r, l[i]);
+                else
+                    l.Add(SceneObject.Read(ref r, null));
+            }
+            if (l.Count > n)
+                l.RemoveRange(n, l.Count - n);
         }
-        o.SphereGrid = SphereGrid.Read(ref r);
-        o.Layers = Layers.Read(ref r);
+        o.SphereGrid = SphereGrid.Read(ref r, o.SphereGrid);
+        o.Layers = Layers.Read(ref r, o.Layers);
         return o;
     }
 }
@@ -214,15 +251,21 @@ public sealed partial class World
     public byte Language;
 
     /// <summary>Reads one from the encoding.</summary>
-    public static World Read(ref StateReader r)
+    public static World Read(ref StateReader r) => Read(ref r, null);
+
+    /// <summary>
+    /// Reads one into <paramref name="into"/> (a new one when null): its objects, lists,
+    /// arrays and unchanged strings are reused, so a decode allocates next to nothing.
+    /// </summary>
+    public static World Read(ref StateReader r, World? into)
     {
-        var o = new World();
+        var o = into ?? new World();
         o.Map = r.U16();
         o.PreviousMap = r.U16();
         o.Entrance = r.U8();
         o.Story = r.U16();
-        o.Event = r.Str();
-        o.Level = r.Str();
+        o.Event = r.Str(o.Event);
+        o.Level = r.Str(o.Level);
         o.EventFrame = r.U32();
         o.Battle = r.Bool();
         o.PlayerControl = r.Bool();
@@ -274,11 +317,17 @@ public sealed partial class Camera
     public Vector3 Target;
 
     /// <summary>Reads one from the encoding.</summary>
-    public static Camera Read(ref StateReader r)
+    public static Camera Read(ref StateReader r) => Read(ref r, null);
+
+    /// <summary>
+    /// Reads one into <paramref name="into"/> (a new one when null): its objects, lists,
+    /// arrays and unchanged strings are reused, so a decode allocates next to nothing.
+    /// </summary>
+    public static Camera Read(ref StateReader r, Camera? into)
     {
-        var o = new Camera();
+        var o = into ?? new Camera();
         o.Valid = r.Bool();
-        o.World = r.Floats(12);
+        o.World = r.Floats(o.World, 12);
         o.FovY = r.F32();
         o.Aspect = r.F32();
         o.Far = r.F32();
@@ -315,9 +364,15 @@ public sealed partial class Input
     public byte StickY;
 
     /// <summary>Reads one from the encoding.</summary>
-    public static Input Read(ref StateReader r)
+    public static Input Read(ref StateReader r) => Read(ref r, null);
+
+    /// <summary>
+    /// Reads one into <paramref name="into"/> (a new one when null): its objects, lists,
+    /// arrays and unchanged strings are reused, so a decode allocates next to nothing.
+    /// </summary>
+    public static Input Read(ref StateReader r, Input? into)
     {
-        var o = new Input();
+        var o = into ?? new Input();
         o.Held = r.U32();
         o.Pressed = r.U16();
         o.StickX = r.U8();
@@ -435,13 +490,19 @@ public sealed partial class Actor
     public List<ActorModel> Models = new();
 
     /// <summary>Reads one from the encoding.</summary>
-    public static Actor Read(ref StateReader r)
+    public static Actor Read(ref StateReader r) => Read(ref r, null);
+
+    /// <summary>
+    /// Reads one into <paramref name="into"/> (a new one when null): its objects, lists,
+    /// arrays and unchanged strings are reused, so a decode allocates next to nothing.
+    /// </summary>
+    public static Actor Read(ref StateReader r, Actor? into)
     {
-        var o = new Actor();
+        var o = into ?? new Actor();
         o.Slot = r.U16();
         o.Id = r.U16();
         o.Kind = r.U8();
-        o.Model = r.Str();
+        o.Model = r.Str(o.Model);
         o.Position = r.Vec3();
         o.Yaw = r.F32();
         o.Scale = r.Vec3();
@@ -453,21 +514,35 @@ public sealed partial class Actor
         o.Parent = r.I16();
         o.ParentBone = r.U16();
         o.Player = r.Bool();
-        o.World = r.Floats(16);
+        o.World = r.Floats(o.World, 16);
         {
             int n = r.U16();
-            o.Bones = new List<Bone>(n);
+            var l = o.Bones;
             for (int i = 0; i < n; i++)
-                o.Bones.Add(Bone.Read(ref r));
+            {
+                if (i < l.Count)
+                    l[i] = Bone.Read(ref r, l[i]);
+                else
+                    l.Add(Bone.Read(ref r, null));
+            }
+            if (l.Count > n)
+                l.RemoveRange(n, l.Count - n);
         }
         o.Drawn = r.Bool();
         o.Flags = r.U32();
         o.Flags2 = r.U32();
         {
             int n = r.U16();
-            o.Models = new List<ActorModel>(n);
+            var l = o.Models;
             for (int i = 0; i < n; i++)
-                o.Models.Add(ActorModel.Read(ref r));
+            {
+                if (i < l.Count)
+                    l[i] = ActorModel.Read(ref r, l[i]);
+                else
+                    l.Add(ActorModel.Read(ref r, null));
+            }
+            if (l.Count > n)
+                l.RemoveRange(n, l.Count - n);
         }
         return o;
     }
@@ -485,10 +560,16 @@ public sealed partial class Bone
     public float[] Matrix = new float[16];
 
     /// <summary>Reads one from the encoding.</summary>
-    public static Bone Read(ref StateReader r)
+    public static Bone Read(ref StateReader r) => Read(ref r, null);
+
+    /// <summary>
+    /// Reads one into <paramref name="into"/> (a new one when null): its objects, lists,
+    /// arrays and unchanged strings are reused, so a decode allocates next to nothing.
+    /// </summary>
+    public static Bone Read(ref StateReader r, Bone? into)
     {
-        var o = new Bone();
-        o.Matrix = r.Floats(16);
+        var o = into ?? new Bone();
+        o.Matrix = r.Floats(o.Matrix, 16);
         return o;
     }
 }
@@ -513,9 +594,15 @@ public sealed partial class ActorModel
     public bool Skinned;
 
     /// <summary>Reads one from the encoding.</summary>
-    public static ActorModel Read(ref StateReader r)
+    public static ActorModel Read(ref StateReader r) => Read(ref r, null);
+
+    /// <summary>
+    /// Reads one into <paramref name="into"/> (a new one when null): its objects, lists,
+    /// arrays and unchanged strings are reused, so a decode allocates next to nothing.
+    /// </summary>
+    public static ActorModel Read(ref StateReader r, ActorModel? into)
     {
-        var o = new ActorModel();
+        var o = into ?? new ActorModel();
         o.Base = r.U16();
         o.Skinned = r.Bool();
         return o;
@@ -624,23 +711,36 @@ public sealed partial class Menus
     public BattleEnd BattleEnd = new();
 
     /// <summary>Reads one from the encoding.</summary>
-    public static Menus Read(ref StateReader r)
+    public static Menus Read(ref StateReader r) => Read(ref r, null);
+
+    /// <summary>
+    /// Reads one into <paramref name="into"/> (a new one when null): its objects, lists,
+    /// arrays and unchanged strings are reused, so a decode allocates next to nothing.
+    /// </summary>
+    public static Menus Read(ref StateReader r, Menus? into)
     {
-        var o = new Menus();
+        var o = into ?? new Menus();
         o.MainMask = r.U32();
         o.MainCursor = r.I32();
         o.MainOptions = r.I32();
         {
             int n = r.U16();
-            o.MainOptionList = new List<MenuOption>(n);
+            var l = o.MainOptionList;
             for (int i = 0; i < n; i++)
-                o.MainOptionList.Add(MenuOption.Read(ref r));
+            {
+                if (i < l.Count)
+                    l[i] = MenuOption.Read(ref r, l[i]);
+                else
+                    l.Add(MenuOption.Read(ref r, null));
+            }
+            if (l.Count > n)
+                l.RemoveRange(n, l.Count - n);
         }
         o.BattleWindow = r.U32();
         o.BattleCharacter = r.I16();
         o.BattleDepth = r.I16();
         o.BattleCursor = r.I16();
-        o.BattleIds = r.Bytes();
+        o.BattleIds = r.Bytes(o.BattleIds);
         o.SaveState = r.U32();
         o.SaveCursor = r.I32();
         o.SaveTop = r.I32();
@@ -649,13 +749,20 @@ public sealed partial class Menus
         o.EscMenu = r.Bool();
         {
             int n = r.U16();
-            o.Windows = new List<MenuWindow>(n);
+            var l = o.Windows;
             for (int i = 0; i < n; i++)
-                o.Windows.Add(MenuWindow.Read(ref r));
+            {
+                if (i < l.Count)
+                    l[i] = MenuWindow.Read(ref r, l[i]);
+                else
+                    l.Add(MenuWindow.Read(ref r, null));
+            }
+            if (l.Count > n)
+                l.RemoveRange(n, l.Count - n);
         }
         o.CurrentPlayer = r.U8();
-        o.Config = ConfigMenu.Read(ref r);
-        o.BattleEnd = BattleEnd.Read(ref r);
+        o.Config = ConfigMenu.Read(ref r, o.Config);
+        o.BattleEnd = BattleEnd.Read(ref r, o.BattleEnd);
         return o;
     }
 }
@@ -681,12 +788,18 @@ public sealed partial class MenuOption
     public byte[] Name = [];
 
     /// <summary>Reads one from the encoding.</summary>
-    public static MenuOption Read(ref StateReader r)
+    public static MenuOption Read(ref StateReader r) => Read(ref r, null);
+
+    /// <summary>
+    /// Reads one into <paramref name="into"/> (a new one when null): its objects, lists,
+    /// arrays and unchanged strings are reused, so a decode allocates next to nothing.
+    /// </summary>
+    public static MenuOption Read(ref StateReader r, MenuOption? into)
     {
-        var o = new MenuOption();
+        var o = into ?? new MenuOption();
         o.Id = r.U16();
         o.Enabled = r.Bool();
-        o.Name = r.Bytes();
+        o.Name = r.Bytes(o.Name);
         return o;
     }
 }
@@ -738,9 +851,15 @@ public sealed partial class Message
     public byte[] Text = [];
 
     /// <summary>Reads one from the encoding.</summary>
-    public static Message Read(ref StateReader r)
+    public static Message Read(ref StateReader r) => Read(ref r, null);
+
+    /// <summary>
+    /// Reads one into <paramref name="into"/> (a new one when null): its objects, lists,
+    /// arrays and unchanged strings are reused, so a decode allocates next to nothing.
+    /// </summary>
+    public static Message Read(ref StateReader r, Message? into)
     {
-        var o = new Message();
+        var o = into ?? new Message();
         o.Window = r.U8();
         o.State = r.U16();
         o.X = r.I16();
@@ -749,7 +868,7 @@ public sealed partial class Message
         o.Mode = r.U8();
         o.Choice = r.I16();
         o.InitialChoice = r.I16();
-        o.Text = r.Bytes();
+        o.Text = r.Bytes(o.Text);
         return o;
     }
 }
@@ -789,21 +908,41 @@ public sealed partial class Effects
     public int Music;
 
     /// <summary>Reads one from the encoding.</summary>
-    public static Effects Read(ref StateReader r)
+    public static Effects Read(ref StateReader r) => Read(ref r, null);
+
+    /// <summary>
+    /// Reads one into <paramref name="into"/> (a new one when null): its objects, lists,
+    /// arrays and unchanged strings are reused, so a decode allocates next to nothing.
+    /// </summary>
+    public static Effects Read(ref StateReader r, Effects? into)
     {
-        var o = new Effects();
+        var o = into ?? new Effects();
         o.Magic = r.I32();
         {
             int n = r.U16();
-            o.Running = new List<EffectInstance>(n);
+            var l = o.Running;
             for (int i = 0; i < n; i++)
-                o.Running.Add(EffectInstance.Read(ref r));
+            {
+                if (i < l.Count)
+                    l[i] = EffectInstance.Read(ref r, l[i]);
+                else
+                    l.Add(EffectInstance.Read(ref r, null));
+            }
+            if (l.Count > n)
+                l.RemoveRange(n, l.Count - n);
         }
         {
             int n = r.U16();
-            o.Filters = new List<ScreenFilter>(n);
+            var l = o.Filters;
             for (int i = 0; i < n; i++)
-                o.Filters.Add(ScreenFilter.Read(ref r));
+            {
+                if (i < l.Count)
+                    l[i] = ScreenFilter.Read(ref r, l[i]);
+                else
+                    l.Add(ScreenFilter.Read(ref r, null));
+            }
+            if (l.Count > n)
+                l.RemoveRange(n, l.Count - n);
         }
         o.ShakeX = r.F32();
         o.ShakeY = r.F32();
@@ -845,15 +984,21 @@ public sealed partial class EffectInstance
     public byte[] Targets = [];
 
     /// <summary>Reads one from the encoding.</summary>
-    public static EffectInstance Read(ref StateReader r)
+    public static EffectInstance Read(ref StateReader r) => Read(ref r, null);
+
+    /// <summary>
+    /// Reads one into <paramref name="into"/> (a new one when null): its objects, lists,
+    /// arrays and unchanged strings are reused, so a decode allocates next to nothing.
+    /// </summary>
+    public static EffectInstance Read(ref StateReader r, EffectInstance? into)
     {
-        var o = new EffectInstance();
+        var o = into ?? new EffectInstance();
         o.Slot = r.U16();
         o.Id = r.U32();
         o.Character = r.U8();
         o.Kind = r.U8();
         o.Ended = r.Bool();
-        o.Targets = r.Bytes();
+        o.Targets = r.Bytes(o.Targets);
         return o;
     }
 }
@@ -907,13 +1052,19 @@ public sealed partial class ScreenFilter
     public short Step;
 
     /// <summary>Reads one from the encoding.</summary>
-    public static ScreenFilter Read(ref StateReader r)
+    public static ScreenFilter Read(ref StateReader r) => Read(ref r, null);
+
+    /// <summary>
+    /// Reads one into <paramref name="into"/> (a new one when null): its objects, lists,
+    /// arrays and unchanged strings are reused, so a decode allocates next to nothing.
+    /// </summary>
+    public static ScreenFilter Read(ref StateReader r, ScreenFilter? into)
     {
-        var o = new ScreenFilter();
+        var o = into ?? new ScreenFilter();
         o.Slot = r.U8();
         o.Active = r.Bool();
         o.Mode = r.U8();
-        o.Color = r.Rgb();
+        o.Color = r.Rgb(o.Color);
         o.Frames = r.I16();
         o.Level = r.I16();
         o.Target = r.I16();
@@ -964,9 +1115,15 @@ public sealed partial class Battler
     public int Ctb;
 
     /// <summary>Reads one from the encoding.</summary>
-    public static Battler Read(ref StateReader r)
+    public static Battler Read(ref StateReader r) => Read(ref r, null);
+
+    /// <summary>
+    /// Reads one into <paramref name="into"/> (a new one when null): its objects, lists,
+    /// arrays and unchanged strings are reused, so a decode allocates next to nothing.
+    /// </summary>
+    public static Battler Read(ref StateReader r, Battler? into)
     {
-        var o = new Battler();
+        var o = into ?? new Battler();
         o.Index = r.U8();
         o.Hp = r.I32();
         o.MaxHp = r.I32();
@@ -1060,9 +1217,15 @@ public sealed partial class Look
     public float GlobalTime;
 
     /// <summary>Reads one from the encoding.</summary>
-    public static Look Read(ref StateReader r)
+    public static Look Read(ref StateReader r) => Read(ref r, null);
+
+    /// <summary>
+    /// Reads one into <paramref name="into"/> (a new one when null): its objects, lists,
+    /// arrays and unchanged strings are reused, so a decode allocates next to nothing.
+    /// </summary>
+    public static Look Read(ref StateReader r, Look? into)
     {
-        var o = new Look();
+        var o = into ?? new Look();
         o.Valid = r.Bool();
         o.ColourScale = r.Vec3();
         o.Ambient = r.Vec3();
@@ -1079,9 +1242,16 @@ public sealed partial class Look
         o.CharacterAmbient = r.Vec3();
         {
             int n = r.U16();
-            o.Lights = new List<Light>(n);
+            var l = o.Lights;
             for (int i = 0; i < n; i++)
-                o.Lights.Add(Light.Read(ref r));
+            {
+                if (i < l.Count)
+                    l[i] = Light.Read(ref r, l[i]);
+                else
+                    l.Add(Light.Read(ref r, null));
+            }
+            if (l.Count > n)
+                l.RemoveRange(n, l.Count - n);
         }
         o.GlobalTime = r.F32();
         return o;
@@ -1119,9 +1289,15 @@ public sealed partial class Light
     public float Yaw;
 
     /// <summary>Reads one from the encoding.</summary>
-    public static Light Read(ref StateReader r)
+    public static Light Read(ref StateReader r) => Read(ref r, null);
+
+    /// <summary>
+    /// Reads one into <paramref name="into"/> (a new one when null): its objects, lists,
+    /// arrays and unchanged strings are reused, so a decode allocates next to nothing.
+    /// </summary>
+    public static Light Read(ref StateReader r, Light? into)
     {
-        var o = new Light();
+        var o = into ?? new Light();
         o.Direction = r.Vec3();
         o.Colour = r.Vec3();
         o.Level = r.F32();
@@ -1169,16 +1345,22 @@ public sealed partial class MenuWindow
     public byte[] Args = [];
 
     /// <summary>Reads one from the encoding.</summary>
-    public static MenuWindow Read(ref StateReader r)
+    public static MenuWindow Read(ref StateReader r) => Read(ref r, null);
+
+    /// <summary>
+    /// Reads one into <paramref name="into"/> (a new one when null): its objects, lists,
+    /// arrays and unchanged strings are reused, so a decode allocates next to nothing.
+    /// </summary>
+    public static MenuWindow Read(ref StateReader r, MenuWindow? into)
     {
-        var o = new MenuWindow();
+        var o = into ?? new MenuWindow();
         o.Slot = r.U8();
         o.State = r.U32();
         o.Rows = r.U16();
         o.First = r.I16();
         o.Cursor = r.I16();
         o.Kind = r.U8();
-        o.Args = r.Bytes();
+        o.Args = r.Bytes(o.Args);
         return o;
     }
 }
@@ -1217,23 +1399,43 @@ public sealed partial class SphereGrid
     public List<GridLink> Links = new();
 
     /// <summary>Reads one from the encoding.</summary>
-    public static SphereGrid Read(ref StateReader r)
+    public static SphereGrid Read(ref StateReader r) => Read(ref r, null);
+
+    /// <summary>
+    /// Reads one into <paramref name="into"/> (a new one when null): its objects, lists,
+    /// arrays and unchanged strings are reused, so a decode allocates next to nothing.
+    /// </summary>
+    public static SphereGrid Read(ref StateReader r, SphereGrid? into)
     {
-        var o = new SphereGrid();
+        var o = into ?? new SphereGrid();
         o.Open = r.Bool();
         o.Current = r.U8();
         o.Cursor = r.U16();
         {
             int n = r.U16();
-            o.Nodes = new List<GridNode>(n);
+            var l = o.Nodes;
             for (int i = 0; i < n; i++)
-                o.Nodes.Add(GridNode.Read(ref r));
+            {
+                if (i < l.Count)
+                    l[i] = GridNode.Read(ref r, l[i]);
+                else
+                    l.Add(GridNode.Read(ref r, null));
+            }
+            if (l.Count > n)
+                l.RemoveRange(n, l.Count - n);
         }
         {
             int n = r.U16();
-            o.Links = new List<GridLink>(n);
+            var l = o.Links;
             for (int i = 0; i < n; i++)
-                o.Links.Add(GridLink.Read(ref r));
+            {
+                if (i < l.Count)
+                    l[i] = GridLink.Read(ref r, l[i]);
+                else
+                    l.Add(GridLink.Read(ref r, null));
+            }
+            if (l.Count > n)
+                l.RemoveRange(n, l.Count - n);
         }
         return o;
     }
@@ -1263,9 +1465,15 @@ public sealed partial class GridNode
     public ushort Flags;
 
     /// <summary>Reads one from the encoding.</summary>
-    public static GridNode Read(ref StateReader r)
+    public static GridNode Read(ref StateReader r) => Read(ref r, null);
+
+    /// <summary>
+    /// Reads one into <paramref name="into"/> (a new one when null): its objects, lists,
+    /// arrays and unchanged strings are reused, so a decode allocates next to nothing.
+    /// </summary>
+    public static GridNode Read(ref StateReader r, GridNode? into)
     {
-        var o = new GridNode();
+        var o = into ?? new GridNode();
         o.X = r.I16();
         o.Y = r.I16();
         o.Kind = r.U16();
@@ -1283,9 +1491,15 @@ public sealed partial class GridLink
     public ushort B;
 
     /// <summary>Reads one from the encoding.</summary>
-    public static GridLink Read(ref StateReader r)
+    public static GridLink Read(ref StateReader r) => Read(ref r, null);
+
+    /// <summary>
+    /// Reads one into <paramref name="into"/> (a new one when null): its objects, lists,
+    /// arrays and unchanged strings are reused, so a decode allocates next to nothing.
+    /// </summary>
+    public static GridLink Read(ref StateReader r, GridLink? into)
     {
-        var o = new GridLink();
+        var o = into ?? new GridLink();
         o.A = r.U16();
         o.B = r.U16();
         return o;
@@ -1329,15 +1543,28 @@ public sealed partial class SceneObject
     public float MorphV;
 
     /// <summary>Reads one from the encoding.</summary>
-    public static SceneObject Read(ref StateReader r)
+    public static SceneObject Read(ref StateReader r) => Read(ref r, null);
+
+    /// <summary>
+    /// Reads one into <paramref name="into"/> (a new one when null): its objects, lists,
+    /// arrays and unchanged strings are reused, so a decode allocates next to nothing.
+    /// </summary>
+    public static SceneObject Read(ref StateReader r, SceneObject? into)
     {
-        var o = new SceneObject();
+        var o = into ?? new SceneObject();
         o.Id = r.U32();
         {
             int n = r.U16();
-            o.Meshes = new List<SceneMesh>(n);
+            var l = o.Meshes;
             for (int i = 0; i < n; i++)
-                o.Meshes.Add(SceneMesh.Read(ref r));
+            {
+                if (i < l.Count)
+                    l[i] = SceneMesh.Read(ref r, l[i]);
+                else
+                    l.Add(SceneMesh.Read(ref r, null));
+            }
+            if (l.Count > n)
+                l.RemoveRange(n, l.Count - n);
         }
         o.Dobj = r.Bool();
         o.Morph = r.F32();
@@ -1370,10 +1597,16 @@ public sealed partial class SceneMesh
     public uint Layer;
 
     /// <summary>Reads one from the encoding.</summary>
-    public static SceneMesh Read(ref StateReader r)
+    public static SceneMesh Read(ref StateReader r) => Read(ref r, null);
+
+    /// <summary>
+    /// Reads one into <paramref name="into"/> (a new one when null): its objects, lists,
+    /// arrays and unchanged strings are reused, so a decode allocates next to nothing.
+    /// </summary>
+    public static SceneMesh Read(ref StateReader r, SceneMesh? into)
     {
-        var o = new SceneMesh();
-        o.World = r.Floats(12);
+        var o = into ?? new SceneMesh();
+        o.World = r.Floats(o.World, 12);
         o.Drawn = r.Bool();
         o.Layer = r.U32();
         return o;
@@ -1431,28 +1664,48 @@ public sealed partial class Save
     public byte[] SharedCommands = [];
 
     /// <summary>Reads one from the encoding.</summary>
-    public static Save Read(ref StateReader r)
+    public static Save Read(ref StateReader r) => Read(ref r, null);
+
+    /// <summary>
+    /// Reads one into <paramref name="into"/> (a new one when null): its objects, lists,
+    /// arrays and unchanged strings are reused, so a decode allocates next to nothing.
+    /// </summary>
+    public static Save Read(ref StateReader r, Save? into)
     {
-        var o = new Save();
+        var o = into ?? new Save();
         o.Valid = r.Bool();
         o.Gil = r.U32();
         o.PlayTime = r.U32();
-        o.Frontline = r.Bytes();
-        o.Backline = r.Bytes();
+        o.Frontline = r.Bytes(o.Frontline);
+        o.Backline = r.Bytes(o.Backline);
         {
             int n = r.U16();
-            o.Members = new List<PartyMember>(n);
+            var l = o.Members;
             for (int i = 0; i < n; i++)
-                o.Members.Add(PartyMember.Read(ref r));
+            {
+                if (i < l.Count)
+                    l[i] = PartyMember.Read(ref r, l[i]);
+                else
+                    l.Add(PartyMember.Read(ref r, null));
+            }
+            if (l.Count > n)
+                l.RemoveRange(n, l.Count - n);
         }
         {
             int n = r.U16();
-            o.Items = new List<ItemStack>(n);
+            var l = o.Items;
             for (int i = 0; i < n; i++)
-                o.Items.Add(ItemStack.Read(ref r));
+            {
+                if (i < l.Count)
+                    l[i] = ItemStack.Read(ref r, l[i]);
+                else
+                    l.Add(ItemStack.Read(ref r, null));
+            }
+            if (l.Count > n)
+                l.RemoveRange(n, l.Count - n);
         }
-        o.KeyItems = r.Bytes();
-        o.SharedCommands = r.Bytes();
+        o.KeyItems = r.Bytes(o.KeyItems);
+        o.SharedCommands = r.Bytes(o.SharedCommands);
         return o;
     }
 }
@@ -1526,17 +1779,23 @@ public sealed partial class PartyMember
     public uint OverdriveModes;
 
     /// <summary>Reads one from the encoding.</summary>
-    public static PartyMember Read(ref StateReader r)
+    public static PartyMember Read(ref StateReader r) => Read(ref r, null);
+
+    /// <summary>
+    /// Reads one into <paramref name="into"/> (a new one when null): its objects, lists,
+    /// arrays and unchanged strings are reused, so a decode allocates next to nothing.
+    /// </summary>
+    public static PartyMember Read(ref StateReader r, PartyMember? into)
     {
-        var o = new PartyMember();
+        var o = into ?? new PartyMember();
         o.Index = r.U8();
-        o.Name = r.Bytes();
+        o.Name = r.Bytes(o.Name);
         o.Joined = r.Bool();
         o.Hp = r.U32();
         o.Mp = r.U32();
         o.MaxHp = r.U32();
         o.MaxMp = r.U32();
-        o.Stats = r.Bytes();
+        o.Stats = r.Bytes(o.Stats);
         o.Ap = r.U32();
         o.TotalAp = r.U32();
         o.SphereLevels = r.U8();
@@ -1544,7 +1803,7 @@ public sealed partial class PartyMember
         o.LimitChargeMax = r.U8();
         o.Weapon = r.U8();
         o.Armour = r.U8();
-        o.Commands = r.Bytes();
+        o.Commands = r.Bytes(o.Commands);
         o.OverdriveMode = r.U8();
         o.OverdriveModes = r.U32();
         return o;
@@ -1571,9 +1830,15 @@ public sealed partial class ItemStack
     public byte Count;
 
     /// <summary>Reads one from the encoding.</summary>
-    public static ItemStack Read(ref StateReader r)
+    public static ItemStack Read(ref StateReader r) => Read(ref r, null);
+
+    /// <summary>
+    /// Reads one into <paramref name="into"/> (a new one when null): its objects, lists,
+    /// arrays and unchanged strings are reused, so a decode allocates next to nothing.
+    /// </summary>
+    public static ItemStack Read(ref StateReader r, ItemStack? into)
     {
-        var o = new ItemStack();
+        var o = into ?? new ItemStack();
         o.Slot = r.U8();
         o.Id = r.U16();
         o.Count = r.U8();
@@ -1608,17 +1873,30 @@ public sealed partial class ConfigMenu
     public List<ConfigRow> Rows = new();
 
     /// <summary>Reads one from the encoding.</summary>
-    public static ConfigMenu Read(ref StateReader r)
+    public static ConfigMenu Read(ref StateReader r) => Read(ref r, null);
+
+    /// <summary>
+    /// Reads one into <paramref name="into"/> (a new one when null): its objects, lists,
+    /// arrays and unchanged strings are reused, so a decode allocates next to nothing.
+    /// </summary>
+    public static ConfigMenu Read(ref StateReader r, ConfigMenu? into)
     {
-        var o = new ConfigMenu();
+        var o = into ?? new ConfigMenu();
         o.Open = r.Bool();
         o.Cursor = r.I16();
         o.PcRow = r.I32();
         {
             int n = r.U16();
-            o.Rows = new List<ConfigRow>(n);
+            var l = o.Rows;
             for (int i = 0; i < n; i++)
-                o.Rows.Add(ConfigRow.Read(ref r));
+            {
+                if (i < l.Count)
+                    l[i] = ConfigRow.Read(ref r, l[i]);
+                else
+                    l.Add(ConfigRow.Read(ref r, null));
+            }
+            if (l.Count > n)
+                l.RemoveRange(n, l.Count - n);
         }
         return o;
     }
@@ -1654,18 +1932,31 @@ public sealed partial class ConfigRow
     public List<ConfigOption> Options = new();
 
     /// <summary>Reads one from the encoding.</summary>
-    public static ConfigRow Read(ref StateReader r)
+    public static ConfigRow Read(ref StateReader r) => Read(ref r, null);
+
+    /// <summary>
+    /// Reads one into <paramref name="into"/> (a new one when null): its objects, lists,
+    /// arrays and unchanged strings are reused, so a decode allocates next to nothing.
+    /// </summary>
+    public static ConfigRow Read(ref StateReader r, ConfigRow? into)
     {
-        var o = new ConfigRow();
+        var o = into ?? new ConfigRow();
         o.TitleId = r.U16();
-        o.Title = r.Bytes();
+        o.Title = r.Bytes(o.Title);
         o.Value = r.U32();
         o.Enabled = r.Bool();
         {
             int n = r.U16();
-            o.Options = new List<ConfigOption>(n);
+            var l = o.Options;
             for (int i = 0; i < n; i++)
-                o.Options.Add(ConfigOption.Read(ref r));
+            {
+                if (i < l.Count)
+                    l[i] = ConfigOption.Read(ref r, l[i]);
+                else
+                    l.Add(ConfigOption.Read(ref r, null));
+            }
+            if (l.Count > n)
+                l.RemoveRange(n, l.Count - n);
         }
         return o;
     }
@@ -1688,11 +1979,17 @@ public sealed partial class ConfigOption
     public byte[] Text = [];
 
     /// <summary>Reads one from the encoding.</summary>
-    public static ConfigOption Read(ref StateReader r)
+    public static ConfigOption Read(ref StateReader r) => Read(ref r, null);
+
+    /// <summary>
+    /// Reads one into <paramref name="into"/> (a new one when null): its objects, lists,
+    /// arrays and unchanged strings are reused, so a decode allocates next to nothing.
+    /// </summary>
+    public static ConfigOption Read(ref StateReader r, ConfigOption? into)
     {
-        var o = new ConfigOption();
+        var o = into ?? new ConfigOption();
         o.Id = r.U16();
-        o.Text = r.Bytes();
+        o.Text = r.Bytes(o.Text);
         return o;
     }
 }
@@ -1781,29 +2078,49 @@ public sealed partial class BattleEnd
     public int GearList;
 
     /// <summary>Reads one from the encoding.</summary>
-    public static BattleEnd Read(ref StateReader r)
+    public static BattleEnd Read(ref StateReader r) => Read(ref r, null);
+
+    /// <summary>
+    /// Reads one into <paramref name="into"/> (a new one when null): its objects, lists,
+    /// arrays and unchanged strings are reused, so a decode allocates next to nothing.
+    /// </summary>
+    public static BattleEnd Read(ref StateReader r, BattleEnd? into)
     {
-        var o = new BattleEnd();
+        var o = into ?? new BattleEnd();
         o.Open = r.Bool();
         o.State = r.U32();
         o.Done = r.Bool();
         o.GilWon = r.U32();
         o.GilLeft = r.U32();
         o.GilStep = r.U32();
-        o.Ap = r.Bytes();
+        o.Ap = r.Bytes(o.Ap);
         {
             int n = r.U16();
-            o.Rows = new List<BattleEndRow>(n);
+            var l = o.Rows;
             for (int i = 0; i < n; i++)
-                o.Rows.Add(BattleEndRow.Read(ref r));
+            {
+                if (i < l.Count)
+                    l[i] = BattleEndRow.Read(ref r, l[i]);
+                else
+                    l.Add(BattleEndRow.Read(ref r, null));
+            }
+            if (l.Count > n)
+                l.RemoveRange(n, l.Count - n);
         }
         {
             int n = r.U16();
-            o.Items = new List<ItemStack>(n);
+            var l = o.Items;
             for (int i = 0; i < n; i++)
-                o.Items.Add(ItemStack.Read(ref r));
+            {
+                if (i < l.Count)
+                    l[i] = ItemStack.Read(ref r, l[i]);
+                else
+                    l.Add(ItemStack.Read(ref r, null));
+            }
+            if (l.Count > n)
+                l.RemoveRange(n, l.Count - n);
         }
-        o.Gear = r.Bytes();
+        o.Gear = r.Bytes(o.Gear);
         o.GearFull = r.Bool();
         o.Side = r.U32();
         o.Cursor = r.I32();
@@ -1847,9 +2164,15 @@ public sealed partial class BattleEndRow
     public short Flash;
 
     /// <summary>Reads one from the encoding.</summary>
-    public static BattleEndRow Read(ref StateReader r)
+    public static BattleEndRow Read(ref StateReader r) => Read(ref r, null);
+
+    /// <summary>
+    /// Reads one into <paramref name="into"/> (a new one when null): its objects, lists,
+    /// arrays and unchanged strings are reused, so a decode allocates next to nothing.
+    /// </summary>
+    public static BattleEndRow Read(ref StateReader r, BattleEndRow? into)
     {
-        var o = new BattleEndRow();
+        var o = into ?? new BattleEndRow();
         o.Character = r.I16();
         o.Kind = r.U16();
         o.Timer = r.I16();
@@ -1925,9 +2248,15 @@ public sealed partial class Layers
     public List<LayerEntry> Entries = new();
 
     /// <summary>Reads one from the encoding.</summary>
-    public static Layers Read(ref StateReader r)
+    public static Layers Read(ref StateReader r) => Read(ref r, null);
+
+    /// <summary>
+    /// Reads one into <paramref name="into"/> (a new one when null): its objects, lists,
+    /// arrays and unchanged strings are reused, so a decode allocates next to nothing.
+    /// </summary>
+    public static Layers Read(ref StateReader r, Layers? into)
     {
-        var o = new Layers();
+        var o = into ?? new Layers();
         o.Valid = r.Bool();
         o.Loaded = r.Bool();
         o.Off = r.Bool();
@@ -1940,9 +2269,16 @@ public sealed partial class Layers
         o.Squeezed = r.Bool();
         {
             int n = r.U16();
-            o.Entries = new List<LayerEntry>(n);
+            var l = o.Entries;
             for (int i = 0; i < n; i++)
-                o.Entries.Add(LayerEntry.Read(ref r));
+            {
+                if (i < l.Count)
+                    l[i] = LayerEntry.Read(ref r, l[i]);
+                else
+                    l.Add(LayerEntry.Read(ref r, null));
+            }
+            if (l.Count > n)
+                l.RemoveRange(n, l.Count - n);
         }
         return o;
     }
@@ -1968,9 +2304,15 @@ public sealed partial class LayerEntry
     public short Id;
 
     /// <summary>Reads one from the encoding.</summary>
-    public static LayerEntry Read(ref StateReader r)
+    public static LayerEntry Read(ref StateReader r) => Read(ref r, null);
+
+    /// <summary>
+    /// Reads one into <paramref name="into"/> (a new one when null): its objects, lists,
+    /// arrays and unchanged strings are reused, so a decode allocates next to nothing.
+    /// </summary>
+    public static LayerEntry Read(ref StateReader r, LayerEntry? into)
     {
-        var o = new LayerEntry();
+        var o = into ?? new LayerEntry();
         o.Shown = r.Bool();
         o.Scene = r.I16();
         o.Id = r.I16();

@@ -214,11 +214,28 @@ What changed (the costs found):
 
 What remains:
 
-- **Garbage collections**, 7 to 30 ms each, a few a second while playing:
-  the snapshot decoder allocates an object and a 16-float array per bone
-  (about 250 KiB an update with a dozen characters). The generated
-  decoder (`rust/ffx-state-cs`) could fill kept arrays instead; a larger
-  gen0 only makes the pauses longer.
+- **Garbage collections**, 7 to 26 ms each while playing. The snapshot
+  decoder used to allocate an object and a 16-float array per bone (about
+  225 KiB an update at Besaid); it now decodes into a spare snapshot's
+  objects (docs/architecture.md, "The game-state API"), and what a snapshot
+  costs is the encoded copy from the extension (49 KiB at Besaid, 68 KiB at
+  Luca). Measured (2026-11-16, one run each, the machine shared):
+
+  | Scene | | `Snapshots` alloc a frame | an update | main thread a frame | all threads | collections gen0/1/2 in 20 s | paused | frames with one: mean / max |
+  |---|---|---|---|---|---|---|---|---|
+  | Besaid | before | 4.2 KiB | ~225 KiB | 17.8 KiB | 28.8 MiB/s | 41 / 30 / 10 | 308 ms | 9.4 / 19.2 ms |
+  | | after | 1.1 KiB | ~54 KiB | 15.4 KiB | 22.8 MiB/s | 32 / 21 / 11 | 272 ms | 8.8 / 26.0 ms |
+  | Luca | before | 5.1 KiB | ~280 KiB | 14.6 KiB | 23.1 MiB/s | 28 / 13 / 2 | 161 ms | 8.1 / 13.0 ms |
+  | | after | 1.3 KiB | ~70 KiB | 10.8 KiB | 17.0 MiB/s | 19 / 8 / 2 | 137 ms | 7.6 / 18.6 ms |
+
+  The largest garbage left is the effect frame (`EffectDrawView`,
+  `FfxGame.effect_draws`): 344 KiB at Besaid, a new byte array an update,
+  on the large object heap (over 85,000 bytes), which is collected with
+  gen2: Besaid's 10 or 11 gen2 collections in 20 s. Copying it into a kept
+  buffer would need the extension to write into C#'s memory (a pinned
+  array's address), as the audio mix does; not done. The views' per-frame
+  allocations (`View3D`, `Objects`: 2 to 3 KiB a frame) weigh in the
+  benchmark's 1,500 fps, little at 60.
 - The first message box: 20 to 27 ms (its glyphs drawn the first time).
 - Snapshot frames cost 2 to 4 ms of the views' time (the decoding and the
   bones split), every 33 ms.

@@ -147,6 +147,14 @@ encoding.
   interpolates each frame between the two by the time since the newest
   came (`alpha` = age / interval): Godot renders at the display's rate,
   one update behind the game.
+- Decoding reuses storage: each class's `Read(ref r, into)` fills an
+  object read before, its lists (items by index), matrices, byte arrays
+  and unchanged strings, so a decode allocates almost nothing.
+  `GameStateView` decodes into a spare snapshot, one no longer `Current`
+  or `Previous`; the views only keep last frame's two. A reused object can
+  come back holding a newer update, so the views' caches compare
+  `GameStateView.Decoded` (the decode count), not references (the bone
+  poses' per-actor cache drops entries more than one decode old).
 - Spaces: the game's field space has y down; its render space negates x
   and y and is Godot's (right-handed, y up, the camera along -z). A field
   point (x, y, z) is (-x, -y, z) in Godot (`GameStateView.FieldPoint`,
