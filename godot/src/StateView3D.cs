@@ -77,6 +77,7 @@ public partial class StateView3D : Node3D
         };
         AddChild(_env);
         AddChild(new EffectView { Name = "EffectView" });
+        AddChild(new EffectDrawView { Name = "EffectDrawView" });
         AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-55, 30, 0), LightEnergy = 0.8f });
         _boneMesh = new SphereMesh { Radius = 0.6f, Height = 1.2f, RadialSegments = 6, Rings = 3 };
     }
@@ -130,13 +131,39 @@ public partial class StateView3D : Node3D
         ClassicMaterials.SetLook(view.Current?.Look);
         // the game clears to the map's background colour (Look.background), drawn as it is
         if (view.Current?.Look is { Valid: true } look)
+        {
             _env.Environment.BackgroundColor = new Color(look.Background.X, look.Background.Y, look.Background.Z);
+            ApplyGlow(look);
+        }
         UpdateMap(host.Classic, view.Current);
         UpdateObjects(view);
         UpdateActors(host.Classic, view);
     }
 
     // ---- the map ----------------------------------------------------------------
+
+    /// <summary>
+    /// The game's glow pass (docs/formats/postfx.md in ffx-rust, "Glow"): a glow map of what is
+    /// brighter than <c>NoGlowThreshold</c> (full at <c>FullGlowThreshold</c>), blurred in three
+    /// levels and added with <c>GlowGain</c>. Godot's environment glow is the same kind of pass:
+    /// threshold, three blurred levels, additive mix; the map's values drive it (the shapes of
+    /// the blurs and the threshold ramp are Godot's own). <c>--no-glow</c> turns it off.
+    /// </summary>
+    private void ApplyGlow(GdFfx.Api.Look look)
+    {
+        var env = _env.Environment;
+        bool on = look.GlowGain > 0 && !GameSettings.Flag("no-glow");
+        env.GlowEnabled = on;
+        if (!on)
+            return;
+        env.GlowBlendMode = Environment.GlowBlendModeEnum.Additive;
+        env.GlowHdrThreshold = Mathf.Max(look.GlowNone, 0.35f);
+        env.GlowHdrScale = 1f / Mathf.Max(look.GlowFull - look.GlowNone, 0.05f);
+        env.GlowIntensity = look.GlowGain;
+        env.GlowBloom = 0f;
+        for (int i = 0; i < 7; i++)
+            env.SetGlowLevel(i, i is >= 1 and <= 3 ? 1f : 0f);
+    }
 
     // ---- the map's objects ------------------------------------------------------
 

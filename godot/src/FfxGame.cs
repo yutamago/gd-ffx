@@ -73,6 +73,12 @@ public partial class FfxGame : RefCounted
     /// <summary>A material texture's face (0, or 0..6 for a cube map) as PNG bytes; empty without the archive.</summary>
     public byte[] ClassicTexture(string path, int face) => Node.Call("classic_texture", path, face).AsByteArray();
 
+    /// <summary>The effects' draws for the frame of <paramref name="update"/> (else the newest), encoded (<c>FXDR</c>); empty without a game.</summary>
+    public byte[] EffectDraws(uint update) => Node.Call("effect_draws", update).AsByteArray();
+
+    /// <summary>A texture by the name the game holds at run time (an effect draw's) as PNG bytes; empty when not in the archive.</summary>
+    public byte[] RuntimeTexture(string name) => Node.Call("runtime_texture", name).AsByteArray();
+
     /// <summary>Whether the material texture at <paramref name="path"/> is a cube map.</summary>
     public bool ClassicTextureIsCube(string path) => Node.Call("classic_texture_is_cube", path).AsBool();
 

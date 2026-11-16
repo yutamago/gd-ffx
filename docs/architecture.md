@@ -183,6 +183,12 @@ one, `reflection3`), its six faces from the archive (`FfxGame.classic_texture`,
 ffx-phyre's `face_png`); without one, the cube's mean colour stands in. The
 D3D cube's z is mirrored into Godot's (`cube_axes`).
 
+The glow pass: the map's glow values (API 9's `Look.glow_*`: Besaid none
+below 0.5, full at 1, gain 0.11, spread 0.34) drive Godot's environment glow
+(additive, three blurred levels, the threshold at `NoGlowThreshold`;
+`--no-glow` turns it off). On the save sphere's orb it brings the patch
+closer to the original (29.9 -> 24.0).
+
 The screen is cleared to the map's background colour (`Look.background`,
 the `GlobalCamera`'s `m_bgColor`; Besaid 0.306, 0.357, 0.537).
 
@@ -219,13 +225,30 @@ pedestal). Its glowing orb is an effect, not part of the model.
 
 ## Effects and the battle HUD (G3)
 
+- **The game's own effects** (`EffectDrawView`): ffx-rust's effect-draw
+  capture (`ffx_host::vfx`, switched on at boot; `FFX_NO_VFX` leaves it
+  off) records every draw of `PhyreScene_DrawMostVFX`: positions in render
+  space, colours, UVs, indices, the texture name and the VSP flags. The
+  extension hands the frame of the shown snapshot's update to C#
+  (`FfxGame.effect_draws`, the `FXDR` encoding), which builds one mesh a
+  frame, a surface per (texture, blend): unshaded, two-sided, no depth
+  write, the vertex colour doubled (0.5 is the PS2's 0x80). Blend from the
+  flags: bit 0x10 subtracts, else bit 0x2 adds, else alpha (from the
+  examples 0x18, 0xa/0x2, 0x8/0x9). Textures by the name the game holds
+  (`FfxGame.runtime_texture`). At Besaid: 30 draws, 28 textured, 6
+  textures; the save sphere's orb (field program 15) and the shore's sea
+  strips (which gave the shallow water its cyan) come from here. Not drawn
+  yet: the draw events (buffer copies, fades, character draws) and the
+  other VFX lists; the orb's sparkles show a pink the original does not
+  (the blend mapping is from examples, effects-draw.md's open question 2).
+
 - **Effects as events** (`EffectView`, under the 3D view): each effect
   record the game starts (`Effects.running`, keyed by slot) plays where the
   game plays it, on each target or else on its character, while the game
   keeps the record. A remade effect registered for its id (docs/remake.md)
-  is instanced there; anything else gets a stand-in, a short burst of
-  particles in a colour of its id. The classic effects (the game's effect
-  programs and their models) are not imported yet. Who a character index
+  is instanced there. Otherwise the game's own draws show it (above); only
+  when they are not captured does it get a stand-in, a short burst of
+  particles in a colour of its id. Who a character index
   is: in battle the battler (below), out of battle the actor in that slot.
 - **The screen shake** (`Effects.shake_x/y`, PS2 screen pixels, 448 high)
   moves the camera's offset by the same share of the view at a subject 100
