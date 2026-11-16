@@ -26,6 +26,8 @@ public partial class DebugView : Control
     private long _rateUpdates;
     private double _rateSeconds;
     private double _rate;
+    private GameState _state;
+    private double _stateAt = double.NegativeInfinity;
 
     public override void _Ready()
     {
@@ -102,14 +104,23 @@ public partial class DebugView : Control
                 GetTree().Quit(1);
             return;
         }
-        var s = host.Game.State;
+        // the state (a dictionary built by the extension) and the overlay's text, four times a
+        // second; the checks read it every frame, but the benchmark does not need to
+        var now = Time.GetTicksMsec() / 1000.0;
+        bool fresh = now - _stateAt >= 0.25 || _test is not (null or BenchTest);
+        if (fresh)
+        {
+            _state = host.Game.State;
+            _stateAt = now;
+        }
+        var s = _state;
         if (s.Seconds - _rateSeconds >= 2.0)
         {
             _rate = (s.Updates - _rateUpdates) / (s.Seconds - _rateSeconds);
             _rateUpdates = s.Updates;
             _rateSeconds = s.Seconds;
         }
-        if (Visible)
+        if (Visible && fresh)
             _label.Text = Describe(s, host.View, _rate, host.Error);
         if (_test == null)
             return;
@@ -274,7 +285,7 @@ public sealed class SelfTest(double timeout) : ITest
             {
                 var c = v.Current!;
                 var party = c.Actors.Where(a => a.Kind == 0 && a.Hidden == 0).ToList();
-                var posed = v.Actors().Count(f => f.Shown && f.Actor.Kind == 0 && f.Bones.Length > 50);
+                var posed = v.Actors().Count(f => f.Shown && f.Actor.Kind == 0 && f.Actor.Bones.Count > 50);
                 if (c.World.Map != DebugView.MapOpening || !c.Camera.Valid || party.Count < 3 || posed < 3)
                     return Done(false, $"at the fire: {DebugView.SnapshotLine(v)}, party {party.Count}, posed {posed}");
                 _fire = $"at the fire: {party.Count} party members posed by their skeletons ({string.Join(", ", party.Select(a => a.Model))}), "

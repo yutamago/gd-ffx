@@ -42,24 +42,32 @@ public static class Perf
     public static bool On { get; set; }
 
     private static readonly long[] Ticks = new long[(int)Section.Count];
+    private static readonly long[] Bytes = new long[(int)Section.Count];
 
-    /// <summary>A probe's start (0 when off).</summary>
-    public static long Start() => On ? Stopwatch.GetTimestamp() : 0;
+    /// <summary>A probe's start: the time and the main thread's allocations so far (zero when off).</summary>
+    public readonly record struct Probe(long Ticks, long Bytes);
 
-    /// <summary>A probe's end: the time since <paramref name="start"/> added to <paramref name="s"/>.</summary>
-    public static void End(Section s, long start)
+    public static Probe Start() =>
+        On ? new Probe(Stopwatch.GetTimestamp(), System.GC.GetAllocatedBytesForCurrentThread()) : default;
+
+    /// <summary>A probe's end: the time and allocations since <paramref name="start"/> added to <paramref name="s"/>.</summary>
+    public static void End(Section s, Probe start)
     {
-        if (On)
-            Ticks[(int)s] += Stopwatch.GetTimestamp() - start;
+        if (!On)
+            return;
+        Ticks[(int)s] += Stopwatch.GetTimestamp() - start.Ticks;
+        Bytes[(int)s] += System.GC.GetAllocatedBytesForCurrentThread() - start.Bytes;
     }
 
-    /// <summary>This frame's milliseconds per section into <paramref name="ms"/>, then cleared.</summary>
-    public static void Take(double[] ms)
+    /// <summary>This frame's milliseconds and bytes allocated per section into <paramref name="ms"/> and <paramref name="bytes"/>, then cleared.</summary>
+    public static void Take(double[] ms, long[] bytes)
     {
         for (int i = 0; i < Ticks.Length; i++)
         {
             ms[i] = Ticks[i] * 1000.0 / Stopwatch.Frequency;
+            bytes[i] = Bytes[i];
             Ticks[i] = 0;
+            Bytes[i] = 0;
         }
     }
 }

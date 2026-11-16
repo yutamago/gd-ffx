@@ -40,6 +40,8 @@ public partial class SphereGridView : Control
     private static bool Open(GdFfx.Api.Snapshot? s) =>
         s != null && s.SphereGrid.Open && FieldMenuView.OpenScreen(s.Menus.MainMask) == "sphere grid";
 
+    private bool _wasOpen;
+
     public override void _Process(double delta)
     {
         var t0 = Perf.Start();
@@ -64,7 +66,10 @@ public partial class SphereGridView : Control
             }
             _title.Text = $"Sphere Grid: {FieldMenuView.MemberName(game, s, g.Current)}" + (CursorName.Length > 0 ? $"   ▶ {CursorName}" : "");
         }
-        QueueRedraw();
+        // drawn while open, and once more when it closes
+        if (open || _wasOpen)
+            QueueRedraw();
+        _wasOpen = open;
     }
 
     public override void _Draw()

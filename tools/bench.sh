@@ -27,7 +27,7 @@ done
 out="${BENCH_OUT:-/tmp/gd-ffx-bench}"
 mkdir -p "$out"
 cd "$repo/godot"
-dotnet build -nologo -v quiet gd-ffx.csproj >/dev/null
+dotnet build -nologo -v quiet gd-ffx.csproj ${BENCH_DOTNET_ARGS:-} >/dev/null
 [[ -f .godot/extension_list.cfg ]] || "$godot" --headless --editor --quit --path . >/dev/null 2>&1 || true
 docs="$(mktemp -d -t gd-ffx-bench.XXXXXX)"
 trap 'rm -rf "$docs"; [[ "${BENCH_KEEP:-0}" == 1 ]] || rm -rf "$out"' EXIT
@@ -47,6 +47,6 @@ for scene in "${scenes[@]}"; do
     s=$?
     set -e
     [[ $s -eq 0 ]] || status=$s
-    grep -E '^ffx bench|^ffx selftest|hitch|SCRIPT ERROR|panicked' "$out/$scene.log" | cut -c1-400
+    grep -E '^ffx bench|^ffx selftest|hitch|SCRIPT ERROR|panicked' "$out/$scene.log" | cut -c1-1200
 done
 exit "$status"

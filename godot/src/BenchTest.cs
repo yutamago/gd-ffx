@@ -27,7 +27,10 @@ public sealed class BenchTest : ITest
     {
         public double Ms;
         public readonly double[] Section = new double[Sections];
+        public readonly long[] Bytes = new long[Sections];
         public long Alloc;
+        /// <summary>The highest generation collected in the frame (-1 none).</summary>
+        public int Gc = -1;
         public bool Snapshot;
         public bool Loading;
         public int Draws;
@@ -41,6 +44,7 @@ public sealed class BenchTest : ITest
     private readonly List<double> _arrivals = new();
     private readonly double[] _scratch = new double[Sections];
     private long _last, _alloc;
+    private readonly int[] _gcSeen = new int[3];
     private double _total, _readyAt = -1, _windowAt = -1;
     private long _update = -1, _skipped;
     private int[] _gc0 = [];
@@ -108,7 +112,7 @@ public sealed class BenchTest : ITest
             return null;
         if (_walk)
             Keys(false);
-        Report(s, v, view);
+        Report(game, s, v, view);
         return Done(true, $"{_window.Count} frames in {_total - _windowAt:F1} s at {c?.World.Level}");
     }
 
@@ -122,7 +126,15 @@ public sealed class BenchTest : ITest
             Objects = (int)Performance.GetMonitor(Performance.Monitor.RenderTotalObjectsInFrame),
             Level = v.Current?.World.Level ?? "",
         };
-        Perf.Take(_scratch);
+        Perf.Take(_scratch, f.Bytes);
+        for (int g = 2; g >= 0; g--)
+            if (GC.CollectionCount(g) != _gcSeen[g])
+            {
+                f.Gc = g;
+                break;
+            }
+        for (int g = 0; g < 3; g++)
+            _gcSeen[g] = GC.CollectionCount(g);
         Array.Copy(_scratch, f.Section, Sections);
         var u = v.Current?.Update ?? 0;
         if (v.Current != null && u != _update)
@@ -145,7 +157,7 @@ public sealed class BenchTest : ITest
     private static double Pct(List<double> sorted, double p) =>
         sorted.Count == 0 ? 0 : sorted[Math.Min(sorted.Count - 1, (int)Math.Ceiling(p * sorted.Count) - 1)];
 
-    private void Report(GameState s, GameStateView v, StateView3D? view)
+    private void Report(FfxGame game, GameState s, GameStateView v, StateView3D? view)
     {
         var w = _window;
         var ms = w.Select(f => f.Ms).OrderBy(x => x).ToList();
@@ -172,6 +184,14 @@ public sealed class BenchTest : ITest
             b.Append($" {(Perf.Section)i} {m:F3}/{Pct(xs, 0.99):F3}/{xs[^1]:F2}");
         }
         Print(b.ToString());
+        b.Clear().Append("alloc KiB/frame (mean):");
+        for (int i = 0; i < Sections; i++)
+        {
+            var m = w.Average(f => (double)f.Bytes[i]) / 1024;
+            if (m >= 0.05)
+                b.Append($" {(Perf.Section)i} {m:F1}");
+        }
+        Print(b.ToString());
         var snapFrames = w.Where(f => f.Snapshot).Select(f => f.Section.Sum()).DefaultIfEmpty(0).Average();
         var otherFrames = w.Where(f => !f.Snapshot).Select(f => f.Section.Sum()).DefaultIfEmpty(0).Average();
         Print($"cpu ms/frame, all views: {sum:F3} (frames with a new snapshot {snapFrames:F3}, others {otherFrames:F3}); "
@@ -181,7 +201,11 @@ public sealed class BenchTest : ITest
         var pause = GC.GetTotalPauseDuration() - _pause0;
         Print($"gc: main thread allocates {allocs.Average() / 1024:F1} KiB/frame (p99 {Pct(allocs, 0.99) / 1024:F1}, "
             + $"max {allocs[^1] / 1024:F1}), all threads {(GC.GetTotalAllocatedBytes() - _totalAlloc0) / seconds / 1048576:F2} MiB/s; "
-            + $"collections gen0 {gc[0]} gen1 {gc[1]} gen2 {gc[2]}, paused {pause.TotalMilliseconds:F1} ms in all");
+            + $"collections gen0 {gc[0]} gen1 {gc[1]} gen2 {gc[2]}, paused {pause.TotalMilliseconds:F1} ms in all; "
+            + $"frames with a collection: mean {w.Where(f => f.Gc >= 0).Select(f => f.Ms).DefaultIfEmpty(0).Average():F2} ms, "
+            + $"max {w.Where(f => f.Gc >= 0).Select(f => f.Ms).DefaultIfEmpty(0).Max():F2} ms; "
+            + $"last full: {GC.GetGCMemoryInfo(GCKind.FullBlocking).Index}, background {GC.GetGCMemoryInfo(GCKind.Background).Index}, "
+            + $"LOH threshold {AppContext.GetData("GCLOHThreshold") ?? AppContext.GetData("System.GC.LOHThreshold")}");
         var gaps = new List<double>();
         for (int i = 1; i < _arrivals.Count; i++)
             gaps.Add(_arrivals[i] - _arrivals[i - 1]);
@@ -190,6 +214,15 @@ public sealed class BenchTest : ITest
         Print($"game: {updates} updates in {s.Seconds - _seconds0:F1} s ({updates / Math.Max(s.Seconds - _seconds0, 1e-3):F1}/s); "
             + $"snapshots seen {_arrivals.Count}, {_skipped} skipped; gap ms mean {(gaps.Count > 0 ? gaps.Average() : 0):F1}, "
             + $"p99 {Pct(gaps, 0.99):F1}, max {(gaps.Count > 0 ? gaps[^1] : 0):F1}, over 50 ms {gaps.Count(g => g > 50)}");
+        if (c != null)
+        {
+            var snaps = game.Snapshots;
+            var fx = game.EffectDraws(c.Update);
+            var frame = EffectDrawView.Decode(fx);
+            Print($"sizes: snapshot {snaps["current"].AsByteArray().Length / 1024} KiB, effect frame (FXDR) {fx.Length / 1024} KiB "
+                + $"({frame?.Draws.Count ?? 0} draws, {frame?.Draws.Count(d => EffectDrawView.Drawn(d.Pass)) ?? 0} in drawn passes, "
+                + $"{frame?.Draws.Sum(d => d.Vertices) ?? 0} vertices)");
+        }
         Print($"render (Godot's monitors, mean per frame): {w.Average(f => f.Draws):F0} draw calls, {w.Average(f => f.Objects):F0} objects");
         // the longest frames: the load before the window, then the window's
         Longest("load", _load, 5);
@@ -207,7 +240,7 @@ public sealed class BenchTest : ITest
                 .OrderByDescending(k => f.Section[k]).Select(k => $"{(Perf.Section)k} {f.Section[k]:F1}");
             var views = f.Section.Sum();
             Print($"longest {what} frame #{i}: {f.Ms:F1} ms (views {views:F1}: {string.Join(", ", parts)}; other {f.Ms - views:F1})"
-                + $"{(f.Snapshot ? ", new snapshot" : "")}, alloc {f.Alloc / 1024} KiB, {f.Level}");
+                + $"{(f.Snapshot ? ", new snapshot" : "")}{(f.Gc >= 0 ? $", gen{f.Gc} collection" : "")}, alloc {f.Alloc / 1024} KiB, {f.Level}");
         }
     }
 

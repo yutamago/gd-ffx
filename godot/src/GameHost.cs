@@ -41,6 +41,8 @@ public partial class GameHost : Node
         Instance = this;
         // before every scene's _Process: the view is this frame's
         ProcessPriority = -100;
+        // the collector's blocking full collections are frame hitches; background ones are not
+        System.Runtime.GCSettings.LatencyMode = System.Runtime.GCLatencyMode.SustainedLowLatency;
     }
 
     /// <summary>Whether <see cref="Start"/> succeeded (the game booted, or <c>--no-game</c>).</summary>
