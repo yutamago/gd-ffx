@@ -151,6 +151,13 @@ pub struct FfxGame {
     poll_pads: bool,
     /// The requests' replies not yet picked up (`request_results`).
     results: Arc<Mutex<Vec<String>>>,
+    /// The effect frame `effect_draws_held` encoded last: C# copies it from
+    /// `effect_draws_address` into a buffer of its own (no new array a
+    /// game update on its side: docs/running.md, "Benchmark").
+    fx_held: Vec<u8>,
+    /// The snapshot pair `snapshots_held` handed out last, kept (and with
+    /// it the addresses it gave) until the next call.
+    snaps_held: Option<crate::snapshots::Encoded>,
 }
 
 #[godot_api]
@@ -162,6 +169,8 @@ impl INode for FfxGame {
             error: String::new(),
             poll_pads: true,
             results: Arc::default(),
+            fx_held: Vec::new(),
+            snaps_held: None,
         }
     }
 
@@ -266,6 +275,15 @@ fn pixels_dict(id: i64, px: Option<ffx_import::Pixels>) -> VarDictionary {
         "height" => i64::from(p.height),
         "faces" => i64::try_from(p.faces).unwrap_or(1),
         "rgba" => &PackedByteArray::from(p.rgba.as_slice()),
+    }
+}
+
+/// A buffer's address in this process and its length, for C# to copy from
+/// (`Marshal.Copy`) while it is held; (0, 0) when empty.
+fn address_len(b: &[u8]) -> (i64, i64) {
+    match (i64::try_from(b.as_ptr().addr()), i64::try_from(b.len())) {
+        (Ok(at), Ok(len)) if len > 0 => (at, len),
+        _ => (0, 0),
     }
 }
 
@@ -453,6 +471,41 @@ impl FfxGame {
         }
     }
 
+    /// [`snapshots`](Self::snapshots) without copies: the pair stays held
+    /// by this node until the next call (main thread only, as every call),
+    /// and the dictionary gives each one's address in this process and
+    /// length (`current_address`, `current_len`, `previous_address`,
+    /// `previous_len`; 0 when none) beside `update`, `previous_update`,
+    /// `age` and `interval`. C# copies the bytes into buffers of its own
+    /// (`Marshal.Copy`) before its next call here; no Godot array is made.
+    #[func]
+    fn snapshots_held(&mut self) -> VarDictionary {
+        let s = crate::snapshots::global();
+        let e = s.encoded();
+        let previous_update = e
+            .previous
+            .as_ref()
+            .and_then(|b| b.get(8..12))
+            .and_then(|b| b.try_into().ok())
+            .map_or(-1, |b| i64::from(u32::from_le_bytes(b)));
+        let at = |b: Option<&Arc<Vec<u8>>>| b.map_or((0, 0), |b| address_len(b));
+        let (cur_at, cur_len) = at(e.current.as_ref());
+        let (prev_at, prev_len) = at(e.previous.as_ref());
+        let d = vdict! {
+            "update" => s.update(),
+            "previous_update" => previous_update,
+            "current_address" => cur_at,
+            "current_len" => cur_len,
+            "previous_address" => prev_at,
+            "previous_len" => prev_len,
+            "age" => e.age,
+            "interval" => e.interval,
+        };
+        // the addresses above stay valid while these are held
+        self.snaps_held = Some(e);
+        d
+    }
+
     /// Opens the player's archive in `game_dir` for the classic importer,
     /// with `cache` (a folder of gd-ffx's own) as its output. False on
     /// failure (`last_error`).
@@ -632,6 +685,34 @@ impl FfxGame {
         })
     }
 
+    /// [`effect_draws`](Self::effect_draws) without a Godot array: the frame
+    /// is encoded into a buffer this node holds until the next call (main
+    /// thread only), whose length this returns (0: none);
+    /// `effect_draws_address` gives its address. C# copies it into a buffer
+    /// of its own (a new 344 KiB array an update at Besaid made gen2
+    /// collections: docs/running.md, "Benchmark").
+    #[func]
+    fn effect_draws_held(&mut self, update: i64) -> i64 {
+        self.fx_held.clear();
+        if let Some(shared) = self.run.as_ref().and_then(Run::shared) {
+            let frame = u32::try_from(update)
+                .ok()
+                .and_then(|u| shared.vfx.frame(u))
+                .or_else(|| shared.vfx.latest());
+            if let Some(f) = frame {
+                self.fx_held = f.encode();
+            }
+        }
+        address_len(&self.fx_held).1
+    }
+
+    /// The address of the frame `effect_draws_held` encoded last (valid
+    /// until the next `effect_draws_held`; 0 when it is empty).
+    #[func]
+    fn effect_draws_address(&self) -> i64 {
+        address_len(&self.fx_held).0
+    }
+
     /// Sphere grid node kind `kind`'s name in `language`; empty without the
     /// archive or such a record.
     #[func]
@@ -808,5 +889,19 @@ impl FfxGame {
         godot_error!("ffx: {why}");
         self.error = why.to_string();
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::address_len;
+
+    #[test]
+    fn a_held_buffer_by_address_and_length() {
+        assert_eq!(address_len(&[]), (0, 0));
+        let b = vec![1u8, 2, 3];
+        let (at, len) = address_len(&b);
+        assert_eq!(len, 3);
+        assert_eq!(usize::try_from(at).unwrap(), b.as_ptr().addr());
     }
 }

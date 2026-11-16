@@ -97,10 +97,15 @@ public partial class EffectView : Node3D
         Perf.End(Perf.Section.EffectView, t0);
     }
 
+    private readonly HashSet<ushort> _seen = new();
+    private readonly List<ushort> _slots = new();
+
     private void Tick(double delta)
     {
         var s = GameHost.Instance?.View.Current;
-        var seen = new HashSet<ushort>();
+        // kept between frames (a new set and list a frame otherwise)
+        var seen = _seen;
+        seen.Clear();
         if (s != null)
             foreach (var e in s.Effects.Running)
             {
@@ -113,7 +118,9 @@ public partial class EffectView : Node3D
                     Stop(e.Slot);
                 Start(s, e);
             }
-        foreach (var slot in new List<ushort>(_playing.Keys))
+        _slots.Clear();
+        _slots.AddRange(_playing.Keys);
+        foreach (var slot in _slots)
         {
             var p = _playing[slot];
             p.Age += delta;

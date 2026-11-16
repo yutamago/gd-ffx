@@ -139,7 +139,13 @@ encoding.
   main thread, between two updates) and hands it to the observer
   `rust/ffx-gd/src/snapshots.rs` registers, which keeps the newest two
   with the time the newest came.
-- `FfxGame.snapshots()` gives them to C# encoded; the C# bindings
+- `FfxGame.snapshots_held()` gives them to C# encoded without copies of
+  its own: the node holds the encoded pair until its next call and hands
+  out each one's address and length, and C# copies the bytes into buffers
+  it keeps (`Held.CopyInto`, `Marshal.Copy`) before that next call (all on
+  Godot's main thread: gdext calls are main-thread only). No array is made
+  an update on either side (`FfxGame.snapshots()`, with Godot arrays, stays
+  for the benchmark and tools). The C# bindings
   (`godot/src/Api/GameStateApi.g.cs`) are generated from the API's schema
   by `rust/ffx-state-cs` (`cargo run -p ffx-state-cs`; a test fails when
   they are stale) and read the bytes through `godot/src/Api/StateReader.cs`.
@@ -422,7 +428,9 @@ the game gets from `ViewProjection2` (traced only as the main camera's).
   pass: positions in render space, colours, UVs, indices, the texture name
   and the VSP flags. The
   extension hands the frame of the shown snapshot's update to C#
-  (`FfxGame.effect_draws`, the `FXDR` encoding), which builds one mesh a
+  (`FfxGame.effect_draws_held` and `effect_draws_address`, the `FXDR`
+  encoding held by the node until its next call, copied into a buffer C#
+  keeps, as the snapshots are), which builds one mesh a
   frame, a surface per (texture, blend): unshaded, two-sided, no depth
   write, the vertex colour doubled (0.5 is the PS2's 0x80). Blend from the
   flags: bit 0x10 subtracts, else bit 0x2 adds, else alpha (from the

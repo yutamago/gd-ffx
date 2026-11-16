@@ -257,9 +257,16 @@ void fragment() {
     /// Decodes a frame (<c>FXDR</c>, versions 1 to 5); null when it is not one. Its geometry goes
     /// into <paramref name="into"/> (cleared first), else a new <see cref="Geometry"/>.
     /// </summary>
-    public static (uint Update, List<Draw> Draws, Geometry Geometry)? Decode(byte[] b, Geometry? into = null)
+    public static (uint Update, List<Draw> Draws, Geometry Geometry)? Decode(byte[] b, Geometry? into = null) =>
+        Decode(b, b.Length, into);
+
+    /// <summary>
+    /// <see cref="Decode(byte[], Geometry?)"/> of the first <paramref name="length"/> bytes of
+    /// <paramref name="b"/> (a kept buffer, longer than the frame).
+    /// </summary>
+    public static (uint Update, List<Draw> Draws, Geometry Geometry)? Decode(byte[] b, int length, Geometry? into = null)
     {
-        if (b.Length < 24 || b[0] != (byte)'F' || b[1] != (byte)'X' || b[2] != (byte)'D' || b[3] != (byte)'R')
+        if (length < 24 || length > b.Length || b[0] != (byte)'F' || b[1] != (byte)'X' || b[2] != (byte)'D' || b[3] != (byte)'R')
             return null;
         int at = 4;
         ushort U16() { var v = System.BitConverter.ToUInt16(b, at); at += 2; return v; }
@@ -322,7 +329,7 @@ void fragment() {
             var texture = TextureName(new System.ReadOnlySpan<byte>(b, at, tl));
             at += tl;
             int v = (int)U32(), n = (int)U32();
-            if (at + v * 36 + n * 2 > b.Length)
+            if (at + v * 36 + n * 2 > length)
                 throw new System.ArgumentException("FXDR frame cut short");
             geo.Reserve(v, n);
             int first = geo.VertexCount, ifirst = geo.IndexCount;
@@ -338,12 +345,12 @@ void fragment() {
             draws.Add(new Draw(hi << 32 | lo, flags, texture, first, v, ifirst, n, pass, technique, blends, addressU, addressV));
         }
         LastDistortion = null;
-        if (version >= 2 && at + 16 <= b.Length)
+        if (version >= 2 && at + 16 <= length)
         {
             var bits = U32();
             var blur = F();
             int dn = (int)U32(), di = (int)U32();
-            if ((bits & 1) != 0 && at + dn * 32 + di * 2 <= b.Length)
+            if ((bits & 1) != 0 && at + dn * 32 + di * 2 <= length)
             {
                 var p = new float[2 * dn]; for (int i = 0; i < p.Length; i++) p[i] = F();
                 var u = new float[2 * dn]; for (int i = 0; i < u.Length; i++) u[i] = F();
@@ -472,7 +479,9 @@ void fragment() {
             return;
         _update = s.Update;
         var t0 = Perf.Start();
-        var frame = Decode(host.Game.EffectDraws(s.Update), _geometry);
+        // the frame copied into a kept buffer (a new 344 KiB array an update at Besaid made gen2 collections)
+        int len = host.Game.EffectDrawsInto(s.Update, ref _frameBytes);
+        var frame = Decode(_frameBytes, len, _geometry);
         Perf.End(Perf.Section.EffectDecode, t0);
         t0 = Perf.Start();
         try
@@ -485,6 +494,7 @@ void fragment() {
         }
     }
 
+    private byte[] _frameBytes = [];
     private readonly Geometry _geometry = new();
     private readonly Geometry _surface = new();
     private readonly List<((string, Look) Key, List<Draw> Draws)> _groups = new();

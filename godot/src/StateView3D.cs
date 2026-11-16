@@ -314,6 +314,9 @@ public partial class StateView3D : Node3D
     /// track's UV offset); an object that is not a display object keeps 0 (the morph manager's
     /// first value). Set only when it changes.
     /// </summary>
+    // a string passed for a StringName makes a new one each call
+    private static readonly StringName MorphParam = "ffx_morph", UvOffsetParam = "ffx_uv_offset";
+
     private void UpdateMorphs(GameStateView view)
     {
         int moved = 0;
@@ -348,10 +351,10 @@ public partial class StateView3D : Node3D
                     m.Mesh.SetBlendShapeValue(1, v.X);
                     break;
                 case MorphKind.Weight:
-                    m.Mesh.SetInstanceShaderParameter("ffx_morph", v.X);
+                    m.Mesh.SetInstanceShaderParameter(MorphParam, v.X);
                     break;
                 case MorphKind.UvOffset:
-                    m.Mesh.SetInstanceShaderParameter("ffx_uv_offset", v);
+                    m.Mesh.SetInstanceShaderParameter(UvOffsetParam, v);
                     break;
             }
         }

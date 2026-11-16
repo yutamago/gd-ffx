@@ -64,24 +64,25 @@ public sealed class GameStateView
         // between updates the age runs on this side's clock from the arrival the pair gave
         if (update != _update)
         {
-            var d = game.Snapshots;
+            // held by the extension until its next call: copied into this side's kept buffers
+            var d = game.SnapshotsHeld();
             _arrived = System.Diagnostics.Stopwatch.GetTimestamp()
                 - (long)(d["age"].AsDouble() * System.Diagnostics.Stopwatch.Frequency);
             _interval = Math.Max(d["interval"].AsDouble(), 1e-3);
             try
             {
-                var cur = d["current"].AsByteArray();
+                int curLen = Held.CopyInto(d["current_address"].AsInt64(), d["current_len"].AsInt64(), ref _curBytes);
                 var (old, oldPrev) = (Current, Previous);
                 // decoded into a spare snapshot (Spare): never one this frame's views saw last
-                Current = cur.Length > 0 ? StateApi.Decode(cur, Spare()) : null;
+                Current = curLen > 0 ? StateApi.Decode(_curBytes.AsSpan(0, curLen), Spare()) : null;
                 // the previous one is usually the last current, already decoded (not copied again)
                 var prevUpdate = d["previous_update"].AsInt64();
                 if (old != null && prevUpdate == old.Update)
                     Previous = old;
                 else
                 {
-                    var prev = d["previous"].AsByteArray();
-                    Previous = prev.Length > 0 ? StateApi.Decode(prev, Spare()) : Current;
+                    int prevLen = Held.CopyInto(d["previous_address"].AsInt64(), d["previous_len"].AsInt64(), ref _prevBytes);
+                    Previous = prevLen > 0 ? StateApi.Decode(_prevBytes.AsSpan(0, prevLen), Spare()) : Current;
                 }
                 Release(old);
                 Release(oldPrev);
@@ -103,6 +104,9 @@ public sealed class GameStateView
         var age = (double)(System.Diagnostics.Stopwatch.GetTimestamp() - _arrived) / System.Diagnostics.Stopwatch.Frequency;
         Alpha = (float)Math.Clamp(age / _interval, 0.0, 1.0);
     }
+
+    /// <summary>The encoded snapshots copied out of the extension (kept: ~49 KiB at Besaid an update otherwise).</summary>
+    private byte[] _curBytes = [], _prevBytes = [];
 
     private long _arrived;
     private double _interval = 1.0 / 30;

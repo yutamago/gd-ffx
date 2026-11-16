@@ -194,9 +194,12 @@ What changed (the costs found):
   matrices) every frame (now only for markers); the effect frame decoded
   into new arrays and a new mesh each update, several of them on the large
   object heap (now kept buffers, one `ArrayMesh`, spans passed straight to
-  Godot; arrays up to 2 MiB stay in gen0: `System.GC.LOHThreshold` in
-  `gd-ffx.csproj`); the overlay's state and text every frame (now four
-  times a second).
+  Godot); the overlay's state and text every frame (now four times a
+  second). `gd-ffx.csproj` sets `System.GC.LOHThreshold` (2 MiB) in the
+  project's `runtimeconfig.json`, but `godot --path` starts .NET with the
+  editor's own configuration, so it does not apply there (the benchmark's
+  `LOH threshold` stays empty): arrays from 85,000 bytes were on the large
+  object heap in these measurements.
 - **Work redone each frame**: two searches of the whole tree (the map's
   nodes too) by `EffectDrawView` each update, the look and glow pushed to the
   renderer each frame, label colours and texts set again (in battle 3.6 ms
@@ -214,28 +217,50 @@ What changed (the costs found):
 
 What remains:
 
-- **Garbage collections**, 7 to 26 ms each while playing. The snapshot
-  decoder used to allocate an object and a 16-float array per bone (about
-  225 KiB an update at Besaid); it now decodes into a spare snapshot's
-  objects (docs/architecture.md, "The game-state API"), and what a snapshot
-  costs is the encoded copy from the extension (49 KiB at Besaid, 68 KiB at
-  Luca). Measured (2026-11-16, one run each, the machine shared):
+- **Garbage collections.** The snapshot decoder used to allocate an
+  object and a 16-float array per bone (about 225 KiB an update at Besaid);
+  it now decodes into a spare snapshot's objects (docs/architecture.md,
+  "The game-state API"). The effect frame (`FfxGame.effect_draws`: 344 KiB
+  at Besaid) and the encoded snapshots (49 KiB at Besaid, 68 KiB at Luca)
+  were new arrays an update, the effect frame on the large object heap
+  (collected with gen2). Now the extension holds them (`effect_draws_held`,
+  `snapshots_held`: the node keeps the bytes until its next call and gives
+  their address) and C# copies them into buffers it keeps
+  (`Held.CopyInto`, `Marshal.Copy`; main thread only). Also gone: the
+  command line read from Godot each frame (`GameSettings.Flag`, `Arg`: two
+  string arrays a call, several calls a frame; now read once), a new
+  `StringName` for each call into the extension and each shader global set
+  a frame (`FfxGame.M`, `ClassicMaterials`, `MapLayers`, the morph
+  parameters; a `StringName` is finalizable, so it outlives its first
+  collection), `EffectView`'s set and list a frame.
 
-  | Scene | | `Snapshots` alloc a frame | an update | main thread a frame | all threads | collections gen0/1/2 in 20 s | paused | frames with one: mean / max |
-  |---|---|---|---|---|---|---|---|---|
-  | Besaid | before | 4.2 KiB | ~225 KiB | 17.8 KiB | 28.8 MiB/s | 41 / 30 / 10 | 308 ms | 9.4 / 19.2 ms |
-  | | after | 1.1 KiB | ~54 KiB | 15.4 KiB | 22.8 MiB/s | 32 / 21 / 11 | 272 ms | 8.8 / 26.0 ms |
-  | Luca | before | 5.1 KiB | ~280 KiB | 14.6 KiB | 23.1 MiB/s | 28 / 13 / 2 | 161 ms | 8.1 / 13.0 ms |
-  | | after | 1.3 KiB | ~70 KiB | 10.8 KiB | 17.0 MiB/s | 19 / 8 / 2 | 137 ms | 7.6 / 18.6 ms |
+  Measured (2026-11-16, Debug, headless, the machine shared; two runs
+  each, "a / b"; before: `main` at 822ef56; collections and pauses in the
+  20 s window):
 
-  The largest garbage left is the effect frame (`EffectDrawView`,
-  `FfxGame.effect_draws`): 344 KiB at Besaid, a new byte array an update,
-  on the large object heap (over 85,000 bytes), which is collected with
-  gen2: Besaid's 10 or 11 gen2 collections in 20 s. Copying it into a kept
-  buffer would need the extension to write into C#'s memory (a pinned
-  array's address), as the audio mix does; not done. The views' per-frame
-  allocations (`View3D`, `Objects`: 2 to 3 KiB a frame) weigh in the
-  benchmark's 1,500 fps, little at 60.
+  | Scene | | main thread a frame | all threads | collections gen0/1/2 | paused | frames with one: mean / max |
+  |---|---|---|---|---|---|---|
+  | Besaid | before | 12.4 / 11.7 KiB | 20.0 / 20.9 MiB/s | 25/17/9, 27/18/9 | 176 / 172 ms | 7.5 / 14.9, 6.1 / 16.5 ms |
+  | | after | 1.8 / 1.8 KiB | 3.6 / 3.6 MiB/s | 5/4/0, 5/4/0 | 87 / 86 ms | 19.5 / 24.7, 19.1 / 24.0 ms |
+  | Luca | before | 10.9 / 10.8 KiB | 17.6 / 17.9 MiB/s | 18/7/1, 19/7/1 | 130 / 142 ms | 8.1 / 14.4, 9.0 / 14.2 ms |
+  | | after | 2.3 / 2.3 KiB | 4.4 / 4.4 MiB/s | 6/4/0, 6/4/0 | 95 / 80 ms | 16.7 / 23.1, 9.2 / 19.3 ms |
+  | battle | before | 7.6 / 7.6 KiB | 27.4 / 27.0 MiB/s | 45/17/2, 44/16/2 | 301 / 303 ms | 7.3 / 13.2, 7.3 / 13.1 ms |
+  | | after | 3.6 / 3.6 KiB | 14.0 / 14.1 MiB/s | 22/12/2, 22/12/2 | 194 / 192 ms | 7.8 / 17.1, 9.3 / 15.1 ms |
+
+  With only the effect frame and the snapshots held (one run): Besaid
+  5.3 KiB a frame, 8.8 MiB/s, 14/7/0, 169 ms paused, at most 19.3 ms.
+
+  No gen2 collection is left on the field, and the time paused halves at
+  Besaid, but each collection pauses longer (about 10 ms where it was
+  about 3.5), so the worst frame with one is no better (19 to 25 ms). The
+  pause grows with the young generation's budget: with
+  `DOTNET_GCgen0size=0x4000000` (64 MiB) Besaid had 4/4/2 collections of
+  about 125 ms each. So what costs is what survives a young collection,
+  not the garbage; what that is (Godot's wrappers with finalizers, the
+  views' kept objects) is not known yet: a GC trace (`dotnet-trace`,
+  `DOTNET_GCgen0size`) would say. In battle the HUD and the battle menu
+  still allocate 2.2 KiB a frame (at 3,500 fps). The views' per-frame
+  allocations weigh in the benchmark's 1,500 fps, little at 60.
 - The first message box: 20 to 27 ms (its glyphs drawn the first time).
 - Snapshot frames cost 2 to 4 ms of the views' time (the decoding and the
   bones split), every 33 ms.

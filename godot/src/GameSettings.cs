@@ -19,32 +19,41 @@ namespace GdFfx;
 /// </summary>
 public static class GameSettings
 {
+    /// <summary>
+    /// The command line (the user's arguments, after <c>--</c>, then Godot's), read once: views
+    /// ask for flags every frame, and each read from Godot made two new string arrays.
+    /// </summary>
+    private static string[] CmdLine => _cmdLine ??= OS.GetCmdlineUserArgs().Concat(OS.GetCmdlineArgs()).ToArray();
+
+    private static string[]? _cmdLine;
+
+    /// <summary>Whether <paramref name="a"/> is <c>--name</c>, followed by <paramref name="then"/> (if any).</summary>
+    private static bool IsOption(string a, string name, char? then) =>
+        a.Length >= name.Length + (then == null ? 2 : 3) && a.StartsWith("--", StringComparison.Ordinal)
+        && string.CompareOrdinal(a, 2, name, 0, name.Length) == 0
+        && (then == null ? a.Length == name.Length + 2 : a[name.Length + 2] == then);
+
     /// <summary>The value of <c>--name=VALUE</c> on the command line, if any.</summary>
     public static string? Arg(string name)
     {
-        var prefix = $"--{name}=";
-        return OS.GetCmdlineUserArgs()
-            .Concat(OS.GetCmdlineArgs())
-            .Where(a => a.StartsWith(prefix, StringComparison.Ordinal))
-            .Select(a => a[prefix.Length..])
-            .FirstOrDefault();
+        foreach (var a in CmdLine)
+            if (IsOption(a, name, '='))
+                return a[(name.Length + 3)..];
+        return null;
     }
 
     /// <summary>Every value of <c>--name=VALUE</c> on the command line, in order.</summary>
-    public static string[] Args(string name)
-    {
-        var prefix = $"--{name}=";
-        return OS.GetCmdlineUserArgs()
-            .Concat(OS.GetCmdlineArgs())
-            .Where(a => a.StartsWith(prefix, StringComparison.Ordinal))
-            .Select(a => a[prefix.Length..])
-            .Distinct()
-            .ToArray();
-    }
+    public static string[] Args(string name) =>
+        CmdLine.Where(a => IsOption(a, name, '=')).Select(a => a[(name.Length + 3)..]).Distinct().ToArray();
 
     /// <summary>Whether the command line has the flag <c>--name</c>.</summary>
-    public static bool Flag(string name) =>
-        OS.GetCmdlineUserArgs().Concat(OS.GetCmdlineArgs()).Contains($"--{name}");
+    public static bool Flag(string name)
+    {
+        foreach (var a in CmdLine)
+            if (IsOption(a, name, null))
+                return true;
+        return false;
+    }
 
     /// <summary>A number from <c>--name=N</c>, else <paramref name="fallback"/>.</summary>
     public static double Number(string name, double fallback) =>
