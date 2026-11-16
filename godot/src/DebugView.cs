@@ -677,8 +677,9 @@ public sealed class MenuTest(double timeout, string? shot) : ITest
                 return _probe > 20 ? Done(false, $"no sphere grid drawn (mask {c.Menus.MainMask:x}, open {c.SphereGrid.Open})") : null;
             if (shot != null && DisplayServer.GetName() != "headless")
                 root!.GetViewport().GetTexture().GetImage().SavePng(shot);
-            return Done(grid.Shown.Marked > 0,
-                $"{_main}; the sphere grid: {grid.Shown.Nodes} nodes, {grid.Shown.Links} links, {grid.Shown.Marked} marked for character {c.SphereGrid.Current}");
+            return Done(grid.Shown.Marked > 0 && grid.CursorName.Length > 0,
+                $"{_main}; the sphere grid: {grid.Shown.Nodes} nodes, {grid.Shown.Links} links, {grid.Shown.Marked} marked for character {c.SphereGrid.Current}, "
+                + $"the cursor on node {c.SphereGrid.Cursor} ({grid.CursorName})");
         }
         bool status = screen is "status" or "abilities" or "overdrive";
         _probe += delta;

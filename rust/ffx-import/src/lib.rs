@@ -220,6 +220,18 @@ impl Importer {
         t.string(id & 0x0fff, 0).map(<[u8]>::to_vec)
     }
 
+    /// The name of sphere grid node kind `kind` (a node's `+6`) in
+    /// `language`, encoded: the first string of record `kind` of the
+    /// kernel's `panel.bin` (`g_AbmapNodeKinds`, which `eiAbmLoad` loads for
+    /// the grid); `None` without the table or the record.
+    #[must_use]
+    pub fn grid_node_name(&self, language: &str, kind: u16) -> Option<Vec<u8>> {
+        let lang = ffx_text::Language::from_code(language)?;
+        let path = format!("{}panel.bin", lang.kernel_dir());
+        let t = ffx_kernel::Table::parse(&self.read(&path).ok()?).ok()?;
+        t.string(kind, 0).map(<[u8]>::to_vec)
+    }
+
     /// The save list's place name `index` (a save's header `+0x18`,
     /// `AtelGetSaveDic`) in `language`, encoded: as `AtelGetSaveDicName`
     /// reads it (ffx-rust's `ffx-script` `atel_get_save_dic_name`) from the

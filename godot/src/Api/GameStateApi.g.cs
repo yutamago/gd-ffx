@@ -1073,6 +1073,11 @@ public sealed partial class SphereGrid
     /// </summary>
     public byte Current;
     /// <summary>
+    /// The node under the cursor (`+0x112fc`, a node index; its kind
+    /// names the help line, `AbmapSetHelpMessage`).
+    /// </summary>
+    public ushort Cursor;
+    /// <summary>
     /// The nodes (`+0x808`, 0x28 bytes each, the count `i16` at `+2`).
     /// </summary>
     public List<GridNode> Nodes = new();
@@ -1088,6 +1093,7 @@ public sealed partial class SphereGrid
         var o = new SphereGrid();
         o.Open = r.Bool();
         o.Current = r.U8();
+        o.Cursor = r.U16();
         {
             int n = r.U16();
             o.Nodes = new List<GridNode>(n);

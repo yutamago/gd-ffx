@@ -494,6 +494,16 @@ impl FfxGame {
             })
     }
 
+    /// Sphere grid node kind `kind`'s name in `language`; empty without the
+    /// archive or such a record.
+    #[func]
+    fn grid_node_name(&self, kind: i64, language: GString) -> GString {
+        u16::try_from(kind)
+            .ok()
+            .and_then(|k| classic().grid_node_name(&language.to_string(), k))
+            .map_or_else(GString::new, |s| GString::from(s.as_str()))
+    }
+
     /// The save list's place name `index` (a save header's location) in
     /// `language`; empty without the archive.
     #[func]

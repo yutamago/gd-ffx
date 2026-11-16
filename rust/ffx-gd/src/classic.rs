@@ -108,6 +108,15 @@ impl Classic {
         self.decode(language, &name)
     }
 
+    /// Sphere grid node kind `kind`'s name in `language`, decoded
+    /// (`ffx_import::Importer::grid_node_name`).
+    #[must_use]
+    pub fn grid_node_name(&self, language: &str, kind: u16) -> Option<String> {
+        let open = lock(&self.open).clone()?;
+        let name = open.importer.grid_node_name(language, kind)?;
+        self.decode(language, &name)
+    }
+
     /// The save list's place name `index` in `language`, decoded
     /// (`ffx_import::Importer::place_name`).
     #[must_use]

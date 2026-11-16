@@ -7,13 +7,18 @@ namespace GdFfx;
 /// G4's sphere grid screen, from the game-state API's <c>SphereGrid</c> while the game has the
 /// grid up (main menu slot 0x13, <see cref="FieldMenuView.Screens"/>): the links and the nodes
 /// fitted to the screen, empty nodes dim, the nodes the shown character has activated (the
-/// node's flags, bit 8 + the character; observed) marked, and the character's name. The game
+/// node's flags, bit 8 + the character; observed) marked, the game's cursor ringed with its
+/// node's name (the kernel's <c>panel.bin</c>: <see cref="FfxGame.GridNodeName"/>), and the
+/// character's name. The game
 /// keeps the grid's logic (moving, activating); this only draws it.
 /// </summary>
 public partial class SphereGridView : Control
 {
     /// <summary>Nodes, links and nodes marked for the shown character in the last frame drawn (for tests).</summary>
     public (int Nodes, int Links, int Marked) Shown { get; private set; }
+
+    /// <summary>The name of the node under the game's cursor ("" none; for tests).</summary>
+    public string CursorName { get; private set; } = "";
 
     private Label _title = null!;
 
@@ -41,7 +46,17 @@ public partial class SphereGridView : Control
         var open = Open(s);
         _title.Visible = open;
         if (open && GameHost.Instance?.Game is { } game)
-            _title.Text = $"Sphere Grid: {FieldMenuView.MemberName(game, s!, s!.SphereGrid.Current)}";
+        {
+            var g = s!.SphereGrid;
+            CursorName = "";
+            if (g.Cursor < g.Nodes.Count)
+            {
+                var kind = g.Nodes[g.Cursor].Kind;
+                var lang = MessageView.LanguageCode(s.World.Language);
+                CursorName = kind == 0xffff ? "" : MessageView.Clean(game.GridNodeName(kind, lang));
+            }
+            _title.Text = $"Sphere Grid: {FieldMenuView.MemberName(game, s, g.Current)}" + (CursorName.Length > 0 ? $"   ▶ {CursorName}" : "");
+        }
         QueueRedraw();
     }
 
@@ -80,6 +95,8 @@ public partial class SphereGridView : Control
                 c = Color.FromHsv(n.Kind * 0.137f % 1f, 0.45f, 0.95f);
             DrawCircle(At(n), r, c);
         }
+        if (g.Cursor < g.Nodes.Count)
+            DrawArc(At(g.Nodes[g.Cursor]), r * 2.2f, 0, Mathf.Tau, 24, new Color(1f, 1f, 1f), 2.5f);
         Shown = (g.Nodes.Count, g.Links.Count, marked);
     }
 }

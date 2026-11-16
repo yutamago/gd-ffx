@@ -264,8 +264,11 @@ row of two is not checked, as gd-ffx does not draw the game's menu). The sphere 
 up, read from `*g_Abmap`) draws the 828 nodes and 834 links fitted to the
 screen, coloured by kind, the nodes the shown character activated marked
 (the node's flags, bit 8 + character: observed), and the character's name
-(`--selftest-menu --menu-screen=sphere-grid`). The node kinds' names (the
-kernel's node table) and the grid's cursor come next.
+(`--selftest-menu --menu-screen=sphere-grid`), and the game's cursor ringed
+with its node's name (`sphere_grid.cursor`, `+0x112fc`; the name from the
+kernel's `panel.bin`, `g_AbmapNodeKinds`: `FfxGame.grid_node_name`, kind 0
+"Lv. 3 Lock", 2 "Strength +1", 0x60 "Dispel"; at Besaid the cursor starts
+on Tidus's Cheer).
 
 ## The G0 state read-out
 

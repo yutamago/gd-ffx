@@ -70,6 +70,9 @@ public partial class FfxGame : RefCounted
     /// <summary>A developer's look at <paramref name="len"/> bytes of game memory (read only; empty while no game runs).</summary>
     public byte[] Peek(long address, int len) => Node.Call("peek", address, len).AsByteArray();
 
+    /// <summary>Sphere grid node kind <paramref name="kind"/>'s name, decoded; empty without the archive.</summary>
+    public string GridNodeName(int kind, string language) => Node.Call("grid_node_name", kind, language).AsString();
+
     /// <summary>The save list's place name <paramref name="index"/> (a save header's location), decoded; empty without the archive.</summary>
     public string PlaceName(int index, string language) => Node.Call("place_name", index, language).AsString();
 
