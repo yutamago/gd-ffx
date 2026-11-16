@@ -158,6 +158,27 @@ execute bit (`chmod +x`), or WSL refuses to run them (exit 126).
   - `dotnet-LICENSE.txt`, `dotnet-THIRD-PARTY-NOTICES.txt`: the .NET runtime
     in the data folder (MIT), from its NuGet runtime pack.
 
+## Steam Deck
+
+The Deck runs the Linux export (SteamOS is Linux x86_64). To play there:
+
+1. Copy `build/linux/` to the Deck (desktop mode), e.g. into
+   `~/Applications/gd-ffx/`, and have the game installed through Steam
+   (gd-ffx reads it; the launcher finds Steam's library folders).
+2. Steam: "Add a Non-Steam Game" -> `gd-ffx.x86_64`, then back in game
+   mode start it from the library. Steam Input gives the Deck's controls as
+   a pad, which gd-ffx hands to the game as an XInput pad.
+3. On a Deck (Steam sets `SteamDeck=1`) gd-ffx picks the `deck` quality
+   preset: the 3D drawn at 75 % of the screen and scaled up, no MSAA, at
+   most 60 frames a second (`GameSettings.ApplyQuality`). `--quality=high`
+   in the launch options turns it off, `--quality=deck` turns it on
+   elsewhere (the project setting `ffx/render/quality` too). For a lighter
+   renderer still, add `--rendering-method mobile` to the launch options
+   (Godot chooses the renderer at start).
+
+The preset is checked headless (`SteamDeck=1 ... --selftest-besaid`: "ffx:
+quality deck", then the check passes). Not run on a Deck: no Deck here.
+
 ## macOS (not done)
 
 There is no macOS toolchain on the development machine. A macOS export would

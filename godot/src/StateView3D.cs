@@ -51,6 +51,7 @@ public partial class StateView3D : Node3D
 
     public override void _Ready()
     {
+        GameSettings.ApplyQuality(GetViewport());
         _camera = new Camera3D { Current = true, Near = 0.5f, Far = 20000f };
         AddChild(_camera);
         var env = new WorldEnvironment

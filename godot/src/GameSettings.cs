@@ -176,6 +176,39 @@ public static class GameSettings
     /// Whether the game's sound plays through Godot: off with <c>--mute</c> on the
     /// command line or the project setting <c>ffx/audio/enabled</c> false.
     /// </summary>
+    /// <summary>
+    /// The quality preset: <c>--quality=high|deck</c>, else <c>deck</c> on a Steam Deck (Steam sets
+    /// <c>SteamDeck=1</c> there), else the project setting <c>ffx/render/quality</c> (default
+    /// <c>high</c>). <c>deck</c> is the plan's lighter preset (<see cref="ApplyQuality"/>).
+    /// </summary>
+    public static string Quality()
+    {
+        var q = Arg("quality");
+        if (q is "high" or "deck")
+            return q;
+        if (System.Environment.GetEnvironmentVariable("SteamDeck") == "1")
+            return "deck";
+        var p = ProjectSettings.GetSetting("ffx/render/quality", "high").AsString();
+        return p == "deck" ? "deck" : "high";
+    }
+
+    /// <summary>
+    /// Applies <see cref="Quality"/> to <paramref name="viewport"/>: <c>deck</c> draws the 3D at
+    /// 75 % of the screen (scaled up), without MSAA, at most 60 frames a second (the Deck's
+    /// screen); <c>high</c> leaves the project's settings. The Mobile renderer
+    /// (<c>--rendering-method mobile</c>) is a launch option, as Godot picks it at start.
+    /// </summary>
+    public static void ApplyQuality(Viewport viewport)
+    {
+        if (Quality() != "deck")
+            return;
+        viewport.Scaling3DScale = 0.75f;
+        viewport.Msaa3D = Viewport.Msaa.Disabled;
+        if (Engine.MaxFps == 0 || Engine.MaxFps > 60)
+            Engine.MaxFps = 60;
+        GD.Print("ffx: quality deck (3D at 75 %, no MSAA, 60 fps at most)");
+    }
+
     public static bool AudioEnabled() =>
         !Flag("mute") && ProjectSettings.GetSetting("ffx/audio/enabled", true).AsBool();
 
