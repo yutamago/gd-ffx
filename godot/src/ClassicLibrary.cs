@@ -139,8 +139,24 @@ public sealed class ClassicLibrary
             return null;
         }
         var scene = doc.GenerateScene(state) as Node3D;
-        if (scene != null)
-            ClassicMaterials.Apply(state, scene, texDir);
+        // the import's extras read once from the JSON (GltfExtras: no Godot variant a value)
+        if (scene != null && GltfExtras.Read(ProjectSettings.GlobalizePath(path)) is { } extras)
+        {
+            MarkMeshes(state, extras);
+            ClassicMaterials.Apply(state, extras, scene, texDir);
+        }
         return scene;
+    }
+
+    /// <summary>
+    /// Sets each glTF mesh's extras (<see cref="MeshExtras"/>) on the Godot mesh the scene uses:
+    /// an <see cref="ImporterMesh"/> keeps the mesh it made, which the generated scene shows.
+    /// </summary>
+    private static void MarkMeshes(GltfState state, GltfExtras extras)
+    {
+        var meshes = state.GetMeshes();
+        for (int i = 0; i < meshes.Count && i < extras.Meshes.Length; i++)
+            if (meshes[i].Mesh?.GetMesh() is { } mesh)
+                extras.Meshes[i].SetOn(mesh);
     }
 }
