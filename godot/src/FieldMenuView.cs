@@ -193,13 +193,26 @@ public partial class FieldMenuView : Control
     /// </summary>
     public List<string> Config { get; } = new();
 
+    private readonly Dictionary<(uint Id, string Lang), string> _locTexts = new();
+
     /// <summary>
-    /// A config row's title (<c>ConfigRow.title</c>, the game's text decoded). The PC's own row
-    /// (<c>ConfigMenu.pc_row</c>) has no menu text: its texts come from the remaster's
-    /// localisation (title id 0x1cd), which gd-ffx does not read; it is named by what it is.
+    /// A config row's text (<c>ConfigRow.title</c>, an option's <c>text</c>: the game's text
+    /// decoded). The PC's own row (<c>ConfigMenu.pc_row</c>) has no menu text: the game takes its
+    /// texts from the remaster's localisation kit (<c>SaveDataGetLoc</c>: title 0x1cd, option
+    /// <c>k</c> 0x1d0 - 2 k, the ids the state gives), read here from the player's archive
+    /// (<see cref="FfxGame.LocText"/>).
     /// </summary>
-    private string ConfigText(FfxGame game, byte[] raw, string lang)
+    private string ConfigText(FfxGame game, byte[] raw, string lang, bool pc = false, uint id = 0)
     {
+        if (pc && raw.Length == 0)
+        {
+            if (!_locTexts.TryGetValue((id, lang), out var l))
+            {
+                l = MessageView.Clean(game.LocText((int)id, lang));
+                _locTexts[(id, lang)] = l;
+            }
+            return l;
+        }
         if (raw.Length == 0)
             return "";
         var key = (System.Convert.ToHexString(raw), lang);
@@ -214,8 +227,8 @@ public partial class FieldMenuView : Control
     /// <summary>
     /// The config screen (<c>Menus.config</c>, API 10): each row's title and its options, the
     /// chosen one highlighted, the game's cursor on its row, disabled rows dimmed. The PC row's
-    /// texts are the localisation's (ids only in the state): "PC settings" and its options
-    /// numbered.
+    /// texts are the localisation kit's (ids only in the state; "Music": "Arranged", "Original" in
+    /// English); without the archive "PC settings" and its options numbered.
     /// </summary>
     private void ShowConfig(FfxGame game, GdFfx.Api.Snapshot s)
     {
@@ -236,7 +249,7 @@ public partial class FieldMenuView : Control
         {
             var row = cfg.Rows[r];
             bool pc = r == cfg.PcRow;
-            var title = ConfigText(game, row.Title, lang);
+            var title = ConfigText(game, row.Title, lang, pc, row.TitleId);
             if (title.Length == 0)
                 title = pc ? "PC settings" : $"0x{row.TitleId:x}";
             bool on = r == cfg.Cursor;
@@ -249,7 +262,7 @@ public partial class FieldMenuView : Control
                     cells.Add(("", normal));
                     continue;
                 }
-                var text = ConfigText(game, row.Options[k].Text, lang);
+                var text = ConfigText(game, row.Options[k].Text, lang, pc, row.Options[k].Id);
                 if (text.Length == 0)
                     text = pc ? $"Option {k + 1}" : $"0x{row.Options[k].Id:x}";
                 bool picked = k == row.Value;

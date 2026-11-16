@@ -528,7 +528,18 @@ command window (the ids named from the kernel tables), the main menu's
 options and a save/load list; `FieldMenuView` (API 8's `Save`) draws the
 party beside the open main menu: front line then back line by the names
 the player gave, HP, MP and sphere levels, the gil and the play time
-(`--selftest-menu` opens it with V at Besaid). An open sub-screen shows as
+(`--selftest-menu` opens it with V at Besaid; its line also names the
+joined party's weapons as the results screen names gear, below). The
+names are the saved bytes decoded in the running language, as the game
+draws them. A developer save holds them in the Western encoding ("Tidus",
+"Wakka"), so with the game in Japanese both the game and gd-ffx show
+`ぅずさてつ` and `えげぜぜげ`: `TkDebugLoadViewerSave` copies the save over
+`g_SaveData` and never runs `setDefaultPlayerName` (which a normal load,
+`TkMenuCopyLoadedSave`, does: a name marked default, `+0x13`, becomes the
+language's default name, and between Western and Korean/Chinese saves it is
+converted; ffx-rust's `ffx_battle::save`). The developer saves' `+0x12` and
+`+0x13` bytes are not a language and a flag (save 7: 120 and 124 for
+Tidus); `ffx-import devnames <n>` lists them. An open sub-screen shows as
 its menu slot's bit in `Menus.main_mask`, the main menu's own (slot 1)
 cleared: Items is slot 3 (measured: Items, confirm, the mask goes from
 `0x2` to `0x8`). While it is open `FieldMenuView` lists the inventory
@@ -565,9 +576,16 @@ and the gauge (`--menu-screen=abilities|overdrive|status`). The config screen (A
 `menus.config`, while the mask has `0x400`) lists its rows: each row's
 title and options decoded from the game's text, the chosen option in
 brackets, the game's cursor marked, disabled rows dimmed. The PC row
-(`pc_row`, row 0) has localisation ids only (title `0x1cd`, options
-`0x1d0`, `0x1ce`; the remaster's localisation is not read): it shows as
-"PC settings" with "Option 1", "Option 2". `--menu-screen=config` goes down
+(`pc_row`, row 0) has localisation ids only (title `0x1cd`, option `k`
+`0x1d0 - 2 k`): as the game does (`SaveDataGetLoc`,
+`LocalizationManager_getText`), `FfxGame.loc_text` takes line `id` of the
+remaster's localisation kit, `FFX_Data/GameData/PS3Data/LocKit/FFX_LOC_KIT_PS3_<LANG>.BIN`
+in the archive (`ffx-import`'s `loc_text`: lines end at `\n`, `\r`
+dropped, past the end the last line; the game's encoding), decoded in the
+running language: "Music" with "Arranged", "Original" in English,
+"ＢＧＭ設定" with "アレンジ", "オリジナル" in Japanese (without the archive
+"PC settings" and "Option 1", "Option 2"). `ffx-import loc <lang> <id>...`
+prints lines. `--menu-screen=config` goes down
 the main menu to option id 8 (`TkMenuMainOpenOption` opens slot 0xa), as
 ffx-rust's test does, confirms, and checks that one Down moves the marked
 row (measured at Besaid: 8 rows; subtitles, their names, the cursor, help,
@@ -596,7 +614,22 @@ has to count (the game counts them down) and its sphere levels, "Level up!"
 while the row's flash counter runs (0xf when the AP reach a sphere level,
 down each draw); the gil counted so far of the gil won (and the party's);
 the items won named from the kernel tables with their counts, and the gear
-won by id (`MsGetSaveWeapon`'s ids; no kernel names). FFX has no EXP.
+won by name. A gear id is `MsGetSaveWeapon`'s (`0xb000 + i` the battle's
+spoils, 8 records at `0x02310dde`; `0x7000 + i` 8 more at `0x02310f9e`;
+else an inventory slot of `g_Equipment`); the game names it with
+`MsGetSaveWeaponName`: `MsWeaponName` of the record's `+0` (its `w_name`
+record, chosen when the gear is made) and `+4` (its character), string
+`character` of that record in the kernel's `w_name.bin`, or `7 +
+character` (the hiragana form, blank in the Japanese table) with the
+config's hiragana bit (save `+0x3d0c` bit 3). The state API carries the
+ids only, so `FfxGame.gear_record` reads the record from the game's
+memory now (`rust/ffx-gd/src/state.rs`, `gear`), -1 for one not in use
+(the game's weapon page skips it), and `FfxGame.weapon_name` names it
+(`ffx-import`'s `weapon_name`; `ffx-import wname <lang> [kana]` lists the
+table). The Japanese table orders some records' names differently from
+the English one (record 1: Tidus フラタニティ, then スピア, ロッド where the
+English has Staff, Dull Blade); the game reads string `character` either
+way, and so does gd-ffx. FFX has no EXP.
 `--selftest-battle --to-results` attacks on (confirm tapped) until the
 battle is won and the screen runs, lets the AP count down, then taps
 confirm once a second until the gil is paid. Measured on the deck's battle
@@ -604,7 +637,11 @@ confirm once a second until the gil is paid. Measured on the deck's battle
 0xa), then Tidus and Wakka at 0 AP (0xd), the gil 5 counted after a confirm
 (party 665 -> 670), the spoils one Ability Sphere; the states 0xa .. 0xe,
 0xf, 0x14 .. 0x1b, then the field. No level-up in that battle: the flash is
-untested.
+untested. No gear is won there either: the gear names are checked on the
+worn weapons (`--selftest-menu`: Tidus ロングソード, Wakka オフィシャルボール
+in Japanese, the inventory records read from the game) and on the table
+(`ffx-import`'s archive test: record 0 "Caladbolg" .. "Godhand", record 1
+"Brotherhood"); the spoils lists' records are not seen yet.
 
 ## The G0 state read-out
 

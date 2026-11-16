@@ -10,9 +10,10 @@ namespace GdFfx;
 /// AP it still has to count (the game counts them down) and its sphere levels, a "Level up!"
 /// that flashes while the row's flash counter runs (0xf when the AP reach a sphere level, down
 /// by one each draw); the gil won and the share counted so far (the game pays it in steps); the
-/// items won named from the kernel tables with their counts, and the gear won by id (gear has no
-/// kernel name: its ids are <c>MsGetSaveWeapon</c>'s). FFX has no EXP. The game keeps the
-/// screen; this only draws it.
+/// items won named from the kernel tables with their counts, and the gear won by name
+/// (<c>MsGetSaveWeaponName</c>: the gear record's <c>w_name</c> record and character, read from
+/// the game, named from the kernel's <c>w_name</c>; a record not in use is not drawn, as the
+/// game's weapon page skips it). FFX has no EXP. The game keeps the screen; this only draws it.
 /// </summary>
 public partial class BattleEndView : Control
 {
@@ -26,6 +27,7 @@ public partial class BattleEndView : Control
     private Label _spoils = null!;
     private readonly Dictionary<(string, string), string> _names = new();
     private readonly Dictionary<(ushort, string), string> _items = new();
+    private readonly Dictionary<(long, string), string> _gear = new();
 
     /// <summary>The character rows shown now (for tests): name, AP left, sphere levels, a level-up flash.</summary>
     public List<string> Shown { get; } = new();
@@ -162,7 +164,19 @@ public partial class BattleEndView : Control
             spoils.Add($"{n} x{it.Count}");
         }
         foreach (var g in Gear(e))
-            spoils.Add($"gear #{g}");
+        {
+            var record = host.Game.GearRecord(g);
+            if (record < 0)
+                continue;
+            if (!_gear.TryGetValue((record, lang), out var n))
+            {
+                n = MessageView.Clean(host.Game.WeaponName(record, lang));
+                if (n.Length == 0)
+                    n = $"gear 0x{g:x}";
+                _gear[(record, lang)] = n;
+            }
+            spoils.Add(n);
+        }
         Ui.SetText(_spoils, spoils.Count == 0 ? "Spoils: none" : $"Spoils: {string.Join(", ", spoils)}{(e.GearFull ? " (gear full)" : "")}");
         _panel.Visible = true;
         var view = GetViewportRect().Size;

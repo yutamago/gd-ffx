@@ -65,6 +65,9 @@ fn main() -> ExitCode {
             }
         });
     }
+    if let Some(code) = inspect(&imp, what, names) {
+        return code;
+    }
     if what == "list" {
         for n in names {
             for p in imp.list(n) {
@@ -84,7 +87,9 @@ fn main() -> ExitCode {
             "map2d" => imp.import_map_layers(n, &out),
             "chr" => imp.import_character(n, &out),
             other => {
-                eprintln!("unknown command {other} (map, map2d, chr, devsaves, list, model)");
+                eprintln!(
+                    "unknown command {other} (map, map2d, chr, devsaves, list, cat, loc, wname, devnames, model)"
+                );
                 return ExitCode::FAILURE;
             }
         };
@@ -463,4 +468,105 @@ fn devsaves(imp: &ffx_import::Importer) -> ExitCode {
         );
     }
     ExitCode::SUCCESS
+}
+
+/// The archive's texts and raw files: `cat <path>...` (raw bytes to
+/// stdout), `loc`, `wname`, `devnames`; `None` for another command.
+fn inspect(imp: &ffx_import::Importer, what: &str, names: &[String]) -> Option<ExitCode> {
+    Some(match what {
+        "cat" => each(names, |n| match imp.read(n) {
+            Ok(b) => std::io::Write::write_all(&mut std::io::stdout(), &b).is_ok(),
+            Err(e) => {
+                eprintln!("{n}: {e}");
+                false
+            }
+        }),
+        "loc" => loc(imp, names),
+        "wname" => wname(imp, names),
+        "devnames" => each(names, |n| devnames(imp, n)),
+        _ => return None,
+    })
+}
+
+/// `loc <lang> <index>...`: lines of the localisation kit
+/// (`Importer::loc_text`), as stored and decoded with the language's
+/// character set.
+fn loc(imp: &ffx_import::Importer, args: &[String]) -> ExitCode {
+    let Some((lang, ids)) = args.split_first() else {
+        eprintln!("loc <lang> <index>...");
+        return ExitCode::FAILURE;
+    };
+    let cs = imp.charset(lang).ok();
+    for id in ids {
+        let i = parse_num(id).unwrap_or(0);
+        let Some(b) = imp.loc_text(lang, i) else {
+            eprintln!("no localisation kit for {lang}");
+            return ExitCode::FAILURE;
+        };
+        let decoded = cs.as_ref().map(|c| c.decode(&b)).unwrap_or_default();
+        println!("0x{i:x}: {:?} | {decoded}", String::from_utf8_lossy(&b));
+    }
+    ExitCode::SUCCESS
+}
+
+/// `wname <lang> [kana]`: every `w_name` record's names (`Importer::weapon_name`)
+/// for the seven party members.
+fn wname(imp: &ffx_import::Importer, args: &[String]) -> ExitCode {
+    let Some(lang) = args.first() else {
+        eprintln!("wname <lang> [kana]");
+        return ExitCode::FAILURE;
+    };
+    let kana = args.get(1).is_some_and(|a| a == "kana");
+    let Ok(cs) = imp.charset(lang) else {
+        eprintln!("no character set for {lang}");
+        return ExitCode::FAILURE;
+    };
+    for id in 0..0x100u16 {
+        let names: Vec<String> = (0..7u8)
+            .filter_map(|c| imp.weapon_name(lang, id, c, kana))
+            .map(|b| cs.decode(&b))
+            .collect();
+        if names.iter().all(String::is_empty) {
+            continue;
+        }
+        println!("0x{id:03x}: {}", names.join(" | "));
+    }
+    ExitCode::SUCCESS
+}
+
+/// `devnames <n>`: developer save `n`'s 18 character names (block
+/// `+0x634c`, 20 bytes each: the text, `+0x12` its language, `+0x13` set
+/// while it is the default name), decoded in Japanese and English.
+fn devnames(imp: &ffx_import::Importer, n: &str) -> bool {
+    let path = format!("ffx_data/gamedata/ps3data/savesforviewer/{n}");
+    let Ok(b) = imp.read(&path) else {
+        eprintln!("{n}: missing");
+        return false;
+    };
+    let (Ok(jp), Ok(us)) = (imp.charset("jp"), imp.charset("us")) else {
+        eprintln!("no character sets");
+        return false;
+    };
+    for k in 0..18 {
+        let at = 0x40 + 0x634c + 20 * k;
+        let Some(r) = b.get(at..at + 20) else {
+            break;
+        };
+        let text = &r[..r[..0x12].iter().position(|&c| c == 0).unwrap_or(0x12)];
+        println!(
+            "{n} {k:2}: lang {:2} default {} bytes {:02x?} jp {:?} us {:?}",
+            r[0x12],
+            r[0x13],
+            text,
+            jp.decode(text),
+            us.decode(text)
+        );
+    }
+    true
+}
+
+/// A decimal or `0x` hexadecimal number.
+fn parse_num(s: &str) -> Option<u32> {
+    s.strip_prefix("0x")
+        .map_or_else(|| s.parse().ok(), |h| u32::from_str_radix(h, 16).ok())
 }
