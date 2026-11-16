@@ -59,6 +59,9 @@ public sealed class BenchTest : ITest
         _battle = !string.IsNullOrEmpty(GameSettings.Arg("battle"));
         _walk = GameSettings.Flag("bench-walk");
         Perf.On = true;
+        // headless, Godot sleeps up to this long a frame when it cannot draw (6.9 ms by default:
+        // a cap of 145 fps); the benchmark measures the frame's work instead
+        OS.LowProcessorUsageModeSleepUsec = 0;
     }
 
     public bool? Step(FfxGame game, GameState s, GameStateView v, double delta)
@@ -151,7 +154,7 @@ public sealed class BenchTest : ITest
         var c = v.Current;
         Print($"scene {c?.World.Level} (map {c?.World.Map:x}{(c?.World.Battle == true ? ", battle" : "")}), "
             + $"{view?.Posed.Models} models ({view?.Posed.PosedBones} bones), {view?.ObjectsPlaced} objects, "
-            + $"renderer {RenderingServer.GetCurrentRenderingDriverName()}/{DisplayServer.GetName()}, max fps {Engine.MaxFps}, "
+            + $"renderer {RenderingServer.GetCurrentRenderingDriverName()}/{DisplayServer.GetName()}, max fps {Engine.MaxFps}, low-processor sleep {OS.LowProcessorUsageModeSleepUsec} us, "
             + $"vsync {DisplayServer.WindowGetVsyncMode()}{(_walk ? ", walking" : "")}");
         Print($"frames {w.Count} in {seconds:F1} s: {w.Count / seconds:F0} fps; frame ms mean {mean:F2}, p50 {Pct(ms, 0.5):F2}, "
             + $"p99 {Pct(ms, 0.99):F2}, max {ms[^1]:F2}; over 16.7 ms {ms.Count(x => x > 16.7)}, "
