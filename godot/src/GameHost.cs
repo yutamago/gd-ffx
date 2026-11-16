@@ -41,6 +41,8 @@ public partial class GameHost : Node
         Instance = this;
         // before every scene's _Process: the view is this frame's
         ProcessPriority = -100;
+        // the collector's blocking full collections are frame hitches; background ones are not
+        System.Runtime.GCSettings.LatencyMode = System.Runtime.GCLatencyMode.SustainedLowLatency;
     }
 
     /// <summary>Whether <see cref="Start"/> succeeded (the game booted, or <c>--no-game</c>).</summary>
@@ -171,9 +173,14 @@ public partial class GameHost : Node
 
     public override void _Process(double delta)
     {
+        // the worker threads' texture asks (answered "none" without a game)
+        TextureFetcher.Poll(Game);
         if (Game == null)
             return;
+        var t0 = Perf.Start();
         View.Refresh(Game);
+        Perf.End(Perf.Section.Snapshots, t0);
+        var t1 = Perf.Start();
         Classic?.Poll();
         // the developer save once an event runs (the opening is the first)
         if (_devsave > 0 && View.Current is { } s && s.World.Event.Length > 0 && s.Update > 30)
@@ -191,6 +198,16 @@ public partial class GameHost : Node
         }
         foreach (var r in Game.RequestResults())
             GD.Print($"ffx: request: {r}");
+        Perf.End(Perf.Section.Host, t1);
+    }
+
+    public override void _ExitTree()
+    {
+        // the background loads end before the engine does
+        TextureFetcher.Close();
+        Remake.ContentResolver.WaitPending(10000);
+        EffectDrawView.WaitPending(10000);
+        MapLayers.WaitPending(10000);
     }
 
     public override void _Notification(int what)

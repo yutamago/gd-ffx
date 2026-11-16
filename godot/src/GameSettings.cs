@@ -195,11 +195,15 @@ public static class GameSettings
     /// <summary>
     /// Applies <see cref="Quality"/> to <paramref name="viewport"/>: <c>deck</c> draws the 3D at
     /// 75 % of the screen (scaled up), without MSAA, at most 60 frames a second (the Deck's
-    /// screen); <c>high</c> leaves the project's settings. The Mobile renderer
+    /// screen); <c>high</c> leaves the project's settings. <c>--no-vsync</c> turns vsync off. The Mobile renderer
     /// (<c>--rendering-method mobile</c>) is a launch option, as Godot picks it at start.
     /// </summary>
     public static void ApplyQuality(Viewport viewport)
     {
+        // --no-vsync: frames not held to the display's refresh (the frame rate unlocked, as the
+        // benchmark and the original's unlocked mode measure it)
+        if (Flag("no-vsync"))
+            DisplayServer.WindowSetVsyncMode(DisplayServer.VSyncMode.Disabled);
         if (Quality() != "deck")
             return;
         viewport.Scaling3DScale = 0.75f;

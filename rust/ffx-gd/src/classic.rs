@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use ffx_import::Importer;
+use ffx_import::{Importer, Pixels};
 
 /// What is imported.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -63,12 +63,27 @@ struct Open {
 /// The game's character set, once loaded ([`Classic::decode`]).
 static CHARSET: Mutex<Option<(String, Arc<ffx_text::Charset>)>> = Mutex::new(None);
 
+/// A texture asked for in the background ([`Classic::texture_request`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TextureAsk {
+    /// A material texture's face, by the path the model stores.
+    Face(String, usize),
+    /// A texture by the name the game holds at run time.
+    Runtime(String),
+}
+
+/// A texture read in the background: the caller's id and the pixels
+/// (`None`: not in the archive, or no such face).
+pub type TextureDone = (i64, Option<Pixels>);
+
 /// The importer, its cache and the imports under way.
 #[derive(Default)]
 pub struct Classic {
     open: Mutex<Option<Arc<Open>>>,
     asked: Mutex<HashSet<(Kind, String)>>,
     done: Arc<Mutex<Vec<Done>>>,
+    /// Textures read in the background, by the caller's id.
+    textures: Arc<Mutex<Vec<TextureDone>>>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -142,6 +157,44 @@ impl Classic {
     pub fn runtime_texture_png(&self, name: &str) -> Option<Vec<u8>> {
         let open = lock(&self.open).clone()?;
         open.importer.runtime_texture_png(name)
+    }
+
+    /// A texture's pixels now (on the calling thread).
+    #[must_use]
+    pub fn texture_rgba(&self, ask: &TextureAsk) -> Option<Pixels> {
+        let open = lock(&self.open).clone()?;
+        match ask {
+            TextureAsk::Face(path, face) => open.importer.texture_rgba(path, *face),
+            TextureAsk::Runtime(name) => open.importer.runtime_texture_rgba(name),
+        }
+    }
+
+    /// Reads a texture on a thread of its own (the archive read and the
+    /// block decoding cost milliseconds; Godot's main thread should not
+    /// wait for them); [`Classic::textures_finished`] hands it over with
+    /// `id`. False when the archive is not open.
+    pub fn texture_request(&self, id: i64, ask: TextureAsk) -> bool {
+        let Some(open) = lock(&self.open).clone() else {
+            return false;
+        };
+        let done = Arc::clone(&self.textures);
+        std::thread::Builder::new()
+            .name("ffx-texture".into())
+            .spawn(move || {
+                let px = match &ask {
+                    TextureAsk::Face(path, face) => open.importer.texture_rgba(path, *face),
+                    TextureAsk::Runtime(name) => open.importer.runtime_texture_rgba(name),
+                };
+                lock(&done).push((id, px));
+            })
+            .is_ok()
+    }
+
+    /// The textures read since the last call, by id (`None`: not in the
+    /// archive, or no such face).
+    #[must_use]
+    pub fn textures_finished(&self) -> Vec<TextureDone> {
+        std::mem::take(&mut *lock(&self.textures))
     }
 
     /// Whether a material texture is a cube map.

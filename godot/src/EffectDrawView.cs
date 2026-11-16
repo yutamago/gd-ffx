@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Godot;
 
@@ -28,9 +29,43 @@ namespace GdFfx;
 /// </summary>
 public partial class EffectDrawView : MeshInstance3D
 {
-    /// <summary>One decoded draw.</summary>
-    public sealed record Draw(ulong Key, uint Flags, string Texture, Vector3[] Positions, Color[] Colours, Vector2[] Uvs, int[] Indices, int Pass = 0,
+    /// <summary>
+    /// One decoded draw: its vertices (<paramref name="First"/>, <paramref name="Vertices"/>) and
+    /// indices (<paramref name="IndexFirst"/>, <paramref name="IndexCount"/>, relative to its first
+    /// vertex) in the frame's <see cref="Geometry"/>.
+    /// </summary>
+    public sealed record Draw(ulong Key, uint Flags, string Texture, int First, int Vertices, int IndexFirst, int IndexCount, int Pass = 0,
         int Technique = 0, PassBlend[]? Blends = null, int AddressU = 1, int AddressV = 1);
+
+    /// <summary>
+    /// A frame's vertices and indices, all draws' in one set of arrays (kept and reused from
+    /// frame to frame: a frame has thousands of vertices, and fresh arrays that large each
+    /// update land on the large object heap, which costs full collections).
+    /// </summary>
+    public sealed class Geometry
+    {
+        public Vector3[] Positions = [];
+        public Color[] Colours = [];
+        public Vector2[] Uvs = [];
+        public int[] Indices = [];
+        public int VertexCount, IndexCount;
+
+        public void Clear() => VertexCount = IndexCount = 0;
+
+        /// <summary>Room for <paramref name="v"/> more vertices and <paramref name="n"/> more indices.</summary>
+        public void Reserve(int v, int n)
+        {
+            static void Grow<T>(ref T[] a, int need)
+            {
+                if (a.Length < need)
+                    System.Array.Resize(ref a, System.Math.Max(need, a.Length * 2));
+            }
+            Grow(ref Positions, VertexCount + v);
+            Grow(ref Colours, VertexCount + v);
+            Grow(ref Uvs, VertexCount + v);
+            Grow(ref Indices, IndexCount + n);
+        }
+    }
 
     /// <summary>
     /// One shader pass's D3D11 blend (FXDR version 4): enabled, colour source, destination and op,
@@ -141,6 +176,15 @@ public partial class EffectDrawView : MeshInstance3D
     public HashSet<string> Textures { get; } = new();
 
     private uint _update = uint.MaxValue;
+    private readonly Dictionary<System.Type, Node?> _overlay = new();
+
+    /// <summary>A view of the overlay by its type (found once: a search of the whole tree, the map's nodes too, is slow).</summary>
+    private T? Overlay<T>() where T : Node
+    {
+        if (!_overlay.TryGetValue(typeof(T), out var n) || n == null || !IsInstanceValid(n))
+            _overlay[typeof(T)] = n = GetTree().Root.FindChild(typeof(T).Name, true, false) as T;
+        return n as T;
+    }
     private readonly Dictionary<string, Texture2D?> _textures = new();
     private readonly Dictionary<(string, Look), ShaderMaterial> _materials = new();
 
@@ -209,8 +253,11 @@ void fragment() {
     /// <summary>The distortion of the last decoded frame (null: the pass is off).</summary>
     public static Distortion? LastDistortion { get; private set; }
 
-    /// <summary>Decodes a frame (<c>FXDR</c>, versions 1 to 5); null when it is not one.</summary>
-    public static (uint Update, List<Draw> Draws)? Decode(byte[] b)
+    /// <summary>
+    /// Decodes a frame (<c>FXDR</c>, versions 1 to 5); null when it is not one. Its geometry goes
+    /// into <paramref name="into"/> (cleared first), else a new <see cref="Geometry"/>.
+    /// </summary>
+    public static (uint Update, List<Draw> Draws, Geometry Geometry)? Decode(byte[] b, Geometry? into = null)
     {
         if (b.Length < 24 || b[0] != (byte)'F' || b[1] != (byte)'X' || b[2] != (byte)'D' || b[3] != (byte)'R')
             return null;
@@ -240,6 +287,8 @@ void fragment() {
         }
         LastEvents = evs;
         var draws = new List<Draw>((int)count);
+        var geo = into ?? new Geometry();
+        geo.Clear();
         for (int d = 0; d < count; d++)
         {
             U32(); // place
@@ -270,18 +319,23 @@ void fragment() {
             }
             at += 48; // world (positions are already placed)
             int tl = U16();
-            var texture = System.Text.Encoding.UTF8.GetString(b, at, tl);
+            var texture = TextureName(new System.ReadOnlySpan<byte>(b, at, tl));
             at += tl;
             int v = (int)U32(), n = (int)U32();
-            var pos = new Vector3[v];
-            for (int i = 0; i < v; i++) pos[i] = new Vector3(F(), F(), F());
-            var col = new Color[v];
-            for (int i = 0; i < v; i++) col[i] = new Color(F(), F(), F(), F());
-            var uv = new Vector2[v];
-            for (int i = 0; i < v; i++) uv[i] = new Vector2(F(), F());
-            var idx = new int[n];
-            for (int i = 0; i < n; i++) idx[i] = U16();
-            draws.Add(new Draw(hi << 32 | lo, flags, texture, pos, col, uv, idx, pass, technique, blends, addressU, addressV));
+            if (at + v * 36 + n * 2 > b.Length)
+                throw new System.ArgumentException("FXDR frame cut short");
+            geo.Reserve(v, n);
+            int first = geo.VertexCount, ifirst = geo.IndexCount;
+            // little-endian floats, as the vectors lay them out: copied whole
+            var span = new System.ReadOnlySpan<byte>(b, at, v * 36);
+            System.Runtime.InteropServices.MemoryMarshal.Cast<byte, Vector3>(span[..(v * 12)]).CopyTo(geo.Positions.AsSpan(first, v));
+            System.Runtime.InteropServices.MemoryMarshal.Cast<byte, Color>(span.Slice(v * 12, v * 16)).CopyTo(geo.Colours.AsSpan(first, v));
+            System.Runtime.InteropServices.MemoryMarshal.Cast<byte, Vector2>(span.Slice(v * 28, v * 8)).CopyTo(geo.Uvs.AsSpan(first, v));
+            at += v * 36;
+            for (int i = 0; i < n; i++) geo.Indices[ifirst + i] = U16();
+            geo.VertexCount += v;
+            geo.IndexCount += n;
+            draws.Add(new Draw(hi << 32 | lo, flags, texture, first, v, ifirst, n, pass, technique, blends, addressU, addressV));
         }
         LastDistortion = null;
         if (version >= 2 && at + 16 <= b.Length)
@@ -298,35 +352,96 @@ void fragment() {
                 LastDistortion = new Distortion((bits & 2) != 0, (bits & 4) != 0, blur, p, u, c, ix);
             }
         }
-        return (update, draws);
+        return (update, draws, geo);
+    }
+
+    private static readonly Dictionary<int, string[]> Names = new();
+
+    /// <summary>A texture name, the same string each time it comes (no new string a draw a frame).</summary>
+    private static string TextureName(System.ReadOnlySpan<byte> utf8)
+    {
+        var hash = new System.HashCode();
+        hash.AddBytes(utf8);
+        var h = hash.ToHashCode();
+        if (Names.TryGetValue(h, out var list))
+            foreach (var s in list)
+                if (System.Text.Encoding.UTF8.GetByteCount(s) == utf8.Length && Same(s, utf8))
+                    return s;
+        var name = System.Text.Encoding.UTF8.GetString(utf8);
+        Names[h] = list == null ? [name] : [.. list, name];
+        return name;
+    }
+
+    private static bool Same(string s, System.ReadOnlySpan<byte> utf8)
+    {
+        System.Span<byte> buf = utf8.Length <= 256 ? stackalloc byte[utf8.Length] : new byte[utf8.Length];
+        return System.Text.Encoding.UTF8.GetBytes(s, buf) == utf8.Length && buf.SequenceEqual(utf8);
     }
 
     /// <summary>The texture name of draws that sample the frame copy (the DTT pass).</summary>
     public const string FrameBufferName = "FrameBuffer";
 
-    private Texture2D? Tex(FfxGame game, string name)
+    /// <summary>Textures being read on worker threads (their image, mipmaps made).</summary>
+    private readonly Dictionary<string, System.Threading.Tasks.Task<Image?>> _loading = new();
+
+    /// <summary>Every view's texture reads under way (<see cref="WaitPending"/>).</summary>
+    private static readonly List<System.Threading.Tasks.Task> Reads = new();
+
+    /// <summary>Waits up to <paramref name="ms"/> for the texture reads under way (Godot quits).</summary>
+    public static void WaitPending(int ms)
     {
-        if (_textures.TryGetValue(name, out var t))
-            return t;
-        t = null;
-        if (name.Length > 0 && name != "NoTexture")
-        {
-            var png = game.RuntimeTexture(name);
-            var img = new Image();
-            if (png.Length > 0 && img.LoadPngFromBuffer(png) == Error.Ok)
-            {
-                img.GenerateMipmaps();
-                t = ImageTexture.CreateFromImage(img);
-            }
-        }
-        _textures[name] = t;
-        return t;
+        Reads.RemoveAll(t => t.IsCompleted);
+        if (Reads.Count > 0)
+            System.Threading.Tasks.Task.WaitAll(Reads.ToArray(), ms);
+        Reads.Clear();
     }
 
-    private ShaderMaterial Material(FfxGame game, string texture, Look look)
+    /// <summary>
+    /// A draw's texture: true with it (null: none or not in the archive) once read; false while it
+    /// is still being read in the background (its draws wait a frame or two rather than the frame
+    /// waiting for the read).
+    /// </summary>
+    private bool TryTex(string name, out Texture2D? t)
+    {
+        if (_textures.TryGetValue(name, out t))
+            return true;
+        if (name.Length == 0 || name == "NoTexture")
+        {
+            _textures[name] = null;
+            return true;
+        }
+        if (!_loading.TryGetValue(name, out var task))
+        {
+            _loading[name] = task = System.Threading.Tasks.Task.Run(() => ReadImage(name));
+            Reads.RemoveAll(r => r.IsCompleted);
+            Reads.Add(task);
+        }
+        if (!task.IsCompleted)
+            return false;
+        _loading.Remove(name);
+        var img = task.IsCompletedSuccessfully ? task.Result : null;
+        t = img == null ? null : ImageTexture.CreateFromImage(img);
+        _textures[name] = t;
+        return true;
+    }
+
+    /// <summary>A run-time texture's image from the archive, with mipmaps (a worker thread).</summary>
+    private static Image? ReadImage(string name)
+    {
+        if (TextureFetcher.Fetch("runtime", name) is not { } px)
+            return null;
+        var img = px.ToImage();
+        img.GenerateMipmaps();
+        return img;
+    }
+
+    /// <summary>The material of a (texture, look), null while its texture is still being read.</summary>
+    private ShaderMaterial? Material(string texture, Look look)
     {
         if (_materials.TryGetValue((texture, look), out var m))
             return m;
+        if (texture != FrameBufferName && !_textures.ContainsKey(texture) && !TryTex(texture, out _))
+            return null;
         m = new ShaderMaterial { Shader = Shaders[look.Blend] };
         m.SetShaderParameter("form", look.Form);
         m.SetShaderParameter("alpha_one", look.AlphaOne);
@@ -340,7 +455,8 @@ void fragment() {
             _materials[(texture, look)] = m;
             return m;
         }
-        var t = Tex(game, texture);
+        if (!TryTex(texture, out var t))
+            return null;
         m.SetShaderParameter("textured", t != null);
         if (t != null)
             { m.SetShaderParameter("tex", t); m.SetShaderParameter("tex_clamp", t); }
@@ -355,9 +471,31 @@ void fragment() {
         if (host?.Game == null || s == null || s.Update == _update)
             return;
         _update = s.Update;
-        var frame = Decode(host.Game.EffectDraws(s.Update));
+        var t0 = Perf.Start();
+        var frame = Decode(host.Game.EffectDraws(s.Update), _geometry);
+        Perf.End(Perf.Section.EffectDecode, t0);
+        t0 = Perf.Start();
+        try
+        {
+            Build(host.Game, s, frame);
+        }
+        finally
+        {
+            Perf.End(Perf.Section.EffectMesh, t0);
+        }
+    }
+
+    private readonly Geometry _geometry = new();
+    private readonly Geometry _surface = new();
+    private readonly List<((string, Look) Key, List<Draw> Draws)> _groups = new();
+    private readonly Dictionary<(string, Look), int> _groupIndex = new();
+    private readonly Godot.Collections.Array _arrays = new();
+    private ArrayMesh? _mesh;
+
+    private void Build(FfxGame game, GdFfx.Api.Snapshot s, (uint Update, List<Draw> Draws, Geometry Geometry)? frame)
+    {
         // the screen distortion of the same frame (DistortionView, in the overlay)
-        if (GetTree().Root.FindChild("DistortionView", true, false) is DistortionView dv)
+        if (Overlay<DistortionView>() is { } dv)
         {
             var d = LastDistortion;
             if (d == null || d.Skipped)
@@ -369,7 +507,7 @@ void fragment() {
         var fade = frame == null ? null : Fade(LastEvents);
         if (fade != null)
             FadeFrames++;
-        if (GetTree().Root.FindChild("ScreenFadeView", true, false) is ScreenFadeView fv)
+        if (Overlay<ScreenFadeView>() is { } fv)
             fv.Show(fade);
         if (frame == null || frame.Value.Draws.Count == 0)
         {
@@ -378,50 +516,71 @@ void fragment() {
             Textures.Clear();
             return;
         }
-        // a surface per (texture, blend), in the order first met (the game's draw order)
-        var groups = new List<((string, Look) Key, List<Draw> Draws)>();
-        var index = new Dictionary<(string, Look), int>();
+        // a surface per (texture, blend), in the order first met (the game's draw order); the
+        // lists, the mesh and its arrays are kept from frame to frame
+        var groups = _groups;
+        foreach (var (_, list) in groups)
+            list.Clear();
+        int used = 0;
+        _groupIndex.Clear();
+        var geo = frame.Value.Geometry;
         foreach (var d in frame.Value.Draws)
         {
             if (d.Pass is >= 0 and < 5)
                 PassDraws[d.Pass]++;
-            if (d.Indices.Length == 0 || d.Positions.Length == 0 || !Drawn(d.Pass))
+            if (d.IndexCount == 0 || d.Vertices == 0 || !Drawn(d.Pass))
                 continue;
             var look = LookOf(d);
             if (look.Skip)
                 continue;
             var k = (d.Texture, look);
-            if (!index.TryGetValue(k, out var g))
+            if (!_groupIndex.TryGetValue(k, out var g))
             {
-                index[k] = g = groups.Count;
-                groups.Add((k, new List<Draw>()));
+                _groupIndex[k] = g = used++;
+                if (g == groups.Count)
+                    groups.Add((k, new List<Draw>()));
+                else
+                    groups[g] = (k, groups[g].Draws);
             }
             groups[g].Draws.Add(d);
         }
-        var mesh = new ArrayMesh();
+        _mesh ??= new ArrayMesh();
+        var mesh = _mesh;
+        mesh.ClearSurfaces();
+        if (_arrays.Count != (int)Mesh.ArrayType.Max)
+            _arrays.Resize((int)Mesh.ArrayType.Max);
         int textured = 0;
         Textures.Clear();
-        foreach (var ((tex, look), list) in groups)
+        var surf = _surface;
+        for (int gi = 0; gi < used; gi++)
         {
-            var pos = new List<Vector3>(); var col = new List<Color>(); var uv = new List<Vector2>(); var idx = new List<int>();
+            var ((tex, look), list) = groups[gi];
+            surf.Clear();
             foreach (var d in list)
             {
-                int b = pos.Count;
-                pos.AddRange(d.Positions); col.AddRange(d.Colours); uv.AddRange(d.Uvs);
-                foreach (var i in d.Indices)
-                    if (i < d.Positions.Length)
-                        idx.Add(b + i);
+                surf.Reserve(d.Vertices, d.IndexCount);
+                int b = surf.VertexCount;
+                geo.Positions.AsSpan(d.First, d.Vertices).CopyTo(surf.Positions.AsSpan(b));
+                geo.Colours.AsSpan(d.First, d.Vertices).CopyTo(surf.Colours.AsSpan(b));
+                geo.Uvs.AsSpan(d.First, d.Vertices).CopyTo(surf.Uvs.AsSpan(b));
+                surf.VertexCount += d.Vertices;
+                for (int k = 0; k < d.IndexCount; k++)
+                {
+                    var i = geo.Indices[d.IndexFirst + k];
+                    if (i < d.Vertices)
+                        surf.Indices[surf.IndexCount++] = b + i;
+                }
             }
-            if (idx.Count == 0)
+            if (surf.IndexCount == 0)
                 continue;
-            var arrays = new Godot.Collections.Array();
-            arrays.Resize((int)Mesh.ArrayType.Max);
-            arrays[(int)Mesh.ArrayType.Vertex] = pos.ToArray();
-            arrays[(int)Mesh.ArrayType.Color] = col.ToArray();
-            arrays[(int)Mesh.ArrayType.TexUV] = uv.ToArray();
-            arrays[(int)Mesh.ArrayType.Index] = idx.ToArray();
-            mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays);
-            var mat = Material(host.Game, tex, look);
+            if (Material(tex, look) is not { } mat)
+                continue; // its texture is still being read
+            // straight from the kept arrays into Godot's packed arrays (no array of the exact size made)
+            _arrays[(int)Mesh.ArrayType.Vertex] = surf.Positions.AsSpan(0, surf.VertexCount);
+            _arrays[(int)Mesh.ArrayType.Color] = surf.Colours.AsSpan(0, surf.VertexCount);
+            _arrays[(int)Mesh.ArrayType.TexUV] = surf.Uvs.AsSpan(0, surf.VertexCount);
+            _arrays[(int)Mesh.ArrayType.Index] = surf.Indices.AsSpan(0, surf.IndexCount);
+            mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, _arrays);
             mesh.SurfaceSetMaterial(mesh.GetSurfaceCount() - 1, mat);
             if (tex == FrameBufferName || _textures.TryGetValue(tex, out var t) && t != null)
             {
@@ -429,7 +588,8 @@ void fragment() {
                 Textures.Add(tex);
             }
         }
-        Mesh = mesh;
+        if (Mesh != mesh)
+            Mesh = mesh;
         Shown = (frame.Value.Draws.Count, textured, s.Update);
     }
 }

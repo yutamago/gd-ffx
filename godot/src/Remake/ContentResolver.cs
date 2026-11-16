@@ -21,6 +21,9 @@ public sealed record Content(string Kind, string Id, string Path, bool Remade, N
     /// </summary>
     public float MapScale => Remade ? 1f : ClassicLibrary.MapScale;
 
+    /// <summary>What the caller's <c>prepare</c> made of a classic scene on the worker thread (null none).</summary>
+    public object? Prepared { get; init; }
+
     /// <summary>
     /// Whether the game poses this character's skeleton: classic always; a remade one unless
     /// its root has the metadata <c>ffx_posed</c> = false (docs/remake.md).
@@ -39,12 +42,24 @@ public static class ContentResolver
     private static readonly HashSet<(string Kind, string Id, string Path)> Failed = new();
 
     /// <summary>
+    /// Classic scenes being loaded on worker threads (the glTF parsed, its PNGs decoded, the
+    /// game's materials made): on the main thread a map took 0.3 to 0.5 s, a character 10 ms,
+    /// each a frame's hitch. Keyed by kind, id and the caller's <c>ticket</c>.
+    /// </summary>
+    private static readonly Dictionary<(string Kind, string Id, int Ticket), System.Threading.Tasks.Task<(Node3D? Node, object? Prepared)>> Loading = new();
+
+    /// <summary>
     /// The content for <paramref name="kind"/> and <paramref name="id"/>, loaded: the remade
     /// scene if one is registered and loads, else the classic import when it is ready (asking
     /// for it otherwise; null until then, or always without classic content). A remade scene
-    /// that fails to load is logged once and falls back to classic.
+    /// that fails to load is logged once and falls back to classic. The classic scene loads on
+    /// a worker thread: null until it is done (call again each frame); <paramref name="ticket"/>
+    /// tells apart callers that each want their own instance of the same id (characters);
+    /// <paramref name="prepare"/> runs on the worker thread on the loaded classic scene (not yet in
+    /// the tree), its result in <see cref="Content.Prepared"/>.
     /// </summary>
-    public static Content? Resolve(ClassicLibrary? classic, string kind, string id)
+    public static Content? Resolve(ClassicLibrary? classic, string kind, string id, int ticket = 0,
+        System.Func<Node3D, object?>? prepare = null)
     {
         if (RemakeRegistry.Find(kind, id) is { } scene && !Failed.Contains((kind, id, scene)))
         {
@@ -57,10 +72,53 @@ public static class ContentResolver
         {
             // a map's own textures (its cube maps) are in PS3Data/<level>tex/
             var texDir = kind == "map" && id.StartsWith('/') && id.EndsWith('/') ? $"PS3Data{id}tex/" : null;
-            var node = ClassicLibrary.Load(path, texDir);
-            return new Content(kind, id, path, false, node == null ? null : Tag(node, kind, id, path, false));
+            var key = (kind, id, ticket);
+            if (!Loading.TryGetValue(key, out var task))
+                Loading[key] = task = System.Threading.Tasks.Task.Run(() =>
+                {
+                    var n = ClassicLibrary.Load(path, texDir);
+                    return (n, n != null && prepare != null ? prepare(n) : null);
+                });
+            if (!task.IsCompleted)
+                return null;
+            Loading.Remove(key);
+            var (node, prepared) = task.IsCompletedSuccessfully ? task.Result : (null, null);
+            if (task.Exception is { } e)
+                GD.PrintErr($"ffx: classic {kind} {id}: {e.InnerException?.Message ?? e.Message}");
+            return new Content(kind, id, path, false, node == null ? null : Tag(node, kind, id, path, false)) { Prepared = prepared };
         }
         return null;
+    }
+
+    /// <summary>
+    /// Waits up to <paramref name="ms"/> for the classic loads under way (Godot quits: a worker
+    /// still building a scene while the engine goes away crashed it). Call
+    /// <see cref="TextureFetcher.Close"/> first.
+    /// </summary>
+    public static void WaitPending(int ms)
+    {
+        var tasks = new List<System.Threading.Tasks.Task>(Loading.Values);
+        if (tasks.Count > 0)
+            System.Threading.Tasks.Task.WaitAll(tasks.ToArray(), ms);
+        foreach (var t in Loading.Values)
+            if (t.IsCompletedSuccessfully && t.Result.Node is { } n)
+                n.Free();
+        Loading.Clear();
+    }
+
+    /// <summary>
+    /// Gives up on a classic load no longer wanted (the scene moved on before it was done): its
+    /// node is freed once loaded.
+    /// </summary>
+    public static void Forget(string kind, string id, int ticket = 0)
+    {
+        if (!Loading.Remove((kind, id, ticket), out var task))
+            return;
+        task.ContinueWith(t =>
+        {
+            if (t.IsCompletedSuccessfully && t.Result.Node is { } n)
+                Callable.From(n.Free).CallDeferred();
+        });
     }
 
     /// <summary>The remade scene's instance in a wrapper node (null when it is not a 3D scene).</summary>

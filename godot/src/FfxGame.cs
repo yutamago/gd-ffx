@@ -79,6 +79,22 @@ public partial class FfxGame : RefCounted
     /// <summary>A texture by the name the game holds at run time (an effect draw's) as PNG bytes; empty when not in the archive.</summary>
     public byte[] RuntimeTexture(string name) => Node.Call("runtime_texture", name).AsByteArray();
 
+    /// <summary>
+    /// Asks for a texture's pixels (<paramref name="kind"/> <c>face</c>: a material texture's face;
+    /// <c>runtime</c>: by the run-time name), read on the extension's own thread;
+    /// <see cref="TexturesFinished"/> hands them over with <paramref name="id"/> (main thread only).
+    /// </summary>
+    public bool TextureRequest(long id, string kind, string name, int face) =>
+        Node.Call("texture_request", id, kind, name, face).AsBool();
+
+    /// <summary>The textures read since the last call: id, found, width, height, faces, rgba.</summary>
+    public Godot.Collections.Array<Dictionary> TexturesFinished() =>
+        Node.Call("textures_finished").AsGodotArray<Dictionary>();
+
+    /// <summary>A texture's pixels now (main thread only), as <see cref="TexturesFinished"/>'s entries.</summary>
+    public Dictionary TextureNow(string kind, string name, int face) =>
+        Node.Call("texture_now", kind, name, face).AsGodotDictionary();
+
     /// <summary>Whether the material texture at <paramref name="path"/> is a cube map.</summary>
     public bool ClassicTextureIsCube(string path) => Node.Call("classic_texture_is_cube", path).AsBool();
 

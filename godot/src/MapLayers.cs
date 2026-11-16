@@ -42,6 +42,9 @@ public partial class MapLayers : Node3D
     private Node3D? _model;
     private string _level = "";
     private bool _loaded;
+    // the layers' model, imported on a worker as the maps and characters are (ContentResolver)
+    private System.Threading.Tasks.Task<Node3D?>? _loading;
+    private string _loadingLevel = "";
     private int _map = -1;
 
     /// <summary>The level whose layers are loaded ("" none; also set when the level has none).</summary>
@@ -61,7 +64,22 @@ public partial class MapLayers : Node3D
             _level = level;
             _loaded = false;
         }
-        if (_loaded || lib == null || level.Length == 0)
+        // a load finished: for this level it is shown, for an earlier one dropped
+        if (_loading is { IsCompleted: true } done)
+        {
+            _loading = null;
+            var node = done.IsCompletedSuccessfully ? done.Result : null;
+            if (done.Exception is { } e)
+                GD.PrintErr($"ffx: 2D layers {_loadingLevel}: {e.InnerException?.Message ?? e.Message}");
+            if (_loadingLevel == level && !_loaded)
+            {
+                _loaded = true;
+                Show(node, level, map);
+            }
+            else
+                node?.QueueFree();
+        }
+        if (_loaded || _loading != null || lib == null || level.Length == 0)
             return;
         if (lib.Failed("map2d", level))
         {
@@ -70,11 +88,26 @@ public partial class MapLayers : Node3D
         }
         if (lib.Path("map2d", level) is not { } path)
             return;
-        _loaded = true;
-        _model = ClassicLibrary.Load(path);
+        _loadingLevel = level;
+        _loading = System.Threading.Tasks.Task.Run(() => ClassicLibrary.Load(path));
+        Pending = _loading;
+    }
+
+    private static System.Threading.Tasks.Task? Pending;
+
+    /// <summary>Waits up to <paramref name="ms"/> for a layer import under way (Godot quits).</summary>
+    public static void WaitPending(int ms)
+    {
+        try { Pending?.Wait(ms); } catch (System.AggregateException) { }
+    }
+
+    private void Show(Node3D? model, string level, int map)
+    {
+        _model = model;
         if (_model == null)
             return;
         _model.Name = "Layers2D";
+        ClassicMaterials.FixLayers(_model);
         AddChild(_model);
         foreach (var n in _model.FindChildren("*", nameof(MeshInstance3D), true, false))
         {

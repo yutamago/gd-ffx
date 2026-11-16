@@ -92,6 +92,13 @@ public partial class EffectView : Node3D
 
     public override void _Process(double delta)
     {
+        var t0 = Perf.Start();
+        Tick(delta);
+        Perf.End(Perf.Section.EffectView, t0);
+    }
+
+    private void Tick(double delta)
+    {
         var s = GameHost.Instance?.View.Current;
         var seen = new HashSet<ushort>();
         if (s != null)

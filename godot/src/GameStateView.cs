@@ -57,15 +57,28 @@ public sealed class GameStateView
         var update = game.SnapshotUpdate;
         if (update < 0)
             return;
-        var d = game.Snapshots;
+        // the encoded pair is fetched (copied out of the extension) only when a new update came;
+        // between updates the age runs on this side's clock from the arrival the pair gave
         if (update != _update)
         {
+            var d = game.Snapshots;
+            _arrived = System.Diagnostics.Stopwatch.GetTimestamp()
+                - (long)(d["age"].AsDouble() * System.Diagnostics.Stopwatch.Frequency);
+            _interval = Math.Max(d["interval"].AsDouble(), 1e-3);
             try
             {
                 var cur = d["current"].AsByteArray();
-                var prev = d["previous"].AsByteArray();
+                var old = Current;
                 Current = cur.Length > 0 ? StateApi.Decode(cur) : null;
-                Previous = prev.Length > 0 ? StateApi.Decode(prev) : Current;
+                // the previous one is usually the last current, already decoded (not copied again)
+                var prevUpdate = d["previous_update"].AsInt64();
+                if (old != null && prevUpdate == old.Update)
+                    Previous = old;
+                else
+                {
+                    var prev = d["previous"].AsByteArray();
+                    Previous = prev.Length > 0 ? StateApi.Decode(prev) : Current;
+                }
                 _update = Current?.Update ?? update;
                 Decoded++;
                 Error = "";
@@ -76,12 +89,15 @@ public sealed class GameStateView
             catch (FormatException e)
             {
                 Error = e.Message;
+                _update = update;
             }
         }
-        var age = d["age"].AsDouble();
-        var interval = Math.Max(d["interval"].AsDouble(), 1e-3);
-        Alpha = (float)Math.Clamp(age / interval, 0.0, 1.0);
+        var age = (double)(System.Diagnostics.Stopwatch.GetTimestamp() - _arrived) / System.Diagnostics.Stopwatch.Frequency;
+        Alpha = (float)Math.Clamp(age / _interval, 0.0, 1.0);
     }
+
+    private long _arrived;
+    private double _interval = 1.0 / 30;
 
     private static bool IsCut(Snapshot? p, Snapshot? c)
     {
@@ -124,12 +140,6 @@ public sealed class GameStateView
 
     /// <summary>A field-space point in Godot's space.</summary>
     public static Vector3 FieldPoint(Vector3 p) => new Vector3(-p.X, -p.Y, p.Z) * Scale;
-
-    /// <summary>A row-major 4x4 (row vectors, the game's) applied to a point.</summary>
-    private static Vector3 Apply(float[] m, Vector3 p) => new(
-        p.X * m[0] + p.Y * m[4] + p.Z * m[8] + m[12],
-        p.X * m[1] + p.Y * m[5] + p.Z * m[9] + m[13],
-        p.X * m[2] + p.Y * m[6] + p.Z * m[10] + m[14]);
 
     /// <summary>Row <paramref name="r"/>'s first three of a row-major 4x4.</summary>
     private static Vector3 Row(float[] m, int r) => new(m[4 * r], m[4 * r + 1], m[4 * r + 2]);
@@ -179,12 +189,11 @@ public sealed class GameStateView
     public static Vector3 BonePoint(float[] root, float[] bone)
     {
         // the root's rotation carries x 0.001 (the game's model scale)
-        var r = (float[])root.Clone();
-        for (int i = 0; i < 12; i++)
-            if (i % 4 != 3)
-                r[i] *= 1000f;
-        var local = new Vector3(bone[12], bone[13], bone[14]);
-        return FieldPoint(Apply(r, local));
+        float x = bone[12] * 1000f, y = bone[13] * 1000f, z = bone[14] * 1000f;
+        return FieldPoint(new Vector3(
+            x * root[0] + y * root[4] + z * root[8] + root[12],
+            x * root[1] + y * root[5] + z * root[9] + root[13],
+            x * root[2] + y * root[6] + z * root[10] + root[14]));
     }
 
     // ---- interpolation --------------------------------------------------------
@@ -207,34 +216,69 @@ public sealed class GameStateView
         return (t, fov, c.Far * Scale);
     }
 
-    /// <summary>One character this frame.</summary>
-    public readonly record struct ActorFrame(Actor Actor, Transform3D Root, Vector3[] Bones, bool Shown);
-
-    /// <summary>The characters this frame (by slot), interpolated where the same character was there an update before.</summary>
-    public List<ActorFrame> Actors()
+    /// <summary>
+    /// One character this frame: <paramref name="Previous"/> is its state an update before when
+    /// it is interpolated (the same character, no cut, no warp), else null.
+    /// </summary>
+    public readonly record struct ActorFrame(Actor Actor, Actor? Previous, Transform3D Root, bool Shown, float Alpha)
     {
-        var list = new List<ActorFrame>();
-        if (Current == null)
-            return list;
-        var prevBySlot = new Dictionary<ushort, Actor>();
-        if (Previous != null)
-            foreach (var a in Previous.Actors)
-                prevBySlot[a.Slot] = a;
-        foreach (var a in Current.Actors)
+        /// <summary>Its bones' positions in Godot's space (interpolated), for the markers.</summary>
+        public Vector3[] Bones()
         {
-            var root = FieldTransform(a.World);
+            var a = Actor;
             var bones = new Vector3[a.Bones.Count];
             for (int i = 0; i < bones.Length; i++)
                 bones[i] = BonePoint(a.World, a.Bones[i].Matrix);
-            if (prevBySlot.TryGetValue(a.Slot, out var p) && Interpolates(p, a))
-            {
-                root = FieldTransform(p.World).InterpolateWith(root, Alpha);
-                if (p.Bones.Count == a.Bones.Count)
-                    for (int i = 0; i < bones.Length; i++)
-                        bones[i] = BonePoint(p.World, p.Bones[i].Matrix).Lerp(bones[i], Alpha);
-            }
-            list.Add(new ActorFrame(a, root, bones, a.Hidden == 0 && a.Alpha > 0 && !ZeroSize(a.World)));
+            if (Previous is { } p && p.Bones.Count == a.Bones.Count)
+                for (int i = 0; i < bones.Length; i++)
+                    bones[i] = BonePoint(p.World, p.Bones[i].Matrix).Lerp(bones[i], Alpha);
+            return bones;
         }
-        return list;
+    }
+
+    /// <summary>For each of Current's characters, its interpolated predecessor (null none), made once a snapshot.</summary>
+    private Actor?[] _previousOf = [];
+    private Snapshot? _pairedFor;
+    private readonly List<ActorFrame> _frames = new();
+
+    private Actor?[] PreviousOf()
+    {
+        if (ReferenceEquals(_pairedFor, Current) && _pairedFor != null)
+            return _previousOf;
+        _pairedFor = Current;
+        var cur = Current!.Actors;
+        _previousOf = new Actor?[cur.Count];
+        if (Previous == null || ReferenceEquals(Previous, Current))
+            return _previousOf;
+        var bySlot = new Dictionary<ushort, Actor>();
+        foreach (var a in Previous.Actors)
+            bySlot[a.Slot] = a;
+        for (int i = 0; i < cur.Count; i++)
+            if (bySlot.TryGetValue(cur[i].Slot, out var p) && Interpolates(p, cur[i]))
+                _previousOf[i] = p;
+        return _previousOf;
+    }
+
+    /// <summary>
+    /// The characters this frame (by slot), interpolated where the same character was there an
+    /// update before. The list is reused: valid until the next call.
+    /// </summary>
+    public List<ActorFrame> Actors()
+    {
+        _frames.Clear();
+        if (Current == null)
+            return _frames;
+        var prev = PreviousOf();
+        var cur = Current.Actors;
+        for (int i = 0; i < cur.Count; i++)
+        {
+            var a = cur[i];
+            var root = FieldTransform(a.World);
+            var p = prev[i];
+            if (p != null)
+                root = FieldTransform(p.World).InterpolateWith(root, Alpha);
+            _frames.Add(new ActorFrame(a, p, root, a.Hidden == 0 && a.Alpha > 0 && !ZeroSize(a.World), Alpha));
+        }
+        return _frames;
     }
 }

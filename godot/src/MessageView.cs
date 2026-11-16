@@ -41,6 +41,9 @@ public partial class MessageView : Control
     {
         SetAnchorsPreset(LayoutPreset.FullRect);
         MouseFilter = MouseFilterEnum.Ignore;
+        // the system font found and loaded now, with the scene, not at the first message (a
+        // 20 to 45 ms frame)
+        Font.GetStringSize("Ag", HorizontalAlignment.Left, -1, 22);
     }
 
     /// <summary>The ffx-text code of the API's language number (<c>TOGetFFXLang</c>).</summary>
@@ -62,6 +65,13 @@ public partial class MessageView : Control
         Regex.Replace(text, @"\{[^}]*\}", "").Trim('\n', ' ');
 
     public override void _Process(double delta)
+    {
+        var t0 = Perf.Start();
+        Tick(delta);
+        Perf.End(Perf.Section.Messages, t0);
+    }
+
+    private void Tick(double delta)
     {
         var host = GameHost.Instance;
         var s = host?.View.Current;
@@ -126,7 +136,7 @@ public partial class MessageView : Control
             for (int i = first; i < lines.Count; i++)
                 lines[i] = (i - first == m.Choice ? "▶ " : "   ") + lines[i];
         }
-        w.Label.Text = string.Join("\n", lines);
+        Ui.SetText(w.Label, string.Join("\n", lines));
         // the window's place: x its centre, y its bottom edge on the PS2 screen
         var view = GetViewportRect().Size;
         var size = w.Panel.GetCombinedMinimumSize();
