@@ -336,6 +336,8 @@ public sealed class BesaidTest(double timeout, string? shot) : ITest
     private double _total;
     private string _seen = "";
     private Vector3 _start;
+    // an autosave counts only when written by this run (the sandbox keeps earlier runs' files)
+    private readonly System.DateTime _began = System.DateTime.UtcNow;
     private Vector3 _last;
 
     public string Note { get; private set; } = "";
@@ -415,7 +417,7 @@ public sealed class BesaidTest(double timeout, string? shot) : ITest
             case Phase.AutoSave:
             {
                 var list = SaveFiles.List(GameSettings.DocumentsDir(), saving: false);
-                if (list.Count == 0 || list[0] is not { Slot: 0 } auto || v.Current == null)
+                if (list.Count == 0 || list[0] is not { Slot: 0 } auto || auto.Written < _began || v.Current == null)
                 {
                     if (_phaseTime > 30)
                         return Done(false, $"no autosave 30 s after map {MapNext:x} ({_seen})");
