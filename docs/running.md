@@ -109,6 +109,19 @@ WSLg shows Godot's window on the Windows desktop. Use the OpenGL renderer
 stays white. Without a GPU driver for Mesa in WSL both run on the CPU
 (llvmpipe), so the frame rate is modest; the Windows build is the fast way.
 
+## Sweeping the developer saves
+
+```bash
+FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/sweep-devsaves.sh [FIRST LAST] [OUT_DIR]
+```
+
+Runs the map check (`--selftest-map`) headless on each developer save
+(1..110 by default), one at a time through `tools/capped.sh`: the save's
+map or battle map shown with classic content and posed characters for
+3 seconds. One line a save: PASS/FAIL with the level, models, objects,
+effect draws and distortion, and the log's error and missing-classic
+counts (logs in `/tmp/gd-ffx-sweep`). About 25 s a save.
+
 ## Comparing with the original
 
 `FFX_GAME_DIR=<game> tools/compare-shot.sh REF.png OUT_DIR [devsave]`

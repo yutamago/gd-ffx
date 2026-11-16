@@ -339,9 +339,27 @@ impl Importer {
     /// # Errors
     /// When `level` names no map, or as [`Importer::import`].
     pub fn import_map(&self, level: &str, cache: &Path) -> Result<PathBuf> {
-        let path = map_model_path(level).ok_or_else(|| Error::Missing(level.to_string()))?;
+        let path = self
+            .map_model(level)
+            .ok_or_else(|| Error::Missing(level.to_string()))?;
         let name = file_stem(&path);
         self.import(&path, &cache.join("map").join(format!("{name}.glb")))
+    }
+
+    /// The archive path of `level`'s map model: [`map_model_path`], or for
+    /// the maps the remaster keeps under `2d/` (`.../<map>/2d/mdl/d3d11/`,
+    /// with `2d/tex/`: `ptkl14`, `mihn03`, `guad01`, `kami01`, `maca01`,
+    /// `bvyt04`, `mcfr11`, `nagi07`, `sins00`, found by gd-ffx's sweep of
+    /// the developer saves) that one
+    /// when the first is not in the archive.
+    #[must_use]
+    pub fn map_model(&self, level: &str) -> Option<String> {
+        let path = map_model_path(level)?;
+        if self.has(&path) {
+            return Some(path);
+        }
+        let flat = path.replacen("/mdl/d3d11/", "/2d/mdl/d3d11/", 1);
+        Some(if self.has(&flat) { flat } else { path })
     }
 
     /// The character model `model` imported under `cache`

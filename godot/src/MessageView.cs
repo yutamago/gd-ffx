@@ -131,7 +131,9 @@ public partial class MessageView : Control
         var view = GetViewportRect().Size;
         var size = w.Panel.GetCombinedMinimumSize();
         var at = new Vector2(m.X / Ps2Screen.X * view.X - size.X / 2, m.Y / Ps2Screen.Y * view.Y - size.Y - 16);
-        w.Panel.Position = at.Clamp(Vector2.One * 8, view - size - Vector2.One * 8);
+        // a window larger than the screen keeps its top left on screen
+        var max = (view - size - Vector2.One * 8).Max(Vector2.One * 8);
+        w.Panel.Position = at.Clamp(Vector2.One * 8, max);
         w.Panel.Modulate = new Color(1, 1, 1, m.State == 2 ? 1f : 0.6f);
     }
 }

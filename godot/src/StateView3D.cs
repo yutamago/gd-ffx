@@ -434,8 +434,8 @@ public partial class StateView3D : Node3D
                     continue;
                 var t = RowMajor(a.Bones[i].Matrix);
                 if (prev != null)
-                    t = RowMajor(prev.Bones[i].Matrix).InterpolateWith(t, view.Alpha);
-                part.Transform = parentInv * t;
+                    t = Lerp(RowMajor(prev.Bones[i].Matrix), t, view.Alpha);
+                part.Transform = parentInv * Solid(t);
                 moved++;
             }
             return moved;
@@ -452,12 +452,44 @@ public partial class StateView3D : Node3D
                 continue;
             var t = RowMajor(m);
             if (prev != null)
-                t = RowMajor(prev.Bones[i].Matrix).InterpolateWith(t, view.Alpha);
-            skel.SetBoneGlobalPose(b, n.SkeletonInModelInv * t);
+                t = Lerp(RowMajor(prev.Bones[i].Matrix), t, view.Alpha);
+            SetGlobalPose(skel, b, n.SkeletonInModelInv * Solid(t));
             posed++;
         }
         return posed;
     }
+
+    /// <summary>
+    /// Between two bone matrices: <see cref="Transform3D.InterpolateWith"/> when both can be
+    /// decomposed, else the newer one (the game hides parts with a zero scale, which has no
+    /// rotation to interpolate).
+    /// </summary>
+    private static Transform3D Lerp(Transform3D from, Transform3D to, float alpha) =>
+        Solid(from) == from && Solid(to) == to && Mathf.Abs(from.Basis.Determinant()) > 1e-6f && Mathf.Abs(to.Basis.Determinant()) > 1e-6f
+            ? from.InterpolateWith(to, alpha)
+            : to;
+
+    /// <summary>
+    /// <see cref="Skeleton3D.SetBoneGlobalPose"/> for the game's matrices, which can be sheared
+    /// or degenerate: the local pose against the parent's, split into position, rotation (the
+    /// orthonormalised part) and scale, which Godot's own setter refuses for such a basis.
+    /// </summary>
+    private static void SetGlobalPose(Skeleton3D skel, int bone, Transform3D global)
+    {
+        int parent = skel.GetBoneParent(bone);
+        var local = parent < 0 ? global : skel.GetBoneGlobalPose(parent).AffineInverse() * global;
+        var basis = local.Basis;
+        var scale = basis.Scale;
+        if (Mathf.Abs(basis.Determinant()) < 1e-12f || !scale.IsFinite())
+            return;
+        skel.SetBonePosePosition(bone, local.Origin);
+        skel.SetBonePoseRotation(bone, basis.GetRotationQuaternion());
+        skel.SetBonePoseScale(bone, scale);
+    }
+
+    /// <summary>A matrix Godot can invert: a zero (hidden) basis becomes a tiny scale at the same place.</summary>
+    private static Transform3D Solid(Transform3D t) =>
+        Mathf.Abs(t.Basis.Determinant()) < 1e-12f ? new Transform3D(Basis.FromScale(Vector3.One * 1e-4f), t.Origin) : t;
 
     private static void Free(ActorNode n)
     {

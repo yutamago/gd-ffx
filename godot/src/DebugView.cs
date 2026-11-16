@@ -63,6 +63,8 @@ public partial class DebugView : Control
             _test = new SelfTest(timeout);
         else if (GameSettings.Flag("selftest-menu"))
             _test = new MenuTest(timeout, GameSettings.Arg("shot"));
+        else if (GameSettings.Flag("selftest-map"))
+            _test = new MapTest(timeout, GameSettings.Arg("shot"));
         else if (GameSettings.Flag("selftest-besaid"))
             _test = new BesaidTest(timeout, GameSettings.Arg("shot"));
         else if (GameSettings.Flag("selftest-remake-map"))
@@ -455,6 +457,65 @@ public sealed class BesaidTest(double timeout, string? shot) : ITest
         GD.Print($"ffx selftest: {_phase} -> {p}");
         _phase = p;
         _phaseTime = 0;
+    }
+
+    private bool Done(bool pass, string note)
+    {
+        Note = note;
+        return pass;
+    }
+}
+
+/// <summary>
+/// G5's sweep check (<c>--selftest-map</c>, with <c>--devsave=N</c>; <c>tools/sweep-devsaves.sh</c>
+/// runs it on every developer save): once the save's scene runs (not the title), its map or
+/// battle map is shown with the classic content, character models posed by the game, and it
+/// stays up for 3 seconds; reports the level, models, bones, objects, effect draws, the
+/// distortion and whether it is a battle (with <c>--shot=FILE.png</c> and a renderer, a picture).
+/// </summary>
+public sealed class MapTest(double timeout, string? shot) : ITest
+{
+    private double _total;
+    private double _shown = -1;
+    private string _level = "";
+
+    public string Note { get; private set; } = "";
+
+    public bool? Step(FfxGame game, GameState s, GameStateView v, double delta)
+    {
+        _total += delta;
+        if (!s.Running && s.Seconds > 1)
+            return Done(false, $"the game ended: {s.Outcome}");
+        var view = (Engine.GetMainLoop() as SceneTree)?.Root.FindChild("StateView3D", true, false) as StateView3D;
+        var c = v.Current;
+        if (_total > timeout)
+            return Done(false, $"timed out: level {c?.World.Level}, map shown {view?.MapLevel}, models {view?.Posed.Models} ({DebugView.SnapshotLine(v)})");
+        if (c == null || view == null || c.World.Level.Length == 0 || c.World.Level.Contains("/titl/") || _total < 5)
+            return null;
+        if (view.MapLevel != c.World.Level || view.Posed.Models == 0)
+        {
+            _shown = -1;
+            return null;
+        }
+        if (_level != c.World.Level)
+        {
+            _level = c.World.Level;
+            _shown = _total;
+        }
+        if (_shown < 0)
+            _shown = _total;
+        if (_total - _shown < 3)
+            return null;
+        var fx = view.GetNodeOrNull<EffectDrawView>("EffectDrawView");
+        var dv = view.GetTree().Root.FindChild("DistortionView", true, false) as DistortionView;
+        if (shot != null && DisplayServer.GetName() != "headless")
+        {
+            view.GetTree().Root.GetViewport().GetTexture().GetImage().SavePng(shot);
+            GD.Print($"ffx selftest: picture {shot}");
+        }
+        return Done(true, $"{(c.World.Battle ? "battle" : "field")} {c.World.Level} (map {c.World.Map:x}): {view.Posed.Models} models "
+            + $"({view.Posed.PosedBones} bones), {view.ObjectsPlaced} objects, {fx?.Shown.Draws ?? 0} effect draws "
+            + $"({fx?.Shown.Textured ?? 0} textured), distortion {(dv?.Shown.On == true ? "on" : "off")}, at {_total:F0} s");
     }
 
     private bool Done(bool pass, string note)
