@@ -300,6 +300,9 @@ void fragment() {
                 for (int f = 0; f < 6; f++)
                     if (Face(f) is { } img)
                     {
+                        // the faces come upright like 2D textures; the game uploads a cube's
+                        // rows as stored, so D3D's faces are these mirrored vertically
+                        img.FlipY();
                         img.GenerateMipmaps();
                         faces.Add(img);
                     }
