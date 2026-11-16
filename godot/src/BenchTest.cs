@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Runtime;
 using System.Text;
 using Godot;
 
@@ -23,26 +24,48 @@ public sealed class BenchTest : ITest
 {
     private const int Sections = (int)Perf.Section.Count;
 
-    private sealed class Frame
+    /// <summary>
+    /// A frame's record: no references (so the records, kept to the end, are nothing for the
+    /// collector to trace; old records pointing at young objects would make every young
+    /// collection scan them). Its sections' times and allocations are in the flat arrays at
+    /// <see cref="At"/>.
+    /// </summary>
+    private struct Frame
     {
         public double Ms;
-        public readonly double[] Section = new double[Sections];
-        public readonly long[] Bytes = new long[Sections];
         public long Alloc;
         /// <summary>The highest generation collected in the frame (-1 none).</summary>
-        public int Gc = -1;
+        public int Gc;
         public bool Snapshot;
         public bool Loading;
         public int Draws;
         public int Objects;
-        public string Level = "";
+        /// <summary>The level's index in <see cref="_levels"/>.</summary>
+        public int Level;
+        /// <summary>The index of the frame's sections in <see cref="_sectionMs"/> and <see cref="_sectionBytes"/> (divided by <see cref="Sections"/>).</summary>
+        public int At;
+        /// <summary>The frame's number in the load or the window.</summary>
+        public int N;
     }
+
+    /// <summary>The load's longest frames kept (the first section slots): the load can be 100,000 frames and more.</summary>
+    private const int LoadKept = 8;
+
+    /// <summary>The frames recorded up front (about 50 s at 2,500 fps), so the window allocates no record.</summary>
+    private const int Capacity = 1 << 17;
 
     private readonly double _timeout, _settle, _seconds;
     private readonly bool _battle, _walk;
-    private readonly List<Frame> _load = new(), _window = new();
-    private readonly List<double> _arrivals = new();
+    private readonly List<Frame> _load = new(LoadKept), _window = new(Capacity);
+    private int _loadFrames;
+    private float[] _sectionMs = new float[Capacity * Sections];
+    private int[] _sectionBytes = new int[Capacity * Sections];
+    private int _frames = LoadKept;
+    private readonly List<string> _levels = new();
+    private readonly List<double> _arrivals = new(4096);
+    private StateView3D? _view;
     private readonly double[] _scratch = new double[Sections];
+    private readonly long[] _bytes = new long[Sections];
     private long _last, _alloc;
     private readonly int[] _gcSeen = new int[3];
     private double _total, _readyAt = -1, _windowAt = -1;
@@ -50,8 +73,12 @@ public sealed class BenchTest : ITest
     private int[] _gc0 = [];
     private TimeSpan _pause0;
     private long _totalAlloc0;
+    private long _gcIndex = -1;
+    private readonly List<string> _collections = new();
+    private readonly List<double> _pauses = new();
     private long _updates0;
     private double _seconds0;
+    private readonly GcTrace? _trace;
 
     public string Note { get; private set; } = "";
 
@@ -63,6 +90,8 @@ public sealed class BenchTest : ITest
         _battle = !string.IsNullOrEmpty(GameSettings.Arg("battle"));
         _walk = GameSettings.Flag("bench-walk");
         Perf.On = true;
+        if (GameSettings.Flag("bench-gc-trace"))
+            _trace = new GcTrace();
         // headless, Godot sleeps up to this long a frame when it cannot draw (6.9 ms by default:
         // a cap of 145 fps); the benchmark measures the frame's work instead
         OS.LowProcessorUsageModeSleepUsec = 0;
@@ -81,7 +110,9 @@ public sealed class BenchTest : ITest
             return Done(false, $"the game ended: {s.Outcome}");
         if (_total > _timeout)
             return Done(false, $"timed out: level {v.Current?.World.Level} ({DebugView.SnapshotLine(v)})");
-        var view = (Engine.GetMainLoop() as SceneTree)?.Root.FindChild("StateView3D", true, false) as StateView3D;
+        if (_view == null || !GodotObject.IsInstanceValid(_view))
+            _view = (Engine.GetMainLoop() as SceneTree)?.Root.FindChild("StateView3D", true, false) as StateView3D;
+        var view = _view;
         var c = v.Current;
         if (_readyAt < 0)
         {
@@ -104,10 +135,21 @@ public sealed class BenchTest : ITest
             _seconds0 = s.Seconds;
             _arrivals.Clear();
             _skipped = 0;
+            _trace?.Begin();
             if (_walk)
                 Keys(true);
             return null;
         }
+        // the census: the Godot disposables each probed section makes, over frames 1000 to 1100 of the window
+        if (_trace != null && _window.Count == 1000)
+        {
+            _trace.Census("before");
+            Perf.AfterSection = sec => _trace.Census(sec.ToString());
+        }
+        else if (_trace != null && _window.Count is > 1000 and <= 1100)
+            _trace.Census("between the probes");
+        if (_trace != null && _window.Count == 1100)
+            Perf.AfterSection = null;
         if (_total - _windowAt < _seconds)
             return null;
         if (_walk)
@@ -118,24 +160,23 @@ public sealed class BenchTest : ITest
 
     private void Record(long now, long alloc, GameStateView v)
     {
+        if ((_frames + 1) * Sections > _sectionMs.Length)
+        {
+            System.Array.Resize(ref _sectionMs, _sectionMs.Length * 2);
+            System.Array.Resize(ref _sectionBytes, _sectionBytes.Length * 2);
+        }
+        var level = v.Current?.World.Level ?? "";
+        if (_levels.Count == 0 || _levels[^1] != level)
+            _levels.Add(level);
         var f = new Frame
         {
             Ms = (now - _last) * 1000.0 / Stopwatch.Frequency,
             Alloc = alloc - _alloc,
+            Gc = -1,
             Draws = (int)Performance.GetMonitor(Performance.Monitor.RenderTotalDrawCallsInFrame),
             Objects = (int)Performance.GetMonitor(Performance.Monitor.RenderTotalObjectsInFrame),
-            Level = v.Current?.World.Level ?? "",
+            Level = _levels.Count - 1,
         };
-        Perf.Take(_scratch, f.Bytes);
-        for (int g = 2; g >= 0; g--)
-            if (GC.CollectionCount(g) != _gcSeen[g])
-            {
-                f.Gc = g;
-                break;
-            }
-        for (int g = 0; g < 3; g++)
-            _gcSeen[g] = GC.CollectionCount(g);
-        Array.Copy(_scratch, f.Section, Sections);
         var u = v.Current?.Update ?? 0;
         if (v.Current != null && u != _update)
         {
@@ -147,11 +188,94 @@ public sealed class BenchTest : ITest
         }
         if (_windowAt < 0)
         {
+            // the load: only its longest frames are kept, in the first slots
+            f.N = _loadFrames++;
+            if (_load.Count < LoadKept)
+                f.At = _load.Count;
+            else
+            {
+                int min = 0;
+                for (int i = 1; i < _load.Count; i++)
+                    if (_load[i].Ms < _load[min].Ms)
+                        min = i;
+                if (f.Ms <= _load[min].Ms)
+                {
+                    Perf.Take(_scratch, _bytes);
+                    NoteCollections(f);
+                    return;
+                }
+                f.At = _load[min].At;
+                _load.RemoveAt(min);
+            }
+        }
+        else
+        {
+            f.N = _window.Count;
+            f.At = _frames++;
+        }
+        Perf.Take(_scratch, _bytes);
+        for (int i = 0; i < Sections; i++)
+        {
+            _sectionMs[f.At * Sections + i] = (float)_scratch[i];
+            _sectionBytes[f.At * Sections + i] = (int)Math.Min(_bytes[i], int.MaxValue);
+        }
+        f.Gc = NoteCollections(f);
+        if (_windowAt < 0)
+        {
             f.Loading = _readyAt < 0;
             _load.Add(f);
         }
         else
             _window.Add(f);
+    }
+
+    /// <summary>The highest generation collected since the last frame (-1 none); in the window, its details noted.</summary>
+    private int NoteCollections(Frame f)
+    {
+        int gc = -1;
+        for (int g = 2; g >= 0; g--)
+            if (GC.CollectionCount(g) != _gcSeen[g])
+            {
+                gc = g;
+                break;
+            }
+        for (int g = 0; g < 3; g++)
+            _gcSeen[g] = GC.CollectionCount(g);
+        if (gc >= 0 && _windowAt >= 0)
+            Collection(f);
+        return gc;
+    }
+
+    private double Sec(Frame f, int i) => _sectionMs[f.At * Sections + i];
+
+    private double SecSum(Frame f)
+    {
+        double sum = 0;
+        for (int i = 0; i < Sections; i++)
+            sum += _sectionMs[f.At * Sections + i];
+        return sum;
+    }
+
+    /// <summary>The last collection's details (the runtime keeps only the last one of each kind).</summary>
+    private void Collection(Frame f)
+    {
+        var i = GC.GetGCMemoryInfo(GCKind.Any);
+        if (i.Index == _gcIndex)
+            return;
+        var missed = _gcIndex >= 0 ? i.Index - _gcIndex - 1 : 0;
+        _gcIndex = i.Index;
+        double pause = 0;
+        foreach (var d in i.PauseDurations)
+            pause += d.TotalMilliseconds;
+        _pauses.Add(pause);
+        var gens = i.GenerationInfo;
+        var sizes = new StringBuilder();
+        for (int g = 0; g < gens.Length; g++)
+            sizes.Append($"{(g == 0 ? "" : " ")}{(g < 3 ? $"g{g}" : g == 3 ? "loh" : "poh")} {gens[g].SizeBeforeBytes / 1024}>{gens[g].SizeAfterBytes / 1024}");
+        _collections.Add($"#{i.Index} gen{i.Generation}{(i.Concurrent ? " background" : "")}{(i.Compacted ? " compacting" : "")}"
+            + $"{(missed > 0 ? $" (+{missed} not seen)" : "")}: pause {pause:F2} ms, frame {f.Ms:F1} ms, promoted {i.PromotedBytes / 1024} KiB, "
+            + $"pinned {i.PinnedObjectsCount}, finalizable pending {i.FinalizationPendingCount}, heap {i.HeapSizeBytes / 1048576} MiB, "
+            + $"fragmented {i.FragmentedBytes / 1024} KiB; KiB before>after: {sizes}");
     }
 
     private static double Pct(List<double> sorted, double p) =>
@@ -176,7 +300,7 @@ public sealed class BenchTest : ITest
         double sum = 0;
         for (int i = 0; i < Sections; i++)
         {
-            var xs = w.Select(f => f.Section[i]).OrderBy(x => x).ToList();
+            var xs = w.Select(f => Sec(f, i)).OrderBy(x => x).ToList();
             var m = xs.Average();
             sum += m;
             if (xs[^1] < 0.001)
@@ -187,13 +311,13 @@ public sealed class BenchTest : ITest
         b.Clear().Append("alloc KiB/frame (mean):");
         for (int i = 0; i < Sections; i++)
         {
-            var m = w.Average(f => (double)f.Bytes[i]) / 1024;
+            var m = w.Average(f => (double)_sectionBytes[f.At * Sections + i]) / 1024;
             if (m >= 0.05)
                 b.Append($" {(Perf.Section)i} {m:F1}");
         }
         Print(b.ToString());
-        var snapFrames = w.Where(f => f.Snapshot).Select(f => f.Section.Sum()).DefaultIfEmpty(0).Average();
-        var otherFrames = w.Where(f => !f.Snapshot).Select(f => f.Section.Sum()).DefaultIfEmpty(0).Average();
+        var snapFrames = w.Where(f => f.Snapshot).Select(SecSum).DefaultIfEmpty(0).Average();
+        var otherFrames = w.Where(f => !f.Snapshot).Select(SecSum).DefaultIfEmpty(0).Average();
         Print($"cpu ms/frame, all views: {sum:F3} (frames with a new snapshot {snapFrames:F3}, others {otherFrames:F3}); "
             + $"the rest of the frame (Godot's own work) {mean - sum:F3}");
         var allocs = w.Select(f => (double)f.Alloc).OrderBy(x => x).ToList();
@@ -206,6 +330,21 @@ public sealed class BenchTest : ITest
             + $"max {w.Where(f => f.Gc >= 0).Select(f => f.Ms).DefaultIfEmpty(0).Max():F2} ms; "
             + $"last full: {GC.GetGCMemoryInfo(GCKind.FullBlocking).Index}, background {GC.GetGCMemoryInfo(GCKind.Background).Index}, "
             + $"LOH threshold {AppContext.GetData("GCLOHThreshold") ?? AppContext.GetData("System.GC.LOHThreshold")}");
+        var pauses = _pauses.OrderBy(x => x).ToList();
+        Print($"gc pauses: {pauses.Count} seen, mean {(pauses.Count > 0 ? pauses.Average() : 0):F2} ms, max {(pauses.Count > 0 ? pauses[^1] : 0):F2} ms, "
+            + $"over 4 ms {pauses.Count(x => x > 4)}; {(GCSettings.IsServerGC ? "server" : "workstation")} GC, latency {GCSettings.LatencyMode}, "
+            + $"concurrent {AppContext.GetData("System.GC.Concurrent") ?? "(default)"}, .NET {System.Environment.Version}, "
+            + $"{(Debugger.IsAttached ? "debugger, " : "")}{(IsDebugBuild() ? "Debug" : "Release")} build, "
+            + $"Godot objects {Performance.GetMonitor(Performance.Monitor.ObjectCount)}, nodes {Performance.GetMonitor(Performance.Monitor.ObjectNodeCount)}, "
+            + $"resources {Performance.GetMonitor(Performance.Monitor.ObjectResourceCount)}");
+        foreach (var line in _collections)
+            Print($"gc {line}");
+        if (_trace != null)
+        {
+            foreach (var line in _trace.Lines(25))
+                Print(line);
+            _trace.Dispose();
+        }
         var gaps = new List<double>();
         for (int i = 1; i < _arrivals.Count; i++)
             gaps.Add(_arrivals[i] - _arrivals[i - 1]);
@@ -229,20 +368,23 @@ public sealed class BenchTest : ITest
         Longest("window", _window, 5);
     }
 
-    private static void Longest(string what, List<Frame> frames, int n)
+    private void Longest(string what, List<Frame> frames, int n)
     {
         if (frames.Count == 0)
             return;
-        var top = frames.Select((f, i) => (f, i)).OrderByDescending(x => x.f.Ms).Take(n);
-        foreach (var (f, i) in top)
+        foreach (var f in frames.OrderByDescending(x => x.Ms).Take(n))
         {
-            var parts = Enumerable.Range(0, Sections).Where(k => f.Section[k] >= 0.5)
-                .OrderByDescending(k => f.Section[k]).Select(k => $"{(Perf.Section)k} {f.Section[k]:F1}");
-            var views = f.Section.Sum();
-            Print($"longest {what} frame #{i}: {f.Ms:F1} ms (views {views:F1}: {string.Join(", ", parts)}; other {f.Ms - views:F1})"
-                + $"{(f.Snapshot ? ", new snapshot" : "")}{(f.Gc >= 0 ? $", gen{f.Gc} collection" : "")}, alloc {f.Alloc / 1024} KiB, {f.Level}");
+            var parts = Enumerable.Range(0, Sections).Where(k => Sec(f, k) >= 0.5)
+                .OrderByDescending(k => Sec(f, k)).Select(k => $"{(Perf.Section)k} {Sec(f, k):F1}");
+            var views = SecSum(f);
+            Print($"longest {what} frame #{f.N}: {f.Ms:F1} ms (views {views:F1}: {string.Join(", ", parts)}; other {f.Ms - views:F1})"
+                + $"{(f.Snapshot ? ", new snapshot" : "")}{(f.Gc >= 0 ? $", gen{f.Gc} collection" : "")}, alloc {f.Alloc / 1024} KiB, {_levels[f.Level]}");
         }
     }
+
+    private static bool IsDebugBuild() =>
+        typeof(BenchTest).Assembly.GetCustomAttributes(typeof(DebuggableAttribute), false)
+            .OfType<DebuggableAttribute>().Any(a => a.IsJITOptimizerDisabled);
 
     private static void Print(string line) => GD.Print($"ffx bench: {line}");
 
