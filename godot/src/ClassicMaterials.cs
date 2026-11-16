@@ -407,8 +407,8 @@ void fragment() {
     /// </summary>
     private static (string Modes, bool Blends) PassModes(Dictionary? pass, bool forceBlend)
     {
-        string Str(Dictionary d, string k, string def) => d.TryGetValue(k, out var v) && v.VariantType == Variant.Type.String ? v.AsString() : def;
-        bool Bool(Dictionary d, string k, bool def) => d.TryGetValue(k, out var v) && v.VariantType == Variant.Type.Bool ? v.AsBool() : def;
+        string Str(Dictionary d, string k, string def) => d.TryGetValue(Variants.Key(k), out var v) && v.VariantType == Variant.Type.String ? v.AsString() : def;
+        bool Bool(Dictionary d, string k, bool def) => d.TryGetValue(Variants.Key(k), out var v) && v.VariantType == Variant.Type.Bool ? v.AsBool() : def;
         var modes = new List<string> { "unshaded" };
         if (pass == null)
         {
@@ -454,7 +454,7 @@ void fragment() {
 
     /// <summary>The glTF set a vertex program input reads (the import's <c>ffx_texcoords</c>, <c>ffx_colors</c>).</summary>
     private static int InputSet(Dictionary extras, string key, string input, int fallback) =>
-        extras.TryGetValue(key, out var v) && v.AsGodotDictionary().TryGetValue(input, out var k) ? k.AsInt32() : fallback;
+        extras.TryGetValue(Variants.Key(key), out var v) && v.AsGodotDictionary().TryGetValue(Variants.Key(input), out var k) ? k.AsInt32() : fallback;
 
     /// <summary>Whether a material draws with the per-instance morph weight (<c>ffx_morph</c>) or UV offset (<c>ffx_uv_offset</c>).</summary>
     public static (bool Weight, bool UvOffset) Morphs(Material? m)
@@ -470,7 +470,7 @@ void fragment() {
 
     /// <summary>The variant's switches (the import's <c>extras.ffx_switches</c>).</summary>
     private static bool Switch(Dictionary extras, string name) =>
-        extras.TryGetValue(Variants.Key("ffx_switches"), out var sv) && sv.AsGodotDictionary().ContainsKey(name);
+        extras.TryGetValue(Variants.Key("ffx_switches"), out var sv) && sv.AsGodotDictionary().ContainsKey(Variants.Key(name));
     private static readonly Shader[] LayerShaders =
     [
         MakeShader("unshaded, cull_disabled, blend_mix, depth_draw_always, shadows_disabled", LayerBody),

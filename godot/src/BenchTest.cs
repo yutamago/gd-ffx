@@ -136,7 +136,7 @@ public sealed class BenchTest : ITest
             if (!_reserved && _total - _readyAt >= _settle / 2)
             {
                 _reserved = true;
-                Reserve((int)Math.Min(int.MaxValue / Sections / 2, _settleFrames / Math.Max(_total - _readyAt, 1e-3) * _seconds * 1.5 + 4096));
+                Reserve((int)Math.Min(int.MaxValue / Sections / 2, _settleFrames / Math.Max(_total - _readyAt, 1e-3) * _seconds * 2.5 + 16384));
             }
             if (_total - _readyAt < _settle)
                 return null;
