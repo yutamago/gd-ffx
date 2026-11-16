@@ -51,8 +51,8 @@ public sealed class BenchTest : ITest
     /// <summary>The load's longest frames kept (the first section slots): the load can be 100,000 frames and more.</summary>
     private const int LoadKept = 8;
 
-    /// <summary>The frames recorded up front (about 50 s at 2,500 fps), so the window allocates no record.</summary>
-    private const int Capacity = 1 << 17;
+    /// <summary>The frames recorded before the settle has measured the frame rate (<see cref="Reserve"/>).</summary>
+    private const int Capacity = 1 << 16;
 
     private readonly double _timeout, _settle, _seconds;
     private readonly bool _battle, _walk;
@@ -67,6 +67,8 @@ public sealed class BenchTest : ITest
     private readonly double[] _scratch = new double[Sections];
     private readonly long[] _bytes = new long[Sections];
     private long _last, _alloc;
+    private int _settleFrames;
+    private bool _reserved;
     private readonly int[] _gcSeen = new int[3];
     private double _total, _readyAt = -1, _windowAt = -1;
     private long _update = -1, _skipped;
@@ -79,6 +81,7 @@ public sealed class BenchTest : ITest
     private long _updates0;
     private double _seconds0;
     private readonly GcTrace? _trace;
+    private readonly bool _censusAll;
 
     public string Note { get; private set; } = "";
 
@@ -92,6 +95,8 @@ public sealed class BenchTest : ITest
         Perf.On = true;
         if (GameSettings.Flag("bench-gc-trace"))
             _trace = new GcTrace();
+        // the census on every frame of the window after the first 1,100 (slow: the whole tracker each frame)
+        _censusAll = _trace != null && GameSettings.Flag("bench-census-all");
         // headless, Godot sleeps up to this long a frame when it cannot draw (6.9 ms by default:
         // a cap of 145 fps); the benchmark measures the frame's work instead
         OS.LowProcessorUsageModeSleepUsec = 0;
@@ -125,6 +130,14 @@ public sealed class BenchTest : ITest
         }
         if (_windowAt < 0)
         {
+            _settleFrames++;
+            // the records for the window, sized by the settle's frame rate half way through it: growing
+            // them in the window would be a long frame of the benchmark's own (at 20,000 fps, many MiB)
+            if (!_reserved && _total - _readyAt >= _settle / 2)
+            {
+                _reserved = true;
+                Reserve((int)Math.Min(int.MaxValue / Sections / 2, _settleFrames / Math.Max(_total - _readyAt, 1e-3) * _seconds * 1.5 + 4096));
+            }
             if (_total - _readyAt < _settle)
                 return null;
             _windowAt = _total;
@@ -146,8 +159,8 @@ public sealed class BenchTest : ITest
             _trace.Census("before");
             Perf.AfterSection = sec => _trace.Census(sec.ToString());
         }
-        else if (_trace != null && _window.Count is > 1000 and <= 1100)
-            _trace.Census("between the probes");
+        else if (_trace != null && (_window.Count is > 1000 and <= 1100 || _censusAll && _window.Count > 1100))
+            _trace.Census(_window.Count <= 1100 ? "between the probes" : "after frame 1100 (all threads)");
         if (_trace != null && _window.Count == 1100)
             Perf.AfterSection = null;
         if (_total - _windowAt < _seconds)
@@ -227,6 +240,18 @@ public sealed class BenchTest : ITest
         }
         else
             _window.Add(f);
+    }
+
+    /// <summary>Room for <paramref name="frames"/> window frames' records.</summary>
+    private void Reserve(int frames)
+    {
+        _window.Capacity = Math.Max(_window.Capacity, frames);
+        var need = (LoadKept + frames) * Sections;
+        if (need > _sectionMs.Length)
+        {
+            System.Array.Resize(ref _sectionMs, need);
+            System.Array.Resize(ref _sectionBytes, need);
+        }
     }
 
     /// <summary>The highest generation collected since the last frame (-1 none); in the window, its details noted.</summary>

@@ -14,6 +14,11 @@
 # lchb battle. Logs in $BENCH_OUT (default /tmp/gd-ffx-bench), removed with
 # the documents unless BENCH_KEEP=1.
 #
+# BENCH_PROGRAM=<exported program> (tools/export.sh: build/linux/gd-ffx.x86_64)
+# runs that instead of the editor on the project: the C# assembly built
+# ExportRelease and .NET started with the project's runtimeconfig.json (Godot
+# run on the project folder uses the Debug build and the editor's own).
+#
 # BENCH_RENDER=1 renders offscreen instead (Xvfb, OpenGL; nothing on screen,
 # vsync off): Godot's draw calls and objects per frame. Without a GPU (WSL:
 # llvmpipe on the CPU) its frame times say nothing about a real machine.
@@ -30,9 +35,16 @@ done
 [[ ${#scenes[@]} -gt 0 ]] || scenes=(besaid lchb battle)
 out="${BENCH_OUT:-/tmp/gd-ffx-bench}"
 mkdir -p "$out"
+program="${BENCH_PROGRAM:-}"
+if [[ -n "$program" ]]; then
+    [[ -x "$program" ]] || { echo "bench: no program $program" >&2; exit 2; }
+    program="$(cd "$(dirname "$program")" && pwd)/$(basename "$program")"
+fi
 cd "$repo/godot"
-dotnet build -nologo -v quiet gd-ffx.csproj ${BENCH_DOTNET_ARGS:-} >/dev/null
-[[ -f .godot/extension_list.cfg ]] || "$godot" --headless --editor --quit --path . >/dev/null 2>&1 || true
+if [[ -z "$program" ]]; then
+    dotnet build -nologo -v quiet gd-ffx.csproj ${BENCH_DOTNET_ARGS:-} >/dev/null
+    [[ -f .godot/extension_list.cfg ]] || "$godot" --headless --editor --quit --path . >/dev/null 2>&1 || true
+fi
 docs="$(mktemp -d -t gd-ffx-bench.XXXXXX)"
 trap 'rm -rf "$docs"; [[ "${BENCH_KEEP:-0}" == 1 ]] || rm -rf "$out"' EXIT
 status=0
@@ -46,12 +58,17 @@ for scene in "${scenes[@]}"; do
     esac
     echo "== $scene"
     set +e
+    if [[ -n "$program" ]]; then
+        target=("$program")
+    else
+        target=("$godot" --path .)
+    fi
     if [[ "${BENCH_RENDER:-0}" == 1 ]]; then
         run=(env -u WAYLAND_DISPLAY -u DISPLAY "$repo/tools/capped.sh" xvfb-run -a -s "-screen 0 1280x720x24"
-            "$godot" --display-driver x11 --rendering-driver opengl3 --audio-driver Dummy --path .)
+            "${target[@]}" --display-driver x11 --rendering-driver opengl3 --audio-driver Dummy)
         args+=(--no-vsync)
     else
-        run=("$repo/tools/capped.sh" "$godot" --headless --path .)
+        run=("$repo/tools/capped.sh" "${target[@]}" --headless)
     fi
     FFX_HOST_HITCH_MS="${FFX_HOST_HITCH_MS:-50}" timeout 400 "${run[@]}" -- \
         --bench "${args[@]}" --selftest-timeout=300 --documents="$docs" "$@" >"$out/$scene.log" 2>&1
