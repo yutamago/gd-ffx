@@ -141,7 +141,8 @@ public partial class FfxGame : RefCounted
     /// (<c>current_address</c>, <c>current_len</c>, <c>previous_address</c>,
     /// <c>previous_len</c>); <see cref="Held.CopyInto"/> copies them out before the next call.
     /// </summary>
-    public Dictionary SnapshotsHeld() => Node.Call(M.snapshots_held).AsGodotDictionary();
+    /// <remarks>Its variant is disposed here; the caller disposes the dictionary (each is finalizable otherwise: <see cref="Variants"/>).</remarks>
+    public Dictionary SnapshotsHeld() => Variants.CallDictionary(Node, M.snapshots_held);
 
     /// <summary>A texture by the name the game holds at run time (an effect draw's) as PNG bytes; empty when not in the archive.</summary>
     public byte[] RuntimeTexture(string name) => Node.Call(M.runtime_texture, name).AsByteArray();
@@ -229,7 +230,8 @@ public readonly struct GameState
 
     public GameState(Dictionary d) => _d = d;
 
-    private Variant Get(string key) => _d.TryGetValue(key, out var v) ? v : default;
+    // keys made once (a string key is a new finalizable variant each read: Variants)
+    private Variant Get(string key) => Variants.Get(_d, key);
 
     public bool Running => Get("running").AsBool();
     public bool Booted => Get("booted").AsBool();

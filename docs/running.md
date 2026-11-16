@@ -141,7 +141,11 @@ prints `ffx bench:` lines (`BenchTest`, the probes in `Perf`):
 - each view's CPU time a frame (mean, p99, max) and allocations a frame,
   the sum, and the rest of the frame (Godot's own work);
 - the main thread's allocations, the collections (by generation) and GC
-  pauses, the frames that had one;
+  pauses, the frames that had one; each collection in the window (`gc #N`:
+  its pause, the bytes promoted, the finalizable objects found dead, the
+  generations' sizes before and after), the build (Debug or Release), the
+  .NET version and GC mode, and the collections `GameHost` ran in frames a
+  load had already lost (see "Garbage collections" below);
 - the game: updates a second, snapshots seen and skipped, the gaps between
   them (a gap is a slow update on the game's thread);
 - the snapshot and effect frame sizes; Godot's draw calls and objects;
@@ -156,6 +160,26 @@ Headless means the CPU side only: the dummy renderer draws nothing.
 `BENCH_RENDER=1` renders offscreen (Xvfb, OpenGL, `--no-vsync`) for the draw
 calls; on the development machine that is llvmpipe on the CPU, so its frame
 times mean nothing for a real GPU.
+
+`BENCH_PROGRAM=build/linux/gd-ffx.x86_64` runs an exported program
+(`tools/capped.sh tools/export.sh linux`) instead of the editor on the
+project folder: the C# assembly built ExportRelease and .NET started with
+the project's `runtimeconfig.json` (self-contained .NET 9). `godot --path`
+runs the Debug assembly on the editor's .NET (10 here, `GodotPlugins.runtimeconfig.json`
+rolls forward) with the editor's configuration, so the project's
+`System.GC.*` settings do not apply there; environment variables
+(`DOTNET_GCgen0size` and the like) do, in both.
+
+`-- --bench-gc-trace` adds the runtime's GC events, read in process by an
+`EventListener` (`GcTrace`; no dotnet-trace needed): each collection's
+suspension and collection time, what it found alive from each kind of root
+(stacks, handles, the older generations through the card table), the objects
+it kept for their finalizers, the GC handles; the allocations sampled by
+type; and a census of Godot's disposables (read from Godot's
+`DisposablesTracker` by reflection) made by each probed section over 100
+frames of the window (`--bench-census-all`: every frame after those, all
+threads). The trace allocates itself: its run's allocation figures are
+higher.
 
 The frame rate is not tied to the game's 30 updates a second: Godot draws as
 fast as vsync lets it (the project sets no `max_fps`; physics is unused), and
@@ -254,17 +278,12 @@ What remains:
   With only the effect frame and the snapshots held (one run): Besaid
   5.3 KiB a frame, 8.8 MiB/s, 14/7/0, 169 ms paused, at most 19.3 ms.
 
-  No gen2 collection is left on the field, and the time paused halves at
-  Besaid, but each collection pauses longer (about 10 ms where it was
-  about 3.5), so the worst frame with one is no better (19 to 25 ms). The
-  pause grows with the young generation's budget: with
-  `DOTNET_GCgen0size=0x4000000` (64 MiB) Besaid had 4/4/2 collections of
-  about 125 ms each. So what costs is what survives a young collection,
-  not the garbage; what that is (Godot's wrappers with finalizers, the
-  views' kept objects) is not known yet: a GC trace (`dotnet-trace`,
-  `DOTNET_GCgen0size`) would say. In battle the HUD and the battle menu
-  still allocate 2.2 KiB a frame (at 3,500 fps). The views' per-frame
-  allocations weigh in the benchmark's 1,500 fps, little at 60.
+  No gen2 collection was left on the field, and the time paused halved at
+  Besaid, but each collection paused longer (about 10 ms where it was
+  about 3.5), so the worst frame with one was no better (19 to 25 ms); a
+  larger young generation (`DOTNET_GCgen0size=0x4000000`, 64 MiB) made each
+  one longer still (about 125 ms). What cost was what survived, not the
+  garbage: see "Garbage collections" below.
 - The first message box: 20 to 27 ms (its glyphs drawn the first time).
 - Snapshot frames cost 2 to 4 ms of the views' time (the decoding and the
   bones split), every 33 ms.
@@ -279,6 +298,113 @@ What remains:
   (`JobScheduleWait_Ch_CalcMiddle_Batch`), FMOD's command queue and the
   field particles (`pppDrawShapeCameraRender`), while Godot used a core
   at full speed.
+
+### Garbage collections
+
+Measured with the benchmark's collection list and `--bench-gc-trace`
+(2026-11-16): at Besaid each young collection (all of them gen1: the young
+budget is 12 MiB, the gen1 one smaller) found 40,000 to 73,000 dead
+**finalizable** objects and walked 51,000 GC handles. A finalizable object
+the collector finds dead is kept alive for its finalizer: traced, copied
+into the next generation, queued; that, not the garbage's volume, was the
+pause (10 to 28 ms; the time the collector spent marking from each kind of
+root, the stacks and the card table included, was small). They were
+Godot's C# wrappers that own native memory: a `Variant` of anything but a
+plain value (a string, a packed array, a `Basis`, an array, a dictionary,
+an object) makes a `Disposer` with a finalizer, `Godot.Collections.Array`,
+`Dictionary`, `StringName` and `NodePath` have one, and each registers a
+`WeakReference` (itself finalizable, a GC handle) in Godot's
+`DisposablesTracker`. A dozen a frame at 1,500 fps fill a young generation
+with them. The census (`--bench-gc-trace`) named the makers:
+
+- every frame: the import results and the request replies polled from the
+  extension (an `Array<Dictionary>`, a `PackedStringArray`; now asked only
+  while an import or a request is pending: `ClassicLibrary.Poll`,
+  `GameHost`), `GameState`'s reads (a new string key each,
+  four times a second in the benchmark, every frame in the checks);
+- every update: the effect mesh (four packed-array variants a surface, and
+  the empty blend-shape array and LOD dictionary Godot's
+  `AddSurfaceFromArrays` binding makes when they are left out), the light
+  `Basis` globals, the snapshot pair's dictionary and its string keys;
+- a load: the importers' walks over the scene (`GetChildren`: a new array a
+  node), the glTF extras read by string keys and meta names.
+
+`Variants` (godot/src/Variants.cs) holds the remedies: keys and names made
+once (`Variants.Key`, `Variants.Name`), the empty blend shapes and LODs
+shared (`Variants.AddSurface`), variants disposed as soon as Godot has
+copied them (`Variants.Set`, `SetGlobal`, `CallDictionary`: a disposed
+`Disposer` has no finalizer to wait for; its `WeakReference` remains).
+Code that calls into Godot every frame should go through it, or call
+methods that return plain values.
+
+What a load leaves (its leftovers, finalizable, and what it made and
+keeps) would otherwise come out in the first collections while playing:
+`GameHost.CollectWhenLost` runs two young collections right after a frame
+of 50 ms or more when 4 MiB were allocated since the last collection
+(the frame was already a hitch: a map, a battle, characters entering). The
+benchmark prints how many (`collected in lost frames`; from the start, the
+load included). In the walk to the next map the second one can show in the
+frame after the load (4 to 6 ms, after 400 ms).
+
+GC settings: `GameHost` sets `GCSettings.LatencyMode` to
+`SustainedLowLatency` (no blocking gen2 while playing, background ones
+only; it applies in every build). The project's `runtimeconfig.json`
+options (`System.GC.*` in gd-ffx.csproj) apply to exports only: `godot
+--path` starts .NET with the editor's configuration (Debug assembly, .NET
+10 by roll-forward), where only environment variables
+(`DOTNET_gcConcurrent`, `DOTNET_GCgen0size`, ...) reach the runtime. None
+was needed: with the survivors gone a young collection costs 0.4 to 2 ms
+at the default budget, and a larger budget only spaces them out.
+
+Measured (2026-11-16, headless, the machine otherwise idle; two runs each,
+"a / b"; the window's 20 s; before: `main` at e8a7c22 with the same
+benchmark; "pause" is each collection's, from `GCMemoryInfo`):
+
+Debug (`godot --path`, .NET 10):
+
+| Scene | | fps | main thread a frame | collections gen0/1/2 | paused | pause mean / max | over 4 ms | finalizable found |
+|---|---|---|---|---|---|---|---|---|
+| Besaid | before | 1,412 / 1,537 | 1.5 / 1.4 KiB | 4/4/1, 4/4/1 | 68 / 87 ms | 22.0 / 22.9, 28.3 / 44.0 ms | 3 of 3, 3 of 3 | 66,000 |
+| | after | 1,548 / 1,520 | 0.6 / 0.6 KiB | 1/0/0, 1/0/0 | 4.7 / 2.8 ms | 4.7, 2.8 ms | 1 of 1, 0 of 1 | 620 |
+| Luca | before | 1,512 / 1,576 | 1.8 / 1.9 KiB | 6/6/1, 6/6/1 | 94 / 81 ms | 18.4 / 24.1, 15.9 / 21.4 ms | 5 of 5, 5 of 5 | 48,000 |
+| | after | 1,646 / 1,564 | 1.1 / 1.2 KiB | 3/0/0, 3/0/0 | 4.4 / 4.3 ms | 1.5 / 1.6, 1.4 / 1.8 ms | 0, 0 | 1,800 |
+| battle | before | 3,285 / 3,530 | 3.1 / 3.1 KiB | 17/17/0, 18/18/0 | 169 / 161 ms | 9.9 / 15.0, 8.9 / 10.8 ms | 17 of 17, 18 of 18 | 29,000 |
+| | after | 3,647 / 3,621 | 2.4 / 2.4 KiB | 16/2/1, 16/3/1 | 13 / 10 ms | 0.8 / 2.0, 0.6 / 2.7 ms | 0, 0 | 480 |
+| Besaid walk | before | 4,445 / 4,550 | 1.1 / 1.1 KiB | 9/9/1, 9/9/1 | 174 / 173 ms | 21.6 / 24.7, 21.5 / 22.8 ms | 8 of 8, 8 of 8 | 73,000 |
+| | after | 4,826 / 4,765 | 0.4 / 0.4 KiB | 3/1/0, 3/1/0 | 7.4 / 7.3 ms | 2.5 / 3.6, 2.4 / 3.3 ms | 0, 0 | 8,900 |
+
+(Debug "after" is d22c80a, before the loader and lost-frame changes that
+followed; with them the walk's collection after the load found 7,100.)
+
+Release (the exported program, `BENCH_PROGRAM`, .NET 9 with the project's
+`runtimeconfig.json`; before: e8a7c22's code built ExportRelease into the
+same export; after: 7ca69ce):
+
+| Scene | | fps | main thread a frame | collections gen0/1/2 | paused | pause mean / max | over 4 ms | finalizable found |
+|---|---|---|---|---|---|---|---|---|
+| Besaid | before | 7,203 / 7,308 | 1.1 / 1.1 KiB | 13/12/0, 12/12/0 | 333 / 288 ms | 25.6 / 38.5, 24.0 / 33.3 ms | 13 of 13, 12 of 12 | 73,000 |
+| | after | 7,629 / 7,436 | 0.3 / 0.3 KiB | 5/0/0, 5/0/0 | 7.5 / 7.9 ms | 1.5 / 1.7, 1.6 / 2.1 ms | 0, 0 | 245 |
+| Luca | before | 6,385 / 6,004 | 1.9 / 1.7 KiB | 20/20/0, 17/17/0 | 325 / 341 ms | 16.2 / 26.4, 20.0 / 31.0 ms | 20 of 20, 17 of 17 | 62,000 |
+| | after | 8,635 / 7,662 | 0.9 / 0.9 KiB | 13/2/0, 11/2/0 | 11.1 / 10.0 ms | 0.9 / 1.6, 0.9 / 2.8 ms | 0, 0 | 815 |
+| battle | before | 13,508 / 13,357 | 3.1 / 3.1 KiB | 68/68/0, 66/66/0 | 695 / 678 ms | 10.2 / 17.4, 10.3 / 26.5 ms | all, all | 32,000 |
+| | after | 17,426 / 15,003 | 2.4 / 2.3 KiB | 67/3/0, 57/2/0 | 33 / 25 ms | 0.5 / 1.6, 0.4 / 1.0 ms | 0, 0 | 69 |
+| Besaid walk | before | 17,374 / 17,262 | 1.0 / 1.4 KiB | 29/28/0, 28/28/0 | 692 / 685 ms | 23.9 / 27.6, 24.5 / 37.0 ms | all, all | 75,000 |
+| | after | 19,218 / 18,998 | 0.3 / 0.3 KiB | 11/3/1, 12/3/0 | 13.3 / 12.8 ms | 1.0 / 2.7, 1.0 / 2.1 ms | 0, 0 | 6,200 |
+
+The frames with a collection: before 10 to 26 ms on average, up to 38 ms;
+after 0.6 to 2 ms on average, at most 3 ms (the walk's "frames with one"
+include the lost-frame collections in the next map's 360 to 500 ms load).
+
+Open: a background load while playing (the next map's or characters'
+scenes prepared on worker threads) still makes finalizable garbage:
+`ClassicMaterials` reads the glTF JSON (materials, extras, passes) through
+Godot dictionaries and arrays, a new `Variant` with a finalizer for every
+value that is not a plain number. In one of two Release walks three young
+collections during it found 20,000 to 27,000 and took 8.8 to 21 ms. The
+remedy is reading that JSON with System.Text.Json (or once into C#
+records) instead of Godot's dictionaries. The battle's HUD and menu
+allocate 2.4 KiB a frame (no finalizable objects: 0.4 to 1 ms
+collections, 3 a second at 3,600 fps, about one every 25 s at 60).
 
 ## Comparing with the original
 

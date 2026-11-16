@@ -51,11 +51,15 @@ public static class Perf
     public static Probe Start() =>
         On ? new Probe(Stopwatch.GetTimestamp(), System.GC.GetAllocatedBytesForCurrentThread()) : default;
 
+    /// <summary>Called at each probe's end when set (the benchmark's census of Godot's disposables, <see cref="GcTrace"/>).</summary>
+    public static System.Action<Section>? AfterSection { get; set; }
+
     /// <summary>A probe's end: the time and allocations since <paramref name="start"/> added to <paramref name="s"/>.</summary>
     public static void End(Section s, Probe start)
     {
         if (!On)
             return;
+        AfterSection?.Invoke(s);
         Ticks[(int)s] += Stopwatch.GetTimestamp() - start.Ticks;
         Bytes[(int)s] += System.GC.GetAllocatedBytesForCurrentThread() - start.Bytes;
     }

@@ -315,18 +315,18 @@ public partial class StateView3D : Node3D
     /// </summary>
     private static (uint Id, long Instance)? ObjectOf(Mesh mesh)
     {
-        if (!mesh.HasMeta("extras") || mesh.GetMeta("extras").AsGodotDictionary() is not { } x
-            || !x.TryGetValue("ffx_obj_id", out var id) || !x.TryGetValue("ffx_instance", out var instance))
+        if (!mesh.HasMeta(Variants.Name("extras")) || mesh.GetMeta(Variants.Name("extras")).AsGodotDictionary() is not { } x
+            || !x.TryGetValue(Variants.Key("ffx_obj_id"), out var id) || !x.TryGetValue(Variants.Key("ffx_instance"), out var instance))
             return null;
         return ((uint)id.AsInt64(), instance.AsInt64());
     }
 
     private static Morph? MorphOf(MeshInstance3D mi, Mesh mesh)
     {
-        if (!mesh.HasMeta("extras") || mesh.GetMeta("extras").AsGodotDictionary() is not { } x)
+        if (!mesh.HasMeta(Variants.Name("extras")) || mesh.GetMeta(Variants.Name("extras")).AsGodotDictionary() is not { } x)
             return null;
         long Get(string k) => x.TryGetValue(k, out var v) ? v.AsInt64() : 0;
-        if (Get("ffx_anim_ct") <= 0 || !x.ContainsKey("ffx_obj_id"))
+        if (Get("ffx_anim_ct") <= 0 || !x.ContainsKey(Variants.Key("ffx_obj_id")))
             return null;
         var (mime, flag, id) = (Get("ffx_mime_ct"), Get("ffx_dobj_flag"), (uint)Get("ffx_obj_id"));
         int targets = mesh is ArrayMesh am ? am.GetBlendShapeCount() : 0;
@@ -636,8 +636,8 @@ public partial class StateView3D : Node3D
         {
             if (x is not MeshInstance3D { Mesh: { } mesh } mi)
                 continue;
-            int id = mesh.HasMeta("extras") && mesh.GetMeta("extras").AsGodotDictionary() is { } e
-                && e.TryGetValue("ffx_model_id", out var v) ? v.AsInt32() : k;
+            int id = mesh.HasMeta(Variants.Name("extras")) && mesh.GetMeta(Variants.Name("extras")).AsGodotDictionary() is { } e
+                && e.TryGetValue(Variants.Key("ffx_model_id"), out var v) ? v.AsInt32() : k;
             k++;
             Transform3D t = Transform3D.Identity;
             for (Node? p = mi.GetParent(); p != null && p != model; p = p.GetParent())

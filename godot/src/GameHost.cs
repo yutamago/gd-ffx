@@ -168,11 +168,48 @@ public partial class GameHost : Node
         Game.SetWindow(size, DisplayServer.ScreenGetSize(), DisplayServer.WindowGetPosition());
     }
 
+    /// <summary>A frame this long (seconds) is already a hitch (a load): a collection added to it is not seen.</summary>
+    private const double LostFrame = 0.05;
+    /// <summary>The garbage (bytes allocated since the last collection) worth collecting then.</summary>
+    private const long LostFrameGarbage = 4 << 20;
+    private int _gen0Seen = -1;
+    private long _allocatedAtCollection;
+
+    /// <summary>The collections done in frames already lost (<see cref="CollectWhenLost"/>).</summary>
+    public static int LostFrameCollections { get; private set; }
+
+    /// <summary>
+    /// Young collections right after a frame that was already a hitch, when there is garbage: a
+    /// load's leftovers (the importers' Godot dictionaries and variants, finalizable) and its
+    /// survivors otherwise make the first collections while playing long ones (docs/running.md,
+    /// "Benchmark").
+    /// </summary>
+    private void CollectWhenLost(double delta)
+    {
+        var gen0 = System.GC.CollectionCount(0);
+        if (gen0 != _gen0Seen)
+        {
+            _gen0Seen = gen0;
+            _allocatedAtCollection = System.GC.GetTotalAllocatedBytes();
+            return;
+        }
+        if (delta < LostFrame || System.GC.GetTotalAllocatedBytes() - _allocatedAtCollection < LostFrameGarbage)
+            return;
+        // twice: the load's survivors (its scene, kept) go on to gen2 now; left in gen1, the next
+        // young collection while playing would copy them there (2 to 3 MiB: 5 to 9 ms)
+        System.GC.Collect(1, System.GCCollectionMode.Forced, blocking: true, compacting: false);
+        System.GC.Collect(1, System.GCCollectionMode.Forced, blocking: true, compacting: false);
+        LostFrameCollections++;
+    }
+
     private int _devsave;
+    /// <summary>The requests (developer save, battle) not answered yet.</summary>
+    private int _requests;
     private (int Field, int Group, int Formation)? _battle;
 
     public override void _Process(double delta)
     {
+        CollectWhenLost(delta);
         // the worker threads' texture asks (answered "none" without a game)
         TextureFetcher.Poll(Game);
         if (Game == null)
@@ -185,19 +222,26 @@ public partial class GameHost : Node
         // the developer save once an event runs (the opening is the first)
         if (_devsave > 0 && View.Current is { } s && s.World.Event.Length > 0 && s.Update > 30)
         {
-            Game.RequestDevSave(_devsave);
+            if (Game.RequestDevSave(_devsave))
+                _requests++;
             GD.Print($"ffx: developer save {_devsave} asked");
             _devsave = 0;
         }
         if (_battle is { } b && _devsave == 0 && View.Current is { World.PlayerControl: true, World.Battle: false } f2
             && f2.Update > 60)
         {
-            Game.RequestBattle(b.Field, b.Group, b.Formation);
+            if (Game.RequestBattle(b.Field, b.Group, b.Formation))
+                _requests++;
             GD.Print($"ffx: battle {b.Field},{b.Group},{b.Formation} asked");
             _battle = null;
         }
-        foreach (var r in Game.RequestResults())
-            GD.Print($"ffx: request: {r}");
+        // asked only while a request is open (a string array each call: finalizable, see ClassicLibrary.Poll)
+        if (_requests > 0)
+            foreach (var r in Game.RequestResults())
+            {
+                GD.Print($"ffx: request: {r}");
+                _requests--;
+            }
         Perf.End(Perf.Section.Host, t1);
     }
 

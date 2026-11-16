@@ -370,8 +370,9 @@ void fragment() {
         Vector3 Dir(int i) => i < l.Lights.Count ? Turn(l.Lights[i]) : Vector3.Zero;
         Vector3 Col(int i) => i < l.Lights.Count ? l.Lights[i].Colour * l.Lights[i].Level : Vector3.Zero;
         // Basis(x, y, z) takes columns
-        RenderingServer.GlobalShaderParameterSet(G_ffx_light_dirs, new Basis(Dir(0), Dir(1), Dir(2)));
-        RenderingServer.GlobalShaderParameterSet(G_ffx_light_colours, new Basis(Col(0), Col(1), Col(2)));
+        // (a Basis variant holds native memory: disposed at once, not left to a finalizer)
+        Variants.SetGlobal(G_ffx_light_dirs, new Basis(Dir(0), Dir(1), Dir(2)));
+        Variants.SetGlobal(G_ffx_light_colours, new Basis(Col(0), Col(1), Col(2)));
         RenderingServer.GlobalShaderParameterSet(G_ffx_light_sign, LightSign);
     }
 
@@ -415,20 +416,20 @@ void fragment() {
     /// </summary>
     private static Dictionary? MapPass(Dictionary extras)
     {
-        if (!extras.TryGetValue("ffx_passes", out var pv))
+        if (!extras.TryGetValue(Variants.Key("ffx_passes"), out var pv))
             return null;
         var passes = pv.AsGodotArray();
         foreach (var want in new[] { "OpaqueNoMSAA", "TransparentNoMSAA", "postTransparent", "Opaque", "Transparent" })
             foreach (var x in passes)
-                if (x.AsGodotDictionary() is { } d && d.TryGetValue("pass", out var n) && n.AsString() == want)
+                if (x.AsGodotDictionary() is { } d && d.TryGetValue(Variants.Key("pass"), out var n) && n.AsString() == want)
                     return d;
         return passes.Count > 0 ? passes[0].AsGodotDictionary() : null;
     }
 
     /// <summary>Whether any pass of the variant has alpha to coverage on (the UATFOPQ kind).</summary>
     private static bool AnyAlphaToCoverage(Dictionary extras) =>
-        extras.TryGetValue("ffx_passes", out var pv)
-        && pv.AsGodotArray().Any(x => x.AsGodotDictionary() is { } d && d.TryGetValue("alpha_to_coverage", out var a) && a.AsBool());
+        extras.TryGetValue(Variants.Key("ffx_passes"), out var pv)
+        && pv.AsGodotArray().Any(x => x.AsGodotDictionary() is { } d && d.TryGetValue(Variants.Key("alpha_to_coverage"), out var a) && a.AsBool());
 
     /// <summary>
     /// Godot's render modes for a pass's D3D11 states: the cull mode (the game's FRONT, with
@@ -437,8 +438,8 @@ void fragment() {
     /// </summary>
     private static (string Modes, bool Blends) PassModes(Dictionary? pass, bool forceBlend)
     {
-        string Str(Dictionary d, string k, string def) => d.TryGetValue(k, out var v) && v.VariantType == Variant.Type.String ? v.AsString() : def;
-        bool Bool(Dictionary d, string k, bool def) => d.TryGetValue(k, out var v) && v.VariantType == Variant.Type.Bool ? v.AsBool() : def;
+        string Str(Dictionary d, string k, string def) => d.TryGetValue(Variants.Key(k), out var v) && v.VariantType == Variant.Type.String ? v.AsString() : def;
+        bool Bool(Dictionary d, string k, bool def) => d.TryGetValue(Variants.Key(k), out var v) && v.VariantType == Variant.Type.Bool ? v.AsBool() : def;
         var modes = new List<string> { "unshaded" };
         if (pass == null)
         {
@@ -455,7 +456,7 @@ void fragment() {
             _ => ccw ? "cull_back" : "cull_front",
         });
         bool blends = forceBlend;
-        if (pass.TryGetValue("blend", out var bv) && bv.VariantType == Variant.Type.Dictionary)
+        if (pass.TryGetValue(Variants.Key("blend"), out var bv) && bv.VariantType == Variant.Type.Dictionary)
         {
             var b = bv.AsGodotDictionary();
             var (src, dst, op) = (Str(b, "src", ""), Str(b, "dst", ""), Str(b, "op", "ADD"));
@@ -480,11 +481,11 @@ void fragment() {
 
     /// <summary>Whether the pass's pixel program reads constant <paramref name="name"/> (the import's <c>ps_reads</c>); <paramref name="unknown"/> without the list.</summary>
     private static bool Reads(Dictionary? pass, string name, bool unknown) =>
-        pass != null && pass.TryGetValue("ps_reads", out var r) ? r.AsGodotArray().Any(x => x.AsString() == name) : unknown;
+        pass != null && pass.TryGetValue(Variants.Key("ps_reads"), out var r) ? r.AsGodotArray().Any(x => x.AsString() == name) : unknown;
 
     /// <summary>The glTF set a vertex program input reads (the import's <c>ffx_texcoords</c>, <c>ffx_colors</c>).</summary>
     private static int InputSet(Dictionary extras, string key, string input, int fallback) =>
-        extras.TryGetValue(key, out var v) && v.AsGodotDictionary().TryGetValue(input, out var k) ? k.AsInt32() : fallback;
+        extras.TryGetValue(Variants.Key(key), out var v) && v.AsGodotDictionary().TryGetValue(Variants.Key(input), out var k) ? k.AsInt32() : fallback;
 
     /// <summary>Whether a material draws with the per-instance morph weight (<c>ffx_morph</c>) or UV offset (<c>ffx_uv_offset</c>).</summary>
     public static (bool Weight, bool UvOffset) Morphs(Material? m)
@@ -500,7 +501,7 @@ void fragment() {
 
     /// <summary>The variant's switches (the import's <c>extras.ffx_switches</c>).</summary>
     private static bool Switch(Dictionary extras, string name) =>
-        extras.TryGetValue("ffx_switches", out var sv) && sv.AsGodotDictionary().ContainsKey(name);
+        extras.TryGetValue(Variants.Key("ffx_switches"), out var sv) && sv.AsGodotDictionary().ContainsKey(Variants.Key(name));
     private static readonly Shader[] LayerShaders =
     [
         MakeShader("unshaded, cull_disabled, blend_mix, depth_draw_always, shadows_disabled", LayerBody),
@@ -563,9 +564,9 @@ void fragment() {
                 continue;
             for (int i = 0; i < mi.Mesh.GetSurfaceCount(); i++)
                 if ((mi.GetSurfaceOverrideMaterial(i) ?? mi.Mesh.SurfaceGetMaterial(i)) is ShaderMaterial sm
-                    && IsLayer(sm) && sm.HasMeta("ffx_effect"))
+                    && IsLayer(sm) && sm.HasMeta(Variants.Name("ffx_effect")))
                 {
-                    var shader = LayerShader(sm.GetMeta("ffx_effect").AsString());
+                    var shader = LayerShader(sm.GetMeta(Variants.Name("ffx_effect")).AsString());
                     if (sm.Shader != shader)
                     {
                         sm.Shader = shader;
@@ -597,7 +598,7 @@ void fragment() {
     public static void Apply(GltfState state, Node root, string? texDir = null)
     {
         var json = state.Json;
-        if (!json.TryGetValue("materials", out var mv))
+        if (!json.TryGetValue(Variants.Key("materials"), out var mv))
             return;
         var mats = mv.AsGodotArray();
         var godotMats = state.GetMaterials();
@@ -610,22 +611,22 @@ void fragment() {
             var m = mats[i].AsGodotDictionary();
             if (godotMats[i] is not BaseMaterial3D std)
                 continue;
-            var extras = m.TryGetValue("extras", out var ev) ? ev.AsGodotDictionary() : new Dictionary();
-            var p = extras.TryGetValue("ffx_parameters", out var pv) ? pv.AsGodotDictionary() : new Dictionary();
-            var effect = extras.TryGetValue("ffx_effect", out var fx) ? fx.AsString().ToLowerInvariant() : "";
+            var extras = m.TryGetValue(Variants.Key("extras"), out var ev) ? ev.AsGodotDictionary() : new Dictionary();
+            var p = extras.TryGetValue(Variants.Key("ffx_parameters"), out var pv) ? pv.AsGodotDictionary() : new Dictionary();
+            var effect = extras.TryGetValue(Variants.Key("ffx_effect"), out var fx) ? fx.AsString().ToLowerInvariant() : "";
             var colour = Floats(p, "MaterialColour", [1, 1, 1, 1]);
             var threshold = Floats(p, "AlphaThreshold", [0])[0];
             ShaderMaterial s;
             Shader? refractionSub = null;
             if (effect.Contains("prerendered"))
             {
-                s = new ShaderMaterial { Shader = LayerShader(extras["ffx_effect"].AsString()) };
-                s.SetMeta("ffx_effect", extras["ffx_effect"].AsString());
+                s = new ShaderMaterial { Shader = LayerShader(extras[Variants.Key("ffx_effect")].AsString()) };
+                s.SetMeta("ffx_effect", extras[Variants.Key("ffx_effect")].AsString());
                 LayerPass(s, true);
                 lock (MadeLock)
                     Made.Layer++;
             }
-            else if (effect.Contains("chrlit") || (effect.Length == 0 && p.ContainsKey("VertexColorOrigin")))
+            else if (effect.Contains("chrlit") || (effect.Length == 0 && p.ContainsKey(Variants.Key("VertexColorOrigin"))))
             {
                 s = new ShaderMaterial { Shader = Char };
                 s.SetShaderParameter("vertex_colour", ToColor(Floats(p, "VertexColorOrigin", [1, 1, 1, 1])));
@@ -638,7 +639,7 @@ void fragment() {
                 var water = effect.Contains("water") || effect.Contains("wave");
                 var pass = MapPass(extras);
                 bool known = pass != null;
-                var masked = m.TryGetValue("alphaMode", out var am) && am.AsString() == "MASK";
+                var masked = m.TryGetValue(Variants.Key("alphaMode"), out var am) && am.AsString() == "MASK";
                 var defines = new List<string>();
                 // without the import's states (an older cache): the old guesses
                 bool blendSwitch = known ? Switch(extras, "ALPHA_ENABLED") : water;
@@ -684,7 +685,7 @@ void fragment() {
                     if (Switch(extras, "UV_SCROLL")) defines.Add("UV_SCROLL");
                     if (InputSet(extras, "ffx_texcoords", "TEXCOORD0", 0) == 1) defines.Add("UV0_SET1");
                     // the sampler's address modes (the import's ffx_wrap): Godot has one for both axes
-                    if (extras.TryGetValue("ffx_wrap", out var wv) && wv.AsGodotDictionary().TryGetValue("TextureSampler", out var tw)
+                    if (extras.TryGetValue(Variants.Key("ffx_wrap"), out var wv) && wv.AsGodotDictionary().TryGetValue(Variants.Key("TextureSampler"), out var tw)
                         && tw.AsGodotArray().Any(x => x.AsString() == "CLAMP" || x.AsString() == "BORDER"))
                         defines.Add("TEX_CLAMP");
                     if (blends && !modes.Contains("blend_")) modes += ", blend_mix";
@@ -736,10 +737,10 @@ void fragment() {
         // m_DObjKind 1 (sky domes, ...): the game puts the bounds in the first class at map init
         static (long Order, bool First) Order(Mesh m)
         {
-            if (!m.HasMeta("extras") || m.GetMeta("extras").AsGodotDictionary() is not { } x)
+            if (!m.HasMeta(Variants.Name("extras")) || m.GetMeta(Variants.Name("extras")).AsGodotDictionary() is not { } x)
                 return (0, false);
-            long ro = x.TryGetValue("ffx_render_order", out var o) ? o.AsInt64() : 0;
-            bool first = x.TryGetValue("ffx_dobj_kind", out var k) && k.AsInt64() == 1;
+            long ro = x.TryGetValue(Variants.Key("ffx_render_order"), out var o) ? o.AsInt64() : 0;
+            bool first = x.TryGetValue(Variants.Key("ffx_dobj_kind"), out var k) && k.AsInt64() == 1;
             return (ro, first);
         }
         static (int, long, long) Key((long Order, bool First) r) =>
@@ -749,8 +750,9 @@ void fragment() {
         {
             if (n is MeshInstance3D mi && mi.Mesh != null)
                 placed.Add((mi, Order(mi.Mesh)));
-            foreach (var c in n.GetChildren())
-                Walk(c);
+            // by index: GetChildren makes a Godot array (finalizable) a node
+            for (int i = 0, k = n.GetChildCount(); i < k; i++)
+                Walk(n.GetChild(i));
         }
         Walk(root);
         var keys = placed.Select(x => Key(x.Order)).Distinct().Order().ToList();
@@ -865,7 +867,7 @@ void fragment() {
     {
         float Set(string input, float fallback)
         {
-            if (extras.TryGetValue("ffx_texcoords", out var tc) && tc.AsGodotDictionary().TryGetValue(input, out var k))
+            if (extras.TryGetValue(Variants.Key("ffx_texcoords"), out var tc) && tc.AsGodotDictionary().TryGetValue(input, out var k))
                 return Math.Clamp(k.AsInt32(), 0, 1);
             return fallback;
         }
@@ -875,7 +877,7 @@ void fragment() {
         s.SetShaderParameter("scroll2", Scroll("ScrollSpeed_nml2"));
         s.SetShaderParameter("scroll_tex0", Scroll("ScrollSpeed_tex0"));
         s.SetShaderParameter("scroll_tex1", Scroll("ScrollSpeed_tex1"));
-        if (!extras.TryGetValue("ffx_textures", out var tv))
+        if (!extras.TryGetValue(Variants.Key("ffx_textures"), out var tv))
             return;
         var tex = tv.AsGodotDictionary();
         string? Path(string sampler) => tex.TryGetValue(sampler, out var v) ? v.AsString() : null;
@@ -908,7 +910,7 @@ void fragment() {
                 if (m != null && replace.TryGetValue(m, out var r))
                     mi.SetSurfaceOverrideMaterial(s, r);
             }
-        foreach (var c in n.GetChildren())
-            Swap(c, replace);
+        for (int i = 0, k = n.GetChildCount(); i < k; i++)
+            Swap(n.GetChild(i), replace);
     }
 }

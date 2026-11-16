@@ -19,6 +19,8 @@ public sealed class ClassicLibrary
     private readonly Dictionary<(string Kind, string Name), string> _paths = new();
     private readonly Dictionary<(string Kind, string Name), string> _errors = new();
     private readonly HashSet<(string Kind, string Name)> _asked = new();
+    /// <summary>The imports asked for and not finished yet: <see cref="Poll"/> asks the extension only while there are some.</summary>
+    private readonly HashSet<(string Kind, string Name)> _pending = new();
 
     public bool Open { get; }
 
@@ -82,12 +84,19 @@ public sealed class ClassicLibrary
         return $"outside gd-ffx's user data folder and without {Marker}";
     }
 
-    /// <summary>Picks up the finished imports (once a frame).</summary>
+    /// <summary>
+    /// Picks up the finished imports (once a frame, while any is pending: the extension's answer is
+    /// a Godot array, and each such wrapper and variant is finalizable, so it outlives its first
+    /// collection; a few a frame made every young collection long: docs/running.md, "Benchmark").
+    /// </summary>
     public void Poll()
     {
+        if (_pending.Count == 0)
+            return;
         foreach (var d in _game.ClassicFinished())
         {
             var key = (d["kind"].AsString(), d["name"].AsString());
+            _pending.Remove(key);
             var path = d["path"].AsString();
             if (path.Length > 0)
                 _paths[key] = path;
@@ -107,8 +116,8 @@ public sealed class ClassicLibrary
         var key = (kind, name);
         if (_paths.TryGetValue(key, out var p))
             return p;
-        if (Open && !_errors.ContainsKey(key) && _asked.Add(key))
-            _game.ClassicRequest(kind, name);
+        if (Open && !_errors.ContainsKey(key) && _asked.Add(key) && _game.ClassicRequest(kind, name))
+            _pending.Add(key);
         return null;
     }
 

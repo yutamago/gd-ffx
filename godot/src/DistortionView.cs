@@ -142,12 +142,13 @@ void fragment() {
         }
         var arrays = new Godot.Collections.Array();
         arrays.Resize((int)Mesh.ArrayType.Max);
-        arrays[(int)Mesh.ArrayType.Vertex] = pos;
-        arrays[(int)Mesh.ArrayType.TexUV] = uv;
-        arrays[(int)Mesh.ArrayType.Color] = col;
-        arrays[(int)Mesh.ArrayType.Index] = indices;
+        Variants.Set(arrays, (int)Mesh.ArrayType.Vertex, pos);
+        Variants.Set(arrays, (int)Mesh.ArrayType.TexUV, uv);
+        Variants.Set(arrays, (int)Mesh.ArrayType.Color, col);
+        Variants.Set(arrays, (int)Mesh.ArrayType.Index, indices);
         var mesh = new ArrayMesh();
-        mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays);
+        Variants.AddSurface(mesh, Mesh.PrimitiveType.Triangles, arrays);
+        arrays.Dispose();
         _grid.Mesh = mesh;
         _grid.Visible = true;
         Shown = (true, n, alpha);
