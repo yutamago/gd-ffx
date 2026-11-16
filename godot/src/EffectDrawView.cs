@@ -11,7 +11,8 @@ namespace GdFfx;
 /// one <see cref="ArrayMesh"/>, a surface per (texture, blend); unshaded, two-sided, depth
 /// tested, no depth write, the vertex colour doubled (0.5 is the PS2's 0x80, which the game's
 /// VFX shaders double). Blend from the flags: bit 0x10 subtracts (0x18), else bit 0x2 adds
-/// (0xa, 0x2), else alpha (0x8, 0x9). Textures come from the player's archive by the name the
+/// (0xa, 0x2; as (src alpha, one): (one, one), the spec's other source factor, burns the
+/// save sphere's sparkles far brighter than the original), else alpha (0x8, 0x9). Textures come from the player's archive by the name the
 /// game holds. Not drawn yet: the draw events (copy buffer, fades, character draws), the
 /// other VFX lists.
 /// </summary>
