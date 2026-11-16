@@ -109,6 +109,21 @@ WSLg shows Godot's window on the Windows desktop. Use the OpenGL renderer
 stays white. Without a GPU driver for Mesa in WSL both run on the CPU
 (llvmpipe), so the frame rate is modest; the Windows build is the fast way.
 
+## Comparing on the GPU (Windows, from WSL)
+
+```bash
+FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/compare-shot-win.sh REF.bmp OUT_DIR [devsave] [d3d12|vulkan]
+```
+
+Runs the Windows export (`tools/export.sh windows` first) on the machine's
+GPU with Forward+, its window placed off the desktop (it renders but is not
+seen; a taskbar entry may show while it runs), and scores its picture
+against the reference like `tools/compare-shot.sh`. On 2026-11-17 Besaid
+scored 47.6 (D3D12) and 47.7 (Vulkan) against the original, where the
+Compatibility renderer under Xvfb scores 13.9: the classic shaders compute
+in gamma space (as the game does) and Forward+ encodes their output to sRGB
+again, so the picture is washed out.
+
 ## Sweeping the developer saves
 
 ```bash
