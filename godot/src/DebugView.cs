@@ -586,7 +586,8 @@ public sealed class BattleTest : ITest
         {
             Tap(false);
             return Done(true, $"{_first}; {hud.Popped} damage number(s) popped; {effects?.Started ?? 0} effect(s) started "
-                + $"({effects?.RemadeStarted ?? 0} remade as {RemadeId})");
+                + $"({effects?.RemadeStarted ?? 0} remade as {RemadeId}); effect draws by pass [{string.Join(", ", EffectDrawView.PassDraws)}], "
+                + $"{EffectDrawView.FadeFrames} frame(s) with a screen fade");
         }
         _tap += delta;
         if (_tap > 0.25)

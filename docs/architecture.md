@@ -240,8 +240,9 @@ pedestal). Its glowing orb is an effect, not part of the model.
 
 - **The game's own effects** (`EffectDrawView`): ffx-rust's effect-draw
   capture (`ffx_host::vfx`, switched on at boot; `FFX_NO_VFX` leaves it
-  off) records every draw of `PhyreScene_DrawMostVFX`: positions in render
-  space, colours, UVs, indices, the texture name and the VSP flags. The
+  off; FXDR version 3) records every draw of the scene's VFX lists with its
+  pass: positions in render space, colours, UVs, indices, the texture name
+  and the VSP flags. The
   extension hands the frame of the shown snapshot's update to C#
   (`FfxGame.effect_draws`, the `FXDR` encoding), which builds one mesh a
   frame, a surface per (texture, blend): unshaded, two-sided, no depth
@@ -250,9 +251,24 @@ pedestal). Its glowing orb is an effect, not part of the model.
   examples 0x18, 0xa/0x2, 0x8/0x9). Textures by the name the game holds
   (`FfxGame.runtime_texture`). At Besaid: 30 draws, 28 textured, 6
   textures; the save sphere's orb (field program 15) and the shore's sea
-  strips (which gave the shallow water its cyan) come from here. Not drawn
-  yet: the draw events (fades, character draws) and the other VFX lists; the orb's sparkles show a pink the original does not
-  (the blend mapping is from examples, effects-draw.md's open question 2).
+  strips (which gave the shallow water its cyan) come from here. Passes
+  drawn: the main pass, the DTT pass (its `FrameBuffer` draws sample the
+  picture so far: Godot's screen texture) and the after-post pass, all in
+  the 3D scene. Not drawn: the UI 2D pass (its camera, the scene's second,
+  is not captured; only while a scene or movie fades) and the list no pass
+  draws. The battle self-check reports the draws seen per pass. The orb's
+  sparkles show a pink the original does not (the blend mapping is from
+  examples, effects-draw.md's open question 2).
+
+- **The draw events** (the same capture): the screen fade (kind 2) is
+  drawn by `ScreenFadeView`, a full-screen quad of the event's colour
+  (bytes / 128) blended as it says (2 additive, 0x10 subtract, else
+  alpha), under the distortion as in the game; the battle's fade-in uses
+  it (the battle self-check counts its frames, 36 in the attack). The
+  others act on what gd-ffx draws its own way and draw nothing here: copy
+  buffer (kind 1), PS2 lighting and specular (3, 4: seen on Valefor's
+  overdrive), a character drawn between the effects (5), a depth-only
+  pre-pass (6), characters with the event camera (0).
 
 - **Effects as events** (`EffectView`, under the 3D view): each effect
   record the game starts (`Effects.running`, keyed by slot) plays where the

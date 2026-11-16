@@ -1,4 +1,4 @@
-[gd_scene load_steps=10 format=3]
+[gd_scene load_steps=11 format=3]
 
 [ext_resource type="Script" path="res://src/StateView3D.cs" id="1_view"]
 [ext_resource type="Script" path="res://src/DebugView.cs" id="2_debug"]
@@ -9,6 +9,7 @@
 [ext_resource type="Script" path="res://src/FieldMenuView.cs" id="7_menu"]
 [ext_resource type="Script" path="res://src/SphereGridView.cs" id="8_grid"]
 [ext_resource type="Script" path="res://src/DistortionView.cs" id="9_dist"]
+[ext_resource type="Script" path="res://src/ScreenFadeView.cs" id="10_fade"]
 
 [node name="Main" type="Node"]
 
@@ -16,6 +17,16 @@
 script = ExtResource("1_view")
 
 [node name="Overlay" type="CanvasLayer" parent="."]
+
+[node name="ScreenFadeView" type="Control" parent="Overlay"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("10_fade")
 
 [node name="DistortionView" type="Control" parent="Overlay"]
 layout_mode = 3

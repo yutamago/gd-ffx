@@ -5,21 +5,57 @@ namespace GdFfx;
 
 /// <summary>
 /// G3: the game's own effects, drawn from the geometry the game builds for them each frame
-/// (ffx-rust's effect-draw capture, <c>ffx_host::vfx</c>; docs/state-api.md "Effect draws" there):
-/// every draw of <c>PhyreScene_DrawMostVFX</c> with its positions (render space), colours, UVs,
-/// indices, texture and VSP flags, for the frame of the shown snapshot's update. Each frame is
+/// (ffx-rust's effect-draw capture, <c>ffx_host::vfx</c>, FXDR version 3; docs/state-api.md
+/// "Effect draws" there): every draw of the VFX lists with its pass, positions (render space),
+/// colours, UVs, indices, texture and VSP flags, for the frame of the shown snapshot's update.
+/// Drawn: the main pass (<c>DrawMostVFX</c>), the DTT pass (its <c>FrameBuffer</c> draws sample
+/// the picture: the screen texture here) and the after-post pass, all in the 3D scene; not the
+/// UI 2D pass (it uses the scene's second camera, which the capture does not carry) nor the
+/// list no pass draws. Of the draw events, the screen fade (kind 2) is drawn: a full-screen
+/// colour over the picture (<see cref="Fade"/>, in the overlay); the others act on buffers or
+/// characters gd-ffx draws its own way (copy buffer, PS2 lighting, specular, character draws).
+/// Each frame is
 /// one <see cref="ArrayMesh"/>, a surface per (texture, blend); unshaded, two-sided, depth
 /// tested, no depth write, the vertex colour doubled (0.5 is the PS2's 0x80, which the game's
 /// VFX shaders double). Blend from the flags: bit 0x10 subtracts (0x18), else bit 0x2 adds
 /// (0xa, 0x2; as (src alpha, one): (one, one), the spec's other source factor, burns the
 /// save sphere's sparkles far brighter than the original), else alpha (0x8, 0x9). Textures come from the player's archive by the name the
-/// game holds. Not drawn yet: the draw events (copy buffer, fades, character draws), the
-/// other VFX lists.
+/// game holds.
 /// </summary>
 public partial class EffectDrawView : MeshInstance3D
 {
     /// <summary>One decoded draw.</summary>
-    public sealed record Draw(ulong Key, uint Flags, string Texture, Vector3[] Positions, Color[] Colours, Vector2[] Uvs, int[] Indices);
+    public sealed record Draw(ulong Key, uint Flags, string Texture, Vector3[] Positions, Color[] Colours, Vector2[] Uvs, int[] Indices, int Pass = 0);
+
+    /// <summary>A draw event (FXDR version 3): kind, place, the two words and the actor slot (-1 none).</summary>
+    public sealed record Event(uint Kind, uint At, uint Word0, uint Word1, int Actor);
+
+    /// <summary>The passes: main, DTT, after post-processing, UI 2D, undrawn (ffx-rust's <c>vfx::Pass</c>).</summary>
+    public const int PassMain = 0, PassDtt = 1, PassAfterPost = 2, PassUi2d = 3, PassUndrawn = 4;
+
+    /// <summary>Whether this frontend draws a pass.</summary>
+    public static bool Drawn(int pass) => pass is PassMain or PassDtt or PassAfterPost;
+
+    /// <summary>The screen fade of a frame (event kind 2): RGBA (1.0 the PS2's 0x80) and blend (2 sub, 1 add, 0 alpha).</summary>
+    public readonly record struct ScreenFade(Color Colour, int Blend);
+
+    /// <summary>The screen fade of the last event of kind 2 in a frame (null none).</summary>
+    public static ScreenFade? Fade(IEnumerable<Event> events)
+    {
+        ScreenFade? f = null;
+        foreach (var e in events)
+            if (e.Kind == 2)
+                f = new ScreenFade(new Color((e.Word0 & 0xff) / 128f, (e.Word0 >> 8 & 0xff) / 128f,
+                    (e.Word0 >> 16 & 0xff) / 128f, (e.Word0 >> 24) / 128f), Blend(e.Word1));
+        return f;
+    }
+
+    /// <summary>The events of the last decoded frame.</summary>
+    public static List<Event> LastEvents { get; private set; } = new();
+
+    /// <summary>Since start: frames with a screen fade, and draws seen per pass (for tests).</summary>
+    public static int FadeFrames { get; private set; }
+    public static int[] PassDraws { get; } = new int[5];
 
     /// <summary>Draws in the last frame shown, and how many had a texture (for tests).</summary>
     public (int Draws, int Textured, uint Update) Shown { get; private set; }
@@ -40,9 +76,11 @@ public partial class EffectDrawView : MeshInstance3D
     {
         Code = "shader_type spatial;\nrender_mode unshaded, cull_disabled, depth_draw_never, " + blend + ";\n" + @"
 uniform sampler2D tex : filter_linear_mipmap, repeat_enable;
+uniform sampler2D screen : hint_screen_texture, filter_linear;
 uniform bool textured = true;
+uniform bool frame_buffer = false;
 void fragment() {
-	vec4 t = textured ? texture(tex, UV) : vec4(1.0);
+	vec4 t = frame_buffer ? vec4(texture(screen, UV).rgb, 1.0) : textured ? texture(tex, UV) : vec4(1.0);
 	vec4 c = t * COLOR * 2.0;
 	ALBEDO = clamp(c.rgb, 0.0, 1.0);
 	ALPHA = clamp(c.a, 0.0, 1.0);
@@ -73,14 +111,26 @@ void fragment() {
         uint U32() { var v = System.BitConverter.ToUInt32(b, at); at += 4; return v; }
         float F() { var v = System.BitConverter.ToSingle(b, at); at += 4; return v; }
         var version = U16();
-        if (version is not (1 or 2))
+        if (version is not (1 or 2 or 3))
             return null;
         U16();
         var update = U32();
         U32(); // unresolved
         var events = U32();
         var count = U32();
-        at += (int)(16 * events);
+        var evs = new List<Event>();
+        for (int e = 0; e < events; e++)
+        {
+            uint kind = U32(), place = U32(), w0 = U32(), w1 = U32();
+            int actor = -1;
+            if (version >= 3)
+            {
+                actor = (short)U16();
+                U16();
+            }
+            evs.Add(new Event(kind, place, w0, w1, actor));
+        }
+        LastEvents = evs;
         var draws = new List<Draw>((int)count);
         for (int d = 0; d < count; d++)
         {
@@ -88,7 +138,9 @@ void fragment() {
             ulong lo = U32(), hi = U32();
             U32(); // geometry
             var flags = U32();
-            U16(); at += 2; // segment, pooled, pad
+            U16(); at += 1; // segment, pooled
+            int pass = version >= 3 ? b[at] : PassMain;
+            at += 1;
             at += 48; // world (positions are already placed)
             int tl = U16();
             var texture = System.Text.Encoding.UTF8.GetString(b, at, tl);
@@ -102,7 +154,7 @@ void fragment() {
             for (int i = 0; i < v; i++) uv[i] = new Vector2(F(), F());
             var idx = new int[n];
             for (int i = 0; i < n; i++) idx[i] = U16();
-            draws.Add(new Draw(hi << 32 | lo, flags, texture, pos, col, uv, idx));
+            draws.Add(new Draw(hi << 32 | lo, flags, texture, pos, col, uv, idx, pass));
         }
         LastDistortion = null;
         if (version >= 2 && at + 16 <= b.Length)
@@ -121,6 +173,9 @@ void fragment() {
         }
         return (update, draws);
     }
+
+    /// <summary>The texture name of draws that sample the frame copy (the DTT pass).</summary>
+    public const string FrameBufferName = "FrameBuffer";
 
     private Texture2D? Tex(FfxGame game, string name)
     {
@@ -146,6 +201,13 @@ void fragment() {
         if (_materials.TryGetValue((texture, blend), out var m))
             return m;
         m = new ShaderMaterial { Shader = Shaders[blend] };
+        // the DTT pass's draws sample the frame copy (the picture so far)
+        if (texture == FrameBufferName)
+        {
+            m.SetShaderParameter("frame_buffer", true);
+            _materials[(texture, blend)] = m;
+            return m;
+        }
         var t = Tex(game, texture);
         m.SetShaderParameter("textured", t != null);
         if (t != null)
@@ -171,6 +233,12 @@ void fragment() {
             else
                 dv.Show(true, d.Positions, d.Uvs, d.Colours, d.Indices, d.CopyAlpha);
         }
+        // the screen fade event, over the picture (ScreenFadeView, in the overlay)
+        var fade = frame == null ? null : Fade(LastEvents);
+        if (fade != null)
+            FadeFrames++;
+        if (GetTree().Root.FindChild("ScreenFadeView", true, false) is ScreenFadeView fv)
+            fv.Show(fade);
         if (frame == null || frame.Value.Draws.Count == 0)
         {
             Mesh = null;
@@ -183,7 +251,9 @@ void fragment() {
         var index = new Dictionary<(string, int), int>();
         foreach (var d in frame.Value.Draws)
         {
-            if (d.Indices.Length == 0 || d.Positions.Length == 0)
+            if (d.Pass is >= 0 and < 5)
+                PassDraws[d.Pass]++;
+            if (d.Indices.Length == 0 || d.Positions.Length == 0 || !Drawn(d.Pass))
                 continue;
             var k = (d.Texture, Blend(d.Flags));
             if (!index.TryGetValue(k, out var g))
@@ -218,7 +288,7 @@ void fragment() {
             mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays);
             var mat = Material(host.Game, tex, blend);
             mesh.SurfaceSetMaterial(mesh.GetSurfaceCount() - 1, mat);
-            if (_textures.TryGetValue(tex, out var t) && t != null)
+            if (tex == FrameBufferName || _textures.TryGetValue(tex, out var t) && t != null)
             {
                 textured += list.Count;
                 Textures.Add(tex);
