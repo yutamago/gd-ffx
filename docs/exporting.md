@@ -179,10 +179,11 @@ The Deck runs the Linux export (SteamOS is Linux x86_64). To play there:
 The preset is checked headless (`SteamDeck=1 ... --selftest-besaid`: "ffx:
 quality deck", then the check passes). Not run on a Deck: no Deck here.
 
-## macOS (not done)
+## macOS (left out for now)
 
-There is no macOS toolchain on the development machine. A macOS export would
-need:
+G5 ships for Windows, Linux and the Steam Deck; macOS was left out on
+2026-11-16 (there is no macOS toolchain on the development machine). A
+macOS export would need:
 
 - the extension built for macOS: `aarch64-apple-darwin` and
   `x86_64-apple-darwin` (lipo'd into one universal `libffx_gd.dylib`, or a
