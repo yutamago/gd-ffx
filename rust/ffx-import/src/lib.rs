@@ -19,6 +19,18 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use serde_json::{Value, json};
+
+pub mod effect;
+
+/// The version of what the importer writes into a `.glb`
+/// (`asset.extras.ffx_import`): a cached import of another version is made
+/// again. 2: the materials' effect variant states (`ffx_switches`,
+/// `ffx_passes`, `ffx_inputs`, `ffx_input_types`), UV set bindings
+/// (`ffx_texcoords`) and sampler address modes (`ffx_wrap`), the meshes'
+/// `ffx_render_order`.
+pub const FORMAT: u64 = 2;
+
 /// The game places a 3D map's instances at the file's node worlds times
 /// this (`PhyreScene_doOnFieldMapAssetLoaded`; ffx-rust's
 /// docs/formats/scene.md).
@@ -115,6 +127,8 @@ pub struct Importer {
     archive: ffx_vbf::Archive,
     /// Kernel tables read so far, by archive path.
     kernel: std::sync::Mutex<HashMap<String, Option<std::sync::Arc<ffx_kernel::Table>>>>,
+    /// Effect variants read so far ([`effect::variant_extras`]), by import id.
+    effects: std::sync::Mutex<HashMap<String, Option<Value>>>,
 }
 
 impl std::fmt::Debug for Importer {
@@ -137,6 +151,7 @@ impl Importer {
         Ok(Self {
             archive,
             kernel: std::sync::Mutex::default(),
+            effects: std::sync::Mutex::default(),
         })
     }
 
@@ -328,28 +343,42 @@ impl Importer {
     /// Which of `names` a material's effect variant switches on
     /// (`extras.ffx_effect`, e.g.
     /// `PS3Data/Shaders/PhyrePrerenderedShader.fx#987968AD...`; the
-    /// switches such as `MASK_DEPTH`, `ADDITIVE_BLENDING`). A variant's
-    /// cluster names the switches it has on (`PEffectVariant.m_switches`)
-    /// and no others, so the name's bytes in the cluster tell: on all ten
-    /// `phyreprerenderedshader` variants this agrees with ffx-rust's
-    /// `ffx_scene::effect::EffectVariant` (not a dependency of gd-ffx).
+    /// switches such as `MASK_DEPTH`, `ADDITIVE_BLENDING`;
+    /// `PEffectVariant.m_switches`, read by [`Importer::effect_extras`]).
     /// Empty when the variant is not in the archive.
     #[must_use]
     pub fn effect_switches<'n>(&self, effect: &str, names: &[&'n str]) -> Vec<&'n str> {
-        let lower = effect.to_ascii_lowercase();
-        let (dir, file) = lower.rsplit_once('/').unwrap_or(("", &lower));
-        let Ok(bytes) = self.read(&format!("ffx_data/gamedata/{dir}/d3d11/{file}.phyre")) else {
+        let Some(fx) = self.effect_extras(effect) else {
             return Vec::new();
         };
         names
             .iter()
-            .filter(|n| bytes.windows(n.len()).any(|w| w == n.as_bytes()))
+            .filter(|n| fx["ffx_switches"].get(**n).is_some())
             .copied()
             .collect()
     }
 
+    /// The extras of effect variant `effect` (a material's import id):
+    /// [`effect::variant_extras`], read once; `None` when it is not in the
+    /// archive or does not parse.
+    #[must_use]
+    pub fn effect_extras(&self, effect: &str) -> Option<Value> {
+        let mut cache = self
+            .effects
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        cache
+            .entry(effect.to_ascii_lowercase())
+            .or_insert_with(|| {
+                let bytes = self.read(&effect::variant_path(effect)).ok()?;
+                effect::variant_extras(bytes).ok()
+            })
+            .clone()
+    }
+
     /// The model at `path` as a glTF binary with its base colour textures
-    /// embedded (PNG), as stored (no axis change: see the module's doc).
+    /// embedded (PNG), as stored (no axis change: see the module's doc),
+    /// with gd-ffx's extras ([`Importer::add_extras`]).
     ///
     /// # Errors
     /// When the model is missing or does not parse.
@@ -358,7 +387,7 @@ impl Importer {
         let model =
             ffx_phyre::Model::parse(&bytes).map_err(|e| Error::Model(format!("{path}: {e}")))?;
         let mut pngs: HashMap<String, Option<Vec<u8>>> = HashMap::new();
-        Ok(model.to_glb_with(
+        let glb = model.to_glb_with(
             false,
             |t| {
                 pngs.entry(t.archive_path())
@@ -371,7 +400,154 @@ impl Importer {
                     .clone()
             },
             &[],
-        ))
+        );
+        // the segment contexts' stream bindings (which UV set a water
+        // shader's TEXCOORD4/6/7 read): only a map cluster has them
+        let scene = ffx_scene::map::MapModel::parse(bytes).ok();
+        edit_glb_json(&glb, |doc| self.add_extras(&model, scene.as_ref(), doc))
+            .ok_or_else(|| Error::Model(format!("{path}: bad glTF from the export")))
+    }
+
+    /// Adds to the export's JSON what gd-ffx draws the model with:
+    /// - each material's effect variant states ([`Importer::effect_extras`]:
+    ///   `ffx_switches`, `ffx_passes`, `ffx_inputs`), merged into its
+    ///   `extras` (glTF material `i` is the model's material `i`);
+    /// - each mesh's instance's `m_render_order` (`extras.ffx_render_order`;
+    ///   the export writes one mesh per instance with drawable segments, in
+    ///   instance order, named as the instance) and its `m_DObjKind` when not
+    ///   0 (`extras.ffx_dobj_kind`; 1 sorts first,
+    ///   `MorphManager_registerClusterMorphs` `0x006aca10`);
+    /// - per material, which of the primitive's `TEXCOORD_n` each of its
+    ///   vertex program's `TEXCOORD` inputs reads (`extras.ffx_texcoords`,
+    ///   e.g. `{"TEXCOORD0": 0, "TEXCOORD6": 1}`), from the first primitive
+    ///   drawn with it ([`texcoord_sources`]);
+    /// - [`FORMAT`] as `asset.extras.ffx_import`.
+    fn add_extras(
+        &self,
+        model: &ffx_phyre::Model,
+        scene: Option<&ffx_scene::map::MapModel>,
+        doc: &mut Value,
+    ) {
+        if let Some(mats) = doc.get_mut("materials").and_then(Value::as_array_mut) {
+            for (m, src) in mats.iter_mut().zip(&model.materials) {
+                let Some(fx) = src.effect.as_deref().and_then(|e| self.effect_extras(e)) else {
+                    continue;
+                };
+                if !m["extras"].is_object() {
+                    m["extras"] = json!({});
+                }
+                if let (Some(extras), Some(add)) = (m["extras"].as_object_mut(), fx.as_object()) {
+                    for (k, v) in add {
+                        extras.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+        }
+        let texcoords = match doc.get_mut("meshes").and_then(Value::as_array_mut) {
+            Some(meshes) => self.mesh_extras(model, scene, meshes),
+            None => HashMap::new(),
+        };
+        if let (Some(mats), Some(sc)) = (
+            doc.get_mut("materials").and_then(Value::as_array_mut),
+            scene,
+        ) {
+            add_wraps(model, sc, mats);
+        }
+        if let Some(mats) = doc.get_mut("materials").and_then(Value::as_array_mut) {
+            for (i, t) in texcoords {
+                if let Some(m) = mats.get_mut(i).filter(|m| m["extras"].is_object()) {
+                    m["extras"]["ffx_texcoords"] = t;
+                }
+            }
+        }
+        if !doc["asset"].is_object() {
+            doc["asset"] = json!({"version": "2.0"});
+        }
+        doc["asset"]["extras"] = json!({"ffx_import": FORMAT});
+    }
+
+    /// Each mesh's instance's render order and `DObj` kind into its `extras`
+    /// (see [`Importer::add_extras`]); returns each material's
+    /// [`texcoord_sources`], from the first primitive drawn with it.
+    fn mesh_extras(
+        &self,
+        model: &ffx_phyre::Model,
+        scene: Option<&ffx_scene::map::MapModel>,
+        meshes: &mut [Value],
+    ) -> HashMap<usize, Value> {
+        let mut texcoords: HashMap<usize, Value> = HashMap::new();
+        let mut next = 0;
+        for mesh in meshes.iter_mut() {
+            let Some(name) = mesh.get("name").and_then(Value::as_str).map(str::to_owned) else {
+                continue;
+            };
+            let mesh_segments: Vec<u64> = mesh["extras"]["ffx_segments"]
+                .as_array()
+                .map(|a| a.iter().filter_map(Value::as_u64).collect())
+                .unwrap_or_default();
+            // the next instance of that name whose segments hold the mesh's
+            let found = model.instances[next.min(model.instances.len())..]
+                .iter()
+                .position(|inst| {
+                    inst.name == name
+                        && mesh_segments
+                            .iter()
+                            .all(|&s| inst.segments.iter().any(|&(x, _)| x as u64 == s))
+                })
+                .map(|k| next + k);
+            let Some(i) = found else {
+                continue;
+            };
+            next = i + 1;
+            if let Some(b) = model.instances[i].bounds {
+                mesh["extras"]["ffx_render_order"] = json!(b.render_order);
+            }
+            // m_DObjKind 1: the game puts the bounds in the first sort class at map init
+            if let Some(si) = scene
+                .and_then(|sc| sc.instances.get(i))
+                .filter(|si| si.name == model.instances[i].name && si.dobj_kind != 0)
+            {
+                mesh["extras"]["ffx_dobj_kind"] = json!(si.dobj_kind);
+            }
+            let Some(prims) = mesh["primitives"].as_array() else {
+                continue;
+            };
+            for p in prims {
+                let (Some(seg), Some(mat)) =
+                    (p["extras"]["ffx_segment"].as_u64(), p["material"].as_u64())
+                else {
+                    continue;
+                };
+                let (Ok(seg), Ok(mat)) = (usize::try_from(seg), usize::try_from(mat)) else {
+                    continue;
+                };
+                if texcoords.contains_key(&mat) {
+                    continue;
+                }
+                let Some(fx) = model
+                    .materials
+                    .get(mat)
+                    .and_then(|m| m.effect.as_deref())
+                    .and_then(|e| self.effect_extras(e))
+                else {
+                    continue;
+                };
+                let bindings = scene
+                    .and_then(|sc| sc.instances.get(i))
+                    .filter(|si| si.name == model.instances[i].name)
+                    .and_then(|si| {
+                        let k = si.segments.iter().position(|&x| x == seg)?;
+                        si.contexts.get(k)
+                    })
+                    .map_or(&[][..], Vec::as_slice);
+                let uv_sets: Vec<u64> = p["extras"]["ffx_uv_sets"]
+                    .as_array()
+                    .map(|a| a.iter().filter_map(Value::as_u64).collect())
+                    .unwrap_or_default();
+                texcoords.insert(mat, texcoord_sources(&fx, bindings, &uv_sets));
+            }
+        }
+        texcoords
     }
 
     /// Writes the model at `path` to `out` (made with its folders) unless
@@ -380,7 +556,7 @@ impl Importer {
     /// # Errors
     /// As [`Importer::model_glb`], and writing.
     pub fn import(&self, path: &str, out: &Path) -> Result<PathBuf> {
-        if out.is_file() {
+        if out.is_file() && glb_format(out) == Some(FORMAT) {
             return Ok(out.to_path_buf());
         }
         let glb = self.model_glb(path)?;
@@ -463,6 +639,164 @@ impl Importer {
     }
 }
 
+/// Which glTF `TEXCOORD_n` of a primitive each `TEXCOORD` input of a
+/// material's vertex program reads, as `{"TEXCOORD4": n, ...}`: the
+/// game binds an input to the segment's stream of its render type whose
+/// `m_streamSet` the instance's segment context names for it
+/// (`PMeshInstanceSegmentStreamBinding.m_inputSet`; the water's
+/// `TEXCOORD4/6/7`), else to the first such stream (ffx-rust's
+/// `ffx_scene::build::vertex_inputs`). The export writes a segment's UV
+/// streams as `TEXCOORD_0..` with their sets in `ffx_uv_sets` (`sets`;
+/// empty: every set 0).
+fn texcoord_sources(fx: &Value, bindings: &[ffx_scene::map::StreamBinding], sets: &[u64]) -> Value {
+    let mut out = serde_json::Map::new();
+    let names = fx["ffx_inputs"].as_array().cloned().unwrap_or_default();
+    let types = fx["ffx_input_types"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    for (name, ty) in names.iter().zip(&types) {
+        let (Some(name), Some(ty)) = (name.as_str(), ty.as_str()) else {
+            continue;
+        };
+        let Some(index) = name
+            .strip_prefix("TEXCOORD")
+            .and_then(|i| i.parse::<u8>().ok())
+        else {
+            continue;
+        };
+        let set = bindings
+            .iter()
+            .find(|b| b.render_type == ty && b.index == index)
+            .map(|b| u64::from(b.input_set));
+        let k = match set {
+            Some(set) if sets.is_empty() => (set == 0).then_some(0),
+            Some(set) => sets.iter().position(|&s| s == set),
+            None => Some(0),
+        };
+        if let Some(k) = k {
+            out.insert(name.to_owned(), json!(k));
+        }
+    }
+    Value::Object(out)
+}
+
+/// Each material's sampler address modes ([`sampler_wraps`]) into its
+/// `extras.ffx_wrap`.
+fn add_wraps(model: &ffx_phyre::Model, sc: &ffx_scene::map::MapModel, mats: &mut [Value]) {
+    // the scene reader's material list is not the model's (more entries, another
+    // order): the same material by its effect and textures
+    let key = |effect: &str, mut tex: Vec<String>| {
+        tex.sort();
+        (effect.to_ascii_lowercase(), tex)
+    };
+    let mut by_key: HashMap<(String, Vec<String>), &ffx_scene::map::Material> = HashMap::new();
+    for sm in &sc.materials {
+        let tex = sm
+            .textures
+            .iter()
+            .map(|t| t.import.to_ascii_lowercase())
+            .collect();
+        by_key.entry(key(&sm.effect, tex)).or_insert(sm);
+    }
+    for (m, src) in mats.iter_mut().zip(&model.materials) {
+        let tex = src
+            .textures
+            .iter()
+            .map(|t| t.path.to_ascii_lowercase())
+            .collect();
+        let Some(sm) = by_key.get(&key(src.effect.as_deref().unwrap_or(""), tex)) else {
+            continue;
+        };
+        let wrap = sampler_wraps(src, sm);
+        if m["extras"].is_object() && !wrap.is_empty() {
+            m["extras"]["ffx_wrap"] = Value::Object(wrap);
+        }
+    }
+}
+
+/// Each texture sampler's address modes (u, v) as the game creates its
+/// sampler state (`PSamplerStateD3D11` `0x0058ab10`: 1 wrap, 3 border, 4
+/// mirror, else clamp; ffx-rust's `ffx_scene::build::sampler_desc`):
+/// `{"TextureSampler": ["WRAP", "CLAMP"], ...}`. A texture and its sampler
+/// state share the material's slot offset.
+fn sampler_wraps(
+    m: &ffx_phyre::Material,
+    sm: &ffx_scene::map::Material,
+) -> serde_json::Map<String, Value> {
+    let name = |w: u8| match w {
+        1 => "WRAP",
+        3 => "BORDER",
+        4 => "MIRROR",
+        _ => "CLAMP",
+    };
+    let mut out = serde_json::Map::new();
+    for t in &m.textures {
+        let Some(r) = sm
+            .textures
+            .iter()
+            .find(|r| r.import.eq_ignore_ascii_case(&t.path))
+        else {
+            continue;
+        };
+        if let Some((_, st)) = sm.samplers.iter().find(|(o, _)| *o == r.offset) {
+            out.insert(
+                t.sampler.clone(),
+                json!([name(st.wrap[0]), name(st.wrap[1])]),
+            );
+        }
+    }
+    out
+}
+
+/// A glTF binary's JSON chunk: its offset range in `glb`.
+fn glb_json_range(glb: &[u8]) -> Option<std::ops::Range<usize>> {
+    if glb.get(0..4)? != b"glTF" || glb.get(16..20)? != b"JSON" {
+        return None;
+    }
+    let len = u32::from_le_bytes(glb.get(12..16)?.try_into().ok()?) as usize;
+    (20 + len <= glb.len()).then_some(20..20 + len)
+}
+
+/// `glb` with its JSON chunk changed by `edit` (the binary chunk kept).
+fn edit_glb_json(glb: &[u8], edit: impl FnOnce(&mut Value)) -> Option<Vec<u8>> {
+    let r = glb_json_range(glb)?;
+    let mut doc: Value = serde_json::from_slice(&glb[r.clone()]).ok()?;
+    edit(&mut doc);
+    let mut text = serde_json::to_vec(&doc).ok()?;
+    while !text.len().is_multiple_of(4) {
+        text.push(b' ');
+    }
+    let rest = &glb[r.end..];
+    let total = 20 + text.len() + rest.len();
+    let mut out = Vec::with_capacity(total);
+    out.extend(b"glTF");
+    out.extend(2u32.to_le_bytes());
+    out.extend(u32::try_from(total).ok()?.to_le_bytes());
+    out.extend(u32::try_from(text.len()).ok()?.to_le_bytes());
+    out.extend(b"JSON");
+    out.extend(&text);
+    out.extend(rest);
+    Some(out)
+}
+
+/// The importer format (`asset.extras.ffx_import`) of the `.glb` at
+/// `path`; `None` for an older import or an unreadable file.
+fn glb_format(path: &Path) -> Option<u64> {
+    use std::io::Read;
+    let mut f = std::fs::File::open(path).ok()?;
+    let mut head = [0u8; 20];
+    f.read_exact(&mut head).ok()?;
+    if &head[0..4] != b"glTF" || &head[16..20] != b"JSON" {
+        return None;
+    }
+    let len = u32::from_le_bytes(head[12..16].try_into().ok()?) as usize;
+    let mut text = vec![0u8; len];
+    f.read_exact(&mut text).ok()?;
+    let doc: Value = serde_json::from_slice(&text).ok()?;
+    doc["asset"]["extras"]["ffx_import"].as_u64()
+}
+
 /// `.../<name>.dae.phyre`'s name.
 fn file_stem(path: &str) -> String {
     let file = path.rsplit('/').next().unwrap_or(path);
@@ -516,6 +850,54 @@ mod tests {
         assert_eq!(character_model_path("c0/1"), None);
     }
 
+    fn glb_json(glb: &[u8]) -> Value {
+        serde_json::from_slice(&glb[glb_json_range(glb).unwrap()]).unwrap()
+    }
+
+    #[test]
+    fn texcoord_inputs_follow_the_stream_bindings() {
+        let fx = json!({
+            "ffx_inputs": ["POSITION0", "TEXCOORD0", "TEXCOORD6", "TEXCOORD7"],
+            "ffx_input_types": ["Vertex", "ST", "ST", "ST"],
+        });
+        let bind = |index, input_set| ffx_scene::map::StreamBinding {
+            render_type: "ST".into(),
+            name: String::new(),
+            index,
+            input_set,
+        };
+        // TEXCOORD7 bound to stream set 1, the primitive's second UV set; the others unbound
+        let t = texcoord_sources(&fx, &[bind(7, 1)], &[0, 1]);
+        assert_eq!(t, json!({"TEXCOORD0": 0, "TEXCOORD6": 0, "TEXCOORD7": 1}));
+        // a set the primitive does not have: left out
+        let t = texcoord_sources(&fx, &[bind(6, 2)], &[0, 1]);
+        assert_eq!(t, json!({"TEXCOORD0": 0, "TEXCOORD7": 0}));
+    }
+
+    #[test]
+    fn glb_json_edits_keep_the_binary_chunk() {
+        let mut glb = b"glTF".to_vec();
+        let text = br#"{"asset":{"version":"2.0"}}  "#;
+        let bin = [1u8, 2, 3, 4];
+        let total = 20 + text.len() + 8 + bin.len();
+        glb.extend(2u32.to_le_bytes());
+        glb.extend(u32::try_from(total).unwrap().to_le_bytes());
+        glb.extend(u32::try_from(text.len()).unwrap().to_le_bytes());
+        glb.extend(b"JSON");
+        glb.extend(text);
+        glb.extend(4u32.to_le_bytes());
+        glb.extend(b"BIN\0");
+        glb.extend(bin);
+        let out = edit_glb_json(&glb, |d| {
+            d["asset"]["extras"] = json!({"ffx_import": FORMAT})
+        })
+        .unwrap();
+        assert_eq!(glb_json(&out)["asset"]["extras"]["ffx_import"], FORMAT);
+        assert_eq!(&out[out.len() - 12..], &glb[glb.len() - 12..]);
+        let declared = u32::from_le_bytes(out[8..12].try_into().unwrap()) as usize;
+        assert_eq!(declared, out.len());
+    }
+
     /// On the player's game (skips without `FFX_GAME_DIR`): the opening's
     /// map and Tidus import.
     #[test]
@@ -555,6 +937,53 @@ mod tests {
             imp.import_map_layers("/map/znkd/znkd06/", &cache),
             Err(Error::None(_))
         ));
+        // the map's materials carry their effect variant's states, its meshes their render order
+        let doc = glb_json(&std::fs::read(&map).unwrap());
+        assert_eq!(doc["asset"]["extras"]["ffx_import"], FORMAT);
+        let mats = doc["materials"].as_array().unwrap();
+        assert!(mats.iter().all(|m| m["extras"]["ffx_passes"].is_array()));
+        assert!(
+            mats.iter()
+                .any(|m| m["extras"]["ffx_wrap"]["TextureSampler"].is_array())
+        );
+        let meshes = doc["meshes"].as_array().unwrap();
+        assert!(
+            meshes
+                .iter()
+                .all(|m| m["extras"]["ffx_render_order"].is_i64())
+        );
+        // bsil00: blended scenery (src alpha over the frame, writing depth), the beach sea's
+        // refraction water (postTransparent, no depth write) reading UV sets 0 and 1
+        let besaid =
+            glb_json(&std::fs::read(imp.import_map("/map/bsil/bsil00/", &cache).unwrap()).unwrap());
+        let mats = besaid["materials"].as_array().unwrap();
+        let blended = mats
+            .iter()
+            .find(|m| {
+                m["extras"]["ffx_switches"]["ALPHA_ENABLED"].is_string()
+                    && m["extras"]["ffx_effect"]
+                        .as_str()
+                        .unwrap()
+                        .contains("DefaultLit")
+            })
+            .unwrap();
+        let pass = &blended["extras"]["ffx_passes"][0];
+        assert_eq!(pass["blend"]["src"], "SRC_ALPHA");
+        assert_eq!(pass["blend"]["dst"], "INV_SRC_ALPHA");
+        assert_eq!(pass["depth_write"], true);
+        let sea = mats
+            .iter()
+            .find(|m| m["extras"]["ffx_switches"]["REFRACTION_ENABLED"].is_string())
+            .unwrap();
+        let post = sea["extras"]["ffx_passes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["pass"] == "postTransparent")
+            .unwrap();
+        assert_eq!(post["depth_write"], false);
+        assert_eq!(sea["extras"]["ffx_texcoords"]["TEXCOORD6"], 0);
+        assert_eq!(sea["extras"]["ffx_texcoords"]["TEXCOORD7"], 1);
         let chr = imp.import_character("c001", &cache).unwrap();
         for p in [&map, &chr, &layers] {
             let b = std::fs::read(p).unwrap();

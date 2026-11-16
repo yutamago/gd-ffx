@@ -165,23 +165,83 @@ remake registry and, from `GameHost.Start`, mounts the mod packs
 classic models posed by the game (docs/importer.md), markers until they
 are imported; `DebugView` is the overlay (F1).
 
+## Map materials
+
+Each map material draws as its effect variant says (docs/importer.md,
+"Material states"; ffx-rust's docs/formats/scene.md, "Passes", "Sort").
+`ClassicMaterials` takes the pass the maps draw with (`OpaqueNoMSAA`,
+`TransparentNoMSAA`, `postTransparent` for the refraction water) and
+makes Godot's render modes from its D3D11 states: the cull mode (the game's
+`FRONT` with clockwise front faces is Godot's `cull_back` for the exported
+winding; `DOUBLE_SIDED` variants have `NONE`), the blend of render target 0
+(`SRC_ALPHA, INV_SRC_ALPHA` is `blend_mix`), depth write (`depth_draw_always`
+for a blended pass that writes depth, as nearly all blended map parts do;
+`depth_draw_never` for `MASK_DEPTH`) and the depth test. One shader is made
+per combination of modes and defines. The shader body is the map shader's
+math as its bytecode has it (`ffx-import effect --wgsl`):
+
+- texture x `MaterialColour` x vertex colour (all four), the fog x `fgEff`
+  when the pixel program reads `fgEff`, x the colour scale, the tone curve.
+  `IGNORE_FOG` variants still fog in their programs; their materials have
+  `fgEff` 0 (`lchb00`, `klyt00`);
+- blended (`ALPHA_ENABLED`): alpha = texture a x `MaterialColour` a x
+  vertex a x `clrScaleFactor` a (the snapshot's colour scale has no alpha:
+  1), no alpha test;
+- the alpha test only where the pixel program reads `AlphaThreshold` (the
+  alpha-to-coverage variants' `OpaqueNoMSAA` twins): texture a <
+  `AlphaThreshold` is discarded; other opaque variants ignore alpha;
+- the texture's address mode as the material's sampler state has it
+  (`ffx_wrap`: clamp or repeat; Godot has one mode for both axes);
+- `phyreuvanimationshader` (the scrolling clouds): UV + `ScrollSpeed_X/Y` x
+  time, the v scroll negated for the export's v flip (v' = 1 - v), each
+  term `fract`ed. The time is Godot's `TIME`; the game's `GlobalTime`
+  starts at 0 on each map and wraps at 2400 s, so the clouds' phase is not
+  the game's.
+
+Blended parts draw in Godot's transparent pass, which sorts by render
+priority, then far to near. The game sorts the map's transparent instances by
+`m_render_order` (`ro / 1e8 == 1` first, and instances with `m_DObjKind` 1,
+such as sky domes, which the game moves into that class at map init; then
+`ro % 1000`, then `(ro % 100000) / 1000`), then far to near, after the
+characters' transparent parts. Each distinct order gets a priority from 1
+up (characters keep 0), each (material, priority) its own copy of the
+material; the refraction water (drawn after the scene) gets 127.
+
 ## Water
 
 `ClassicMaterials`' water shader is `PhyreWaterShader`'s math as its
-bytecode has it (both of Besaid's variants): the two normal maps scrolled
-by `ScrollSpeed_nml1/2` x time on the two UV sets, their sum recentred as
-the normal in the surface's frame, the view ray reflected off it into the
-map's cube map; the colour that reflection x `SpecularShininess` x
-`SpecularColor` x the vertex colour, then the fog, the colour scale and the
-tone curve; alpha (cube alpha x `SpecularShininess` + `MultiTexBlendFactor`
-x `MaterialColour.a`) x the vertex alpha; blended over the scene,
-double-sided, no depth write. The beach sea's refraction variant mixes the
-same colour over the scene behind it by the same alpha (its small
-distortion is left out). The material names no cube map (its sampler is
-bound outside it): the map's own `reflection*` cube map is used (Besaid has
-one, `reflection3`), its six faces from the archive (`FfxGame.classic_texture`,
-ffx-phyre's `face_png`); without one, the cube's mean colour stands in. The
-D3D cube's z is mirrored into Godot's (`cube_axes`).
+bytecode has it (Besaid's two variants, the textured `kino02`/`lchb02` and
+the textured refraction variant of `bika00`): the two normal maps scrolled by
+`ScrollSpeed_nml1/2` x time, their sum recentred as the normal in the
+surface's frame, the view ray reflected off it into the map's cube map. The
+colour is ((`TextureSampler` + `TextureSampler1` when `TEXTURE_ENABLED`) +
+(0, 0, 0, 1)) x `MultiTexBlendFactor` x `MaterialColour` x the cube map at
+the bent normal, plus the reflection x `SpecularShininess` x `SpecularColor`
+(alpha: reflection alpha x shininess); x the vertex colour, then the fog,
+the colour scale (clamped) and the tone curve; alpha the result's. Each
+texture reads its own UV set: the vertex program's `TEXCOORD0`, `4`, `6`,
+`7`, which the instance binds to the segment's stream sets (the import's
+`ffx_texcoords`), plus its `ScrollSpeed_tex0/tex1/nml1/nml2` x time (v
+negated, `fract`ed). Cull, blend and depth write come from the pass (most
+water writes depth; 121 parts are `MASK_DEPTH`). `phyrewaveshader` (4
+parts) is drawn with the water shader.
+
+The refraction variant (`REFRACTION_ENABLED`, the beach sea; drawn after
+the scene, `postTransparent`) mixes the toned colour by its alpha over the
+colour buffer read at an offset from the bent normal (x -0.025, y 0.0125 x
+-dot(N, V) of its view-space direction, / max(view depth, 10), clamped to
+0.05, only where the depth behind is far). Godot's 3D screen texture is a
+copy taken before the transparent pass; mixing over it wiped out the
+transparent parts the game's buffer holds (Besaid's shallow-water layer
+under the sea darkened it). So it blends over the frame as it is (the game's
+result at offset 0), after every other transparent map part; the small
+distortion is left out.
+
+The material names no cube map (its sampler is bound outside it): the
+map's own `reflection*` cube map is used (Besaid has one, `reflection3`), its
+six faces from the archive (`FfxGame.classic_texture`, ffx-phyre's
+`face_png`); without one, the cube's mean colour stands in. The D3D cube's z
+is mirrored into Godot's (`cube_axes`).
 
 The glow pass: the map's glow values (API 9's `Look.glow_*`: Besaid none
 below 0.5, full at 1, gain 0.11, spread 0.34) drive Godot's environment glow

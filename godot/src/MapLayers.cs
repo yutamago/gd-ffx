@@ -89,7 +89,7 @@ public partial class MapLayers : Node3D
         if (lib.Path("map2d", level) is not { } path)
             return;
         _loadingLevel = level;
-        _loading = System.Threading.Tasks.Task.Run(() => ClassicLibrary.Load(path));
+        _loading = Background.Run(() => ClassicLibrary.Load(path));
         Pending = _loading;
     }
 
@@ -153,6 +153,7 @@ public partial class MapLayers : Node3D
     /// <summary>Shows the layers the game draws now and sets the window (once a frame).</summary>
     public void Tick(FfxGame? game, int map, float cameraFar)
     {
+        ClassicMaterials.EnsureGlobals();
         RenderingServer.GlobalShaderParameterSet("ffx_layer_far", cameraFar * 0.99f);
         if (_layers.Count == 0)
         {

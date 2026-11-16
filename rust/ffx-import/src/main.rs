@@ -7,6 +7,8 @@
 //! ffx-import --game-dir DIR devsaves                     # the developers' saves: map, entrance, scenario
 //! ffx-import --game-dir DIR list <text>...               # archive paths containing the text
 //! ffx-import --game-dir DIR model <path or level>...     # a model's nodes, instances, materials
+//! ffx-import --game-dir DIR effects <path or level>...   # its materials' effect variants: switches, pass states, inputs
+//! ffx-import --game-dir DIR effect [--wgsl [PASS]] <id>  # one variant (PS3Data/Shaders/X.fx#MD5); --wgsl: its programs as WGSL
 //! ```
 //!
 //! `--game-dir` defaults to `FFX_GAME_DIR`. Only reads the game; writes only
@@ -54,6 +56,20 @@ fn main() -> ExitCode {
         } else {
             ExitCode::FAILURE
         };
+    }
+    if what == "effects" {
+        let mut ok = true;
+        for n in names {
+            ok &= effects(&imp, n);
+        }
+        return if ok {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        };
+    }
+    if what == "effect" {
+        return effect(&imp, names);
     }
     if what == "list" {
         for n in names {
@@ -173,6 +189,91 @@ fn model(imp: &ffx_import::Importer, path: &str) -> bool {
         }
     }
     true
+}
+
+/// Reads a model (an archive path or a level's map model).
+fn load_model(imp: &ffx_import::Importer, path: &str) -> Option<(String, ffx_phyre::Model)> {
+    let path = if path.contains(".dae.phyre") {
+        path.to_string()
+    } else if let Some(p) = imp.map_model(path).or_else(|| imp.map_layers_model(path)) {
+        p
+    } else {
+        eprintln!("{path}: not a model or level");
+        return None;
+    };
+    match imp
+        .read(&path)
+        .map_err(|e| e.to_string())
+        .and_then(|b| ffx_phyre::Model::parse(&b).map_err(|e| e.to_string()))
+    {
+        Ok(m) => Some((path, m)),
+        Err(e) => {
+            eprintln!("{path}: {e}");
+            None
+        }
+    }
+}
+
+/// Prints each material's effect variant as the import exports it
+/// (switches, pass states, vertex inputs), and each instance's render order
+/// and materials.
+fn effects(imp: &ffx_import::Importer, path: &str) -> bool {
+    let Some((path, m)) = load_model(imp, path) else {
+        return false;
+    };
+    println!("{path}");
+    for (i, inst) in m.instances.iter().enumerate() {
+        let mats: Vec<Option<usize>> = inst.segments.iter().map(|&(_, mat)| mat).collect();
+        println!(
+            "instance {i} {:?} render order {:?} materials {mats:?}",
+            inst.name,
+            inst.bounds.map(|b| b.render_order)
+        );
+    }
+    for (i, mat) in m.materials.iter().enumerate() {
+        let fx = mat.effect.as_deref().unwrap_or("");
+        println!(
+            "material {i} {fx} tex {:?}",
+            mat.base_color().map(|t| &t.path)
+        );
+        match imp.effect_extras(fx) {
+            Some(x) => println!("  {x}"),
+            None => println!("  (no variant)"),
+        }
+    }
+    true
+}
+
+/// Prints one effect variant's extras, or with `--wgsl [PASS]` its first
+/// (or that) render pass's programs as WGSL.
+fn effect(imp: &ffx_import::Importer, args: &[String]) -> ExitCode {
+    let (wgsl, pass, id) = match args {
+        [w, id] if w == "--wgsl" => (true, None, id),
+        [w, p, id] if w == "--wgsl" => (true, Some(p.as_str()), id),
+        [id] => (false, None, id),
+        _ => {
+            eprintln!("effect [--wgsl [PASS]] <PS3Data/Shaders/X.fx#MD5>");
+            return ExitCode::FAILURE;
+        }
+    };
+    if wgsl {
+        let Ok(bytes) = imp.read(&ffx_import::effect::variant_path(id)) else {
+            eprintln!("{id}: not in the archive");
+            return ExitCode::FAILURE;
+        };
+        let Some(s) = ffx_import::effect::pixel_wgsl(bytes, pass) else {
+            eprintln!("{id}: no programs that translate");
+            return ExitCode::FAILURE;
+        };
+        println!("{s}");
+    } else {
+        let Some(x) = imp.effect_extras(id) else {
+            eprintln!("{id}: not in the archive");
+            return ExitCode::FAILURE;
+        };
+        println!("{}", serde_json::to_string_pretty(&x).unwrap_or_default());
+    }
+    ExitCode::SUCCESS
 }
 
 /// The developers' saves (`savesforviewer/1..110`): the save data block at

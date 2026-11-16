@@ -74,7 +74,7 @@ public static class ContentResolver
             var texDir = kind == "map" && id.StartsWith('/') && id.EndsWith('/') ? $"PS3Data{id}tex/" : null;
             var key = (kind, id, ticket);
             if (!Loading.TryGetValue(key, out var task))
-                Loading[key] = task = System.Threading.Tasks.Task.Run(() =>
+                Loading[key] = task = Background.Run(() =>
                 {
                     var n = ClassicLibrary.Load(path, texDir);
                     return (n, n != null && prepare != null ? prepare(n) : null);

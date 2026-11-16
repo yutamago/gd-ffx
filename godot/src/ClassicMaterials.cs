@@ -1,3 +1,4 @@
+using System;
 using System.Linq;
 using System.Collections.Generic;
 using Godot;
@@ -7,14 +8,16 @@ namespace GdFfx;
 
 /// <summary>
 /// The classic content's materials as the game draws them (its own shaders,
-/// read from the bytecode: docs/importer.md "Materials"). The glTF import gives
-/// Godot's lit standard materials; these replace them:
+/// read from the bytecode; their states from the effect variant: docs/importer.md "Material
+/// states", docs/architecture.md "Map materials"). The glTF import gives Godot's lit standard
+/// materials; these replace them:
 /// <list type="bullet">
 /// <item><b>maps</b> (<c>PhyreDefaultLitShader</c>, <c>PhyreUVAnimationShader</c>): not lit at
 /// all, the lighting is baked into the vertex colours; texture x MaterialColour x
-/// vertex colour x (1 + emissiveness), then the game's tone curve.</item>
-/// <item><b>water</b> (<c>PhyreWaterShader</c>): the game's math with the cube map's mean colour
-/// for its reflection (the cube map is not imported yet; see <c>WaterBody</c>).</item>
+/// vertex colour x (1 + emissiveness), then the game's tone curve; blend, cull, depth write,
+/// fog and the alpha test as the variant's pass says, scrolling UVs for the clouds.</item>
+/// <item><b>water</b> (<c>PhyreWaterShader</c>, <c>PhyreWaveShader</c>): the game's math with the
+/// map's cube map (see <c>WaterBody</c>).</item>
 /// <item><b>2D layers</b> (<c>PhyrePrerenderedShader</c>): the painted backgrounds, placed on the
 /// screen in PS2 pixels at the main camera's depth (<see cref="MapLayers"/>).</item>
 /// <item><b>characters</b> (<c>PhyreChrLitShader</c>): texture x MaterialColour x
@@ -53,30 +56,68 @@ vec3 ffx_fog_apply(vec3 c, float depth) {
 
 ";
 
-    private static Shader MakeShader(string modes, string body) =>
-        new() { Code = "shader_type spatial;\nrender_mode " + modes + ";\n" + Curve + body };
+    private static Shader MakeShader(string modes, string body, string defines = "") =>
+        new() { Code = "shader_type spatial;\nrender_mode " + modes + ";\n" + defines + Curve + body };
 
-    private const string MapOpaqueBody = @"
+    // The map shaders (phyredefaultlitshader, phyreuvanimationshader; read from the bytecode with
+    // ffx-rust's ffx-dxbc, `ffx-import effect --wgsl`): c = texture x MaterialColour x vertex
+    // colour (all four components), then the fog x fgEff when the program reads fgEff
+    // (IGNORE_FOG materials have fgEff 0), x clrScaleFactor, the tone curve. A blended variant
+    // (ALPHA_ENABLED) outputs alpha =texture a x MaterialColour a x vertex a x clrScaleFactor a (taken as 1) and tests
+    // nothing; an alpha-to-coverage variant (Opaque pass; its OpaqueNoMSAA twin, which the maps
+    // draw with) discards where texture a < AlphaThreshold; the others ignore alpha.
+    // UV_ANIM (phyreuvanimationshader): TEXCOORD0 + ScrollSpeed x GlobalTime in the vertex
+    // program; the export flips v (v' = 1 - v), so the v scroll is negated here.
+    private const string MapBody = @"
+#ifdef TEX_CLAMP
+uniform sampler2D tex : filter_linear_mipmap_anisotropic, repeat_disable;
+#else
 uniform sampler2D tex : filter_linear_mipmap_anisotropic, repeat_enable;
+#endif
 uniform vec4 material_colour = vec4(1.0);
 uniform vec3 emissiveness = vec3(0.0);
 uniform float alpha_threshold = 0.0;
+uniform vec2 scroll = vec2(0.0);
 void fragment() {
-	vec4 c = texture(tex, UV) * material_colour * COLOR;
+	vec2 uv = UV;
+#ifdef UV_ANIM
+	uv += vec2(fract(scroll.x * TIME), -fract(scroll.y * TIME));
+#endif
+	vec4 t = texture(tex, uv);
+#ifdef ALPHA_TEST
+	if (t.a < alpha_threshold) { discard; }
+#endif
+	vec4 c = t * material_colour * COLOR;
 	c.rgb *= vec3(1.0) + emissiveness;
-	if (alpha_threshold > 0.0 && texture(tex, UV).a < alpha_threshold) { discard; }
-	ALBEDO = ffx_out(ffx_curve(ffx_fog_apply(c.rgb, -VERTEX.z) * ffx_colour_scale));
+#ifdef FOG
+	c.rgb = ffx_fog_apply(c.rgb, -VERTEX.z);
+#endif
+	ALBEDO = ffx_out(ffx_curve(c.rgb * ffx_colour_scale));
+#ifdef BLEND
+	ALPHA = clamp(c.a, 0.0, 1.0);
+#endif
 }
 ";
 
-    // PhyreWaterShader (both bsil00 variants, read from the bytecode): the colour is the cube
-    // map's reflection x SpecularShininess x SpecularColor x the vertex colour, then the fog,
-    // clrScaleFactor and the tone curve; alpha (cube alpha x SpecularShininess +
-    // MultiTexBlendFactor x MaterialColour.a x cube alpha) x the vertex alpha; blended
-    // SRC_ALPHA / INV_SRC_ALPHA, double-sided, no depth write. The cube map is not imported
-    // yet: its mean colour (env_colour) stands in for the reflection, so the normal maps,
-    // which only bend the reflection's lookup, drop out. The refraction variant (the beach
-    // sea) mixes the same colour over the scene behind it by the same alpha.
+    // PhyreWaterShader (read from the bytecode of the bsil00, kino02 and bika00 variants): the
+    // base ((TextureSampler(uv0) + TextureSampler1(uv1) when TEXTURE_ENABLED) + (0, 0, 0, 1)) x
+    // MultiTexBlendFactor x MaterialColour, times the cube map at the bent normal, plus the
+    // cube map at the reflection x SpecularShininess x SpecularColor (rgb; alpha x shininess);
+    // x the vertex colour, the fog, clrScaleFactor (clamped), the tone curve; alpha the
+    // result's. The normal is the vertex normal bent by the two normal maps
+    // (normalize(n1 + n2 - 1) in the tangent frame). Each texture reads its own UV set: the
+    // vertex program's TEXCOORD0, 4, 6, 7, bound by the instance to the segment's stream sets
+    // (the import's ffx_texcoords: 0 UV, 1 UV2), plus its ScrollSpeed x GlobalTime (v negated
+    // for the export's v flip). The material names no cube map (bound outside it): the map's
+    // reflection cube map; without one, env_colour stands in for it.
+    // The refraction variant (REFRACTION_ENABLED, drawn after the scene in postTransparent)
+    // mixes the toned colour by its alpha over the colour buffer read at an offset from the
+    // bent normal (x -0.025, y 0.0125 x -dot(N, V) of its view-space direction, / max(view
+    // depth, 10), clamped to 0.05; only where the depth behind both test points is far). Godot's
+    // 3D screen texture is copied before the transparent pass, while the game's buffer holds the
+    // transparent draws too (bsil00's shallow-water layer under the beach sea): the mix over that
+    // copy wiped them out. So it blends over the frame as it is (the game's result at offset 0),
+    // after every other transparent part of the map, without the offset.
     private const string WaterBody = @"
 uniform vec4 material_colour = vec4(1.0);
 uniform vec3 specular_colour = vec3(0.65);
@@ -87,38 +128,54 @@ uniform bool has_cube = false;
 uniform samplerCube cube : filter_linear_mipmap;
 uniform sampler2D nml1 : filter_linear_mipmap, repeat_enable;
 uniform sampler2D nml2 : filter_linear_mipmap, repeat_enable;
+uniform sampler2D tex0 : filter_linear_mipmap_anisotropic, repeat_enable;
+uniform sampler2D tex1 : filter_linear_mipmap_anisotropic, repeat_enable;
+// the UV set of tex0, tex1, nml1, nml2 (0: UV, 1: UV2)
+uniform vec4 uv_sets = vec4(0.0, 0.0, 0.0, 1.0);
+uniform vec2 scroll_tex0 = vec2(0.0);
+uniform vec2 scroll_tex1 = vec2(0.0);
 uniform vec2 scroll1 = vec2(0.0);
 uniform vec2 scroll2 = vec2(0.0);
 // the cube map's axes against render space (D3D's left-handed faces in Godot's cube)
 uniform vec3 cube_axes = vec3(1.0, 1.0, -1.0);
+vec2 ffx_scroll(vec2 s, float t) { return vec2(fract(s.x * t), -fract(s.y * t)); }
 void fragment() {
 	vec3 N = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
 	vec3 T = (INV_VIEW_MATRIX * vec4(TANGENT, 0.0)).xyz;
 	if (dot(T, T) < 1e-6) { T = vec3(1.0, 0.0, 0.0); }
 	T = normalize(T);
 	vec3 B = cross(T, N);
-	vec4 c;
-	float cube_a = 1.0;
+	vec3 Nw = N;
+	vec4 cN = vec4(1.0);
+	vec4 spec;
 	if (has_cube) {
-		vec3 a = texture(nml1, UV + scroll1 * TIME).rgb;
-		vec3 b = texture(nml2, UV2 + scroll2 * TIME).rgb;
+		vec3 a = texture(nml1, mix(UV, UV2, uv_sets.z) + ffx_scroll(scroll1, TIME)).rgb;
+		vec3 b = texture(nml2, mix(UV, UV2, uv_sets.w) + ffx_scroll(scroll2, TIME)).rgb;
 		vec3 n = normalize(a + b - vec3(1.0));
-		vec3 Nw = n.x * T + n.y * B + n.z * N;
+		Nw = normalize(n.x * T + n.y * B + n.z * N);
 		vec3 P = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
 		vec3 I = normalize(P - CAMERA_POSITION_WORLD);
 		vec3 R = I - 2.0 * dot(I, Nw) * Nw;
 		vec4 cR = texture(cube, R * cube_axes);
-		cube_a = texture(cube, Nw * cube_axes).a;
-		c.rgb = cR.rgb * shininess * specular_colour;
-		c.a = cR.a * shininess + multitex_blend * material_colour.a * cube_a;
+		cN = texture(cube, Nw * cube_axes);
+		spec = vec4(cR.rgb * shininess * specular_colour, cR.a * shininess);
 	} else {
-		c.rgb = env_colour * shininess * specular_colour;
-		c.a = shininess + multitex_blend * material_colour.a;
+		cN = vec4(env_colour, 1.0);
+		spec = vec4(env_colour * shininess * specular_colour, shininess);
 	}
+	vec4 base = vec4(0.0, 0.0, 0.0, 1.0);
+#ifdef TEXTURE
+	base += texture(tex0, mix(UV, UV2, uv_sets.x) + ffx_scroll(scroll_tex0, TIME));
+	base += texture(tex1, mix(UV, UV2, uv_sets.y) + ffx_scroll(scroll_tex1, TIME));
+#endif
+	vec4 c = base * multitex_blend * material_colour * cN + spec;
 	c *= COLOR;
+#ifdef FOG
 	c.rgb = ffx_fog_apply(c.rgb, -VERTEX.z);
+#endif
 	c = clamp(c * vec4(ffx_colour_scale, 1.0), 0.0, 1.0);
-	ALBEDO = ffx_out(ffx_curve(c.rgb));
+	vec3 o = ffx_out(ffx_curve(c.rgb));
+	ALBEDO = o;
 	ALPHA = c.a;
 }
 ";
@@ -192,6 +249,9 @@ void fragment() {
 
     private static readonly bool Globals = Register();
 
+    /// <summary>Registers the shaders' global uniforms (before anything sets one).</summary>
+    public static void EnsureGlobals() => _ = Globals;
+
     private static bool Register()
     {
         void Add(string name, RenderingServer.GlobalShaderParameterType type, Variant value)
@@ -241,10 +301,101 @@ void fragment() {
         return d;
     }
 
-    private static readonly Shader MapOpaque = MakeShader("unshaded, cull_back, depth_draw_opaque", MapOpaqueBody);
-    private static readonly Shader MapOpaqueTwoSided = MakeShader("unshaded, cull_disabled, depth_draw_opaque", MapOpaqueBody);
     private static readonly Shader Char = MakeShader("unshaded, cull_back", CharBody);
-    private static readonly Shader Water = MakeShader("unshaded, cull_disabled, blend_mix, depth_draw_never", WaterBody);
+
+    /// <summary>The map and water shaders made so far, by render modes and defines.</summary>
+    private static readonly System.Collections.Generic.Dictionary<string, Shader> MapShaders = new();
+
+    private static Shader MapShader(string modes, string body, IEnumerable<string> defines)
+    {
+        var d = string.Concat(defines.Select(x => $"#define {x}\n"));
+        var key = (body == WaterBody ? "water|" : "map|") + modes + "|" + d;
+        // any thread: the classic content imports on workers
+        lock (MapShaders)
+        {
+            if (!MapShaders.TryGetValue(key, out var sh))
+                MapShaders[key] = sh = MakeShader(modes, body, d);
+            return sh;
+        }
+    }
+
+    /// <summary>
+    /// The render pass a map material draws in, of its effect variant's (the import's
+    /// <c>extras.ffx_passes</c>): the maps draw OpaqueNoMSAA, TransparentNoMSAA and, for the
+    /// refraction water, postTransparent (ffx-rust's docs/formats/scene.md, "Passes").
+    /// </summary>
+    private static Dictionary? MapPass(Dictionary extras)
+    {
+        if (!extras.TryGetValue("ffx_passes", out var pv))
+            return null;
+        var passes = pv.AsGodotArray();
+        foreach (var want in new[] { "OpaqueNoMSAA", "TransparentNoMSAA", "postTransparent", "Opaque", "Transparent" })
+            foreach (var x in passes)
+                if (x.AsGodotDictionary() is { } d && d.TryGetValue("pass", out var n) && n.AsString() == want)
+                    return d;
+        return passes.Count > 0 ? passes[0].AsGodotDictionary() : null;
+    }
+
+    /// <summary>Whether any pass of the variant has alpha to coverage on (the UATFOPQ kind).</summary>
+    private static bool AnyAlphaToCoverage(Dictionary extras) =>
+        extras.TryGetValue("ffx_passes", out var pv)
+        && pv.AsGodotArray().Any(x => x.AsGodotDictionary() is { } d && d.TryGetValue("alpha_to_coverage", out var a) && a.AsBool());
+
+    /// <summary>
+    /// Godot's render modes for a pass's D3D11 states: the cull mode (the game's FRONT, with
+    /// clockwise front faces, is Godot's back faces for the exported winding), the blend
+    /// (render target 0's factors), depth write and test.
+    /// </summary>
+    private static (string Modes, bool Blends) PassModes(Dictionary? pass, bool forceBlend)
+    {
+        string Str(Dictionary d, string k, string def) => d.TryGetValue(k, out var v) && v.VariantType == Variant.Type.String ? v.AsString() : def;
+        bool Bool(Dictionary d, string k, bool def) => d.TryGetValue(k, out var v) && v.VariantType == Variant.Type.Bool ? v.AsBool() : def;
+        var modes = new List<string> { "unshaded" };
+        if (pass == null)
+        {
+            modes.Add("cull_back");
+            modes.Add(forceBlend ? "blend_mix, depth_draw_never" : "depth_draw_opaque");
+            return (string.Join(", ", modes), forceBlend);
+        }
+        var cull = Str(pass, "cull", "BACK");
+        bool ccw = Bool(pass, "front_ccw", false);
+        modes.Add(cull switch
+        {
+            "NONE" => "cull_disabled",
+            "FRONT" => ccw ? "cull_front" : "cull_back",
+            _ => ccw ? "cull_back" : "cull_front",
+        });
+        bool blends = forceBlend;
+        if (pass.TryGetValue("blend", out var bv) && bv.VariantType == Variant.Type.Dictionary)
+        {
+            var b = bv.AsGodotDictionary();
+            var (src, dst, op) = (Str(b, "src", ""), Str(b, "dst", ""), Str(b, "op", "ADD"));
+            blends = true;
+            modes.Add((src, dst, op) switch
+            {
+                (_, _, "REV_SUBTRACT") => "blend_sub",
+                ("SRC_ALPHA" or "ONE", "ONE", _) => "blend_add",
+                ("DEST_COLOR", "ZERO", _) or ("ZERO", "SRC_COLOR", _) => "blend_mul",
+                ("ONE", "INV_SRC_ALPHA", _) => "blend_premul_alpha",
+                _ => "blend_mix",
+            });
+        }
+        else if (forceBlend)
+            modes.Add("blend_mix");
+        bool write = Bool(pass, "depth_write", true);
+        modes.Add(!write ? "depth_draw_never" : blends ? "depth_draw_always" : "depth_draw_opaque");
+        if (!Bool(pass, "depth_test", true) || Str(pass, "depth_func", "LESS_EQUAL") == "ALWAYS")
+            modes.Add("depth_test_disabled");
+        return (string.Join(", ", modes), blends);
+    }
+
+    /// <summary>Whether the pass's pixel program reads constant <paramref name="name"/> (the import's <c>ps_reads</c>); <paramref name="unknown"/> without the list.</summary>
+    private static bool Reads(Dictionary? pass, string name, bool unknown) =>
+        pass != null && pass.TryGetValue("ps_reads", out var r) ? r.AsGodotArray().Any(x => x.AsString() == name) : unknown;
+
+    /// <summary>The variant's switches (the import's <c>extras.ffx_switches</c>).</summary>
+    private static bool Switch(Dictionary extras, string name) =>
+        extras.TryGetValue("ffx_switches", out var sv) && sv.AsGodotDictionary().ContainsKey(name);
     private static readonly Shader[] LayerShaders =
     [
         MakeShader("unshaded, cull_disabled, blend_mix, depth_draw_always, shadows_disabled", LayerBody),
@@ -346,6 +497,9 @@ void fragment() {
         var mats = mv.AsGodotArray();
         var godotMats = state.GetMaterials();
         var replace = new System.Collections.Generic.Dictionary<Material, Material>(ReferenceEqualityComparer.Instance);
+        var transparent = new HashSet<int>();
+        // drawn after the scene (postTransparent): after every other transparent part
+        var last = new HashSet<int>();
         for (int i = 0; i < mats.Count && i < godotMats.Count; i++)
         {
             var m = mats[i].AsGodotDictionary();
@@ -375,30 +529,124 @@ void fragment() {
             }
             else
             {
+                var water = effect.Contains("water") || effect.Contains("wave");
+                var pass = MapPass(extras);
+                bool known = pass != null;
                 var masked = m.TryGetValue("alphaMode", out var am) && am.AsString() == "MASK";
-                var water = effect.Contains("water");
-                s = new ShaderMaterial { Shader = water ? Water : masked ? MapOpaqueTwoSided : MapOpaque };
+                var defines = new List<string>();
+                // without the import's states (an older cache): the old guesses
+                bool blendSwitch = known ? Switch(extras, "ALPHA_ENABLED") : water;
+                // fog where the pixel program reads fgEff, scaled by it: IGNORE_FOG variants still
+                // fog in their programs, their materials have fgEff 0
+                if (Reads(pass, "fgEff", true))
+                    defines.Add("FOG");
+                var (modes, blends) = PassModes(pass, !known && water);
+                if (!known && !water && masked)
+                    modes = modes.Replace("cull_back", "cull_disabled");
                 if (water)
                 {
+                    if (Switch(extras, "TEXTURE_ENABLED")) defines.Add("TEXTURE");
+                    if (Switch(extras, "REFRACTION_ENABLED")) last.Add(i);
+                    s = new ShaderMaterial { Shader = MapShader(modes, WaterBody, defines) };
                     WaterTextures(s, extras, p, texDir);
                     var sc = Floats(p, "SpecularColor", [0.65f, 0.65f, 0.65f]);
                     s.SetShaderParameter("specular_colour", new Vector3(sc[0], sc[1], sc[2]));
                     s.SetShaderParameter("shininess", Floats(p, "SpecularShininess", [0.59f])[0]);
                     s.SetShaderParameter("multitex_blend", Floats(p, "MultiTexBlendFactor", [0.128f])[0]);
+                    lock (MadeLock)
+                        Made.Blend++;
+                }
+                else
+                {
+                    if (blends || blendSwitch) defines.Add("BLEND");
+                    // the alpha test: the alpha-to-coverage kind's OpaqueNoMSAA program reads AlphaThreshold
+                    if (known ? Reads(pass, "AlphaThreshold", false) && !blends : masked)
+                        defines.Add("ALPHA_TEST");
+                    if (effect.Contains("uvanimation")) defines.Add("UV_ANIM");
+                    // the sampler's address modes (the import's ffx_wrap): Godot has one for both axes
+                    if (extras.TryGetValue("ffx_wrap", out var wv) && wv.AsGodotDictionary().TryGetValue("TextureSampler", out var tw)
+                        && tw.AsGodotArray().Any(x => x.AsString() == "CLAMP" || x.AsString() == "BORDER"))
+                        defines.Add("TEX_CLAMP");
+                    if (blends && !modes.Contains("blend_")) modes += ", blend_mix";
+                    s = new ShaderMaterial { Shader = MapShader(modes, MapBody, defines) };
+                    var sx = Floats(p, "ScrollSpeed_X", [0f]); var sy = Floats(p, "ScrollSpeed_Y", [0f]);
+                    s.SetShaderParameter("scroll", new Vector2(sx[0], sy[0]));
+                    lock (MadeLock)
+                        if (blends) Made.Blend++; else Made.Map++;
                 }
                 var e = Floats(p, "MaterialEmissiveness", [0, 0, 0, 0]);
+                if (!Reads(pass, "MaterialEmissiveness", true)) e = [0, 0, 0, 0];
                 s.SetShaderParameter("emissiveness", new Vector3(e[0], e[1], e[2]));
-                s.SetShaderParameter("alpha_threshold", masked ? threshold : 0f);
+                s.SetShaderParameter("alpha_threshold", threshold);
                 var fg = Floats(p, "fgEff", [1, 1, 1]);
                 s.SetShaderParameter("fog_effect", (fg[0] + fg[1] + fg[2]) / 3f);
-                lock (MadeLock)
-                    if (water) Made.Blend++; else Made.Map++;
+                if (blends) transparent.Add(i);
             }
             s.SetShaderParameter("tex", std.AlbedoTexture);
             s.SetShaderParameter("material_colour", ToColor(colour));
             replace[godotMats[i]] = s;
         }
         Swap(root, replace);
+        SortTransparent(root, godotMats, replace, transparent, last);
+    }
+
+    /// <summary>
+    /// The map's blended surfaces in the game's order: the transparent pass sorts by
+    /// m_render_order (ro / 1e8 == 1 first, then ro % 1000, then (ro % 100000) / 1000; ffx-rust's
+    /// docs/formats/scene.md, "Sort"), then far to near, after the characters' transparent
+    /// parts. Godot sorts transparent draws by render priority, then far to near: each distinct
+    /// order gets a priority from 1 up (the characters keep 0), each (material, priority) its own
+    /// copy of the material.
+    /// </summary>
+    private static void SortTransparent(Node root, Godot.Collections.Array<Material> godotMats,
+        System.Collections.Generic.Dictionary<Material, Material> replace, HashSet<int> transparent, HashSet<int> last)
+    {
+        if (transparent.Count == 0)
+            return;
+        // Godot keeps a glTF mesh's extras as the mesh's "extras" metadata
+        // m_DObjKind 1 (sky domes, ...): the game puts the bounds in the first class at map init
+        static (long Order, bool First) Order(Mesh m)
+        {
+            if (!m.HasMeta("extras") || m.GetMeta("extras").AsGodotDictionary() is not { } x)
+                return (0, false);
+            long ro = x.TryGetValue("ffx_render_order", out var o) ? o.AsInt64() : 0;
+            bool first = x.TryGetValue("ffx_dobj_kind", out var k) && k.AsInt64() == 1;
+            return (ro, first);
+        }
+        static (int, long, long) Key((long Order, bool First) r) =>
+            (r.First || r.Order / 100000000 == 1 ? 0 : 1, r.Order % 1000, r.Order % 100000 / 1000);
+        var placed = new List<(MeshInstance3D Mi, (long, bool) Order)>();
+        void Walk(Node n)
+        {
+            if (n is MeshInstance3D mi && mi.Mesh != null)
+                placed.Add((mi, Order(mi.Mesh)));
+            foreach (var c in n.GetChildren())
+                Walk(c);
+        }
+        Walk(root);
+        var keys = placed.Select(x => Key(x.Order)).Distinct().Order().ToList();
+        var copies = new System.Collections.Generic.Dictionary<(Material, int), Material>();
+        HashSet<Material> Of(IEnumerable<int> set) =>
+            new(set.Where(i => i < godotMats.Count && replace.ContainsKey(godotMats[i])).Select(i => replace[godotMats[i]]), ReferenceEqualityComparer.Instance);
+        var blended = Of(transparent);
+        var post = Of(last);
+        foreach (var (mi, order) in placed)
+        {
+            int sorted = Math.Clamp(1 + keys.IndexOf(Key(order)), 1, 126);
+            for (int s = 0; s < mi.Mesh.GetSurfaceCount(); s++)
+            {
+                if (mi.GetSurfaceOverrideMaterial(s) is not { } m || !blended.Contains(m))
+                    continue;
+                int priority = post.Contains(m) ? 127 : sorted;
+                if (!copies.TryGetValue((m, priority), out var c))
+                {
+                    c = (Material)m.Duplicate();
+                    c.RenderPriority = priority;
+                    copies[(m, priority)] = c;
+                }
+                mi.SetSurfaceOverrideMaterial(s, c);
+            }
+        }
     }
 
     /// <summary>Face 0 of cube maps already read by <see cref="MapCube"/>.</summary>
@@ -472,13 +720,33 @@ void fragment() {
         return null;
     }
 
-    /// <summary>The water's cube map, normal maps and their scrolls (falls back to the cube's mean colour without a cube map).</summary>
+    /// <summary>
+    /// The water's cube map, normal maps, colour textures, their UV sets (the import's
+    /// <c>extras.ffx_texcoords</c>: the glTF set each of the vertex program's TEXCOORD0, 4, 6, 7
+    /// reads) and scrolls (falls back to the cube's mean colour without a cube map).
+    /// </summary>
     private static void WaterTextures(ShaderMaterial s, Dictionary extras, Dictionary p, string? texDir)
     {
+        float Set(string input, float fallback)
+        {
+            if (extras.TryGetValue("ffx_texcoords", out var tc) && tc.AsGodotDictionary().TryGetValue(input, out var k))
+                return Math.Clamp(k.AsInt32(), 0, 1);
+            return fallback;
+        }
+        s.SetShaderParameter("uv_sets", new Vector4(Set("TEXCOORD0", 0), Set("TEXCOORD4", 0), Set("TEXCOORD6", 0), Set("TEXCOORD7", 1)));
+        Vector2 Scroll(string name) => new(Floats(p, name + "_X", [0f])[0], Floats(p, name + "_Y", [0f])[0]);
+        s.SetShaderParameter("scroll1", Scroll("ScrollSpeed_nml1"));
+        s.SetShaderParameter("scroll2", Scroll("ScrollSpeed_nml2"));
+        s.SetShaderParameter("scroll_tex0", Scroll("ScrollSpeed_tex0"));
+        s.SetShaderParameter("scroll_tex1", Scroll("ScrollSpeed_tex1"));
         if (!extras.TryGetValue("ffx_textures", out var tv))
             return;
         var tex = tv.AsGodotDictionary();
         string? Path(string sampler) => tex.TryGetValue(sampler, out var v) ? v.AsString() : null;
+        if (Path("TextureSampler") is { } t0p && ClassicTexture(t0p) is Texture2D t0)
+            s.SetShaderParameter("tex0", t0);
+        if (Path("TextureSampler1") is { } t1p && ClassicTexture(t1p) is Texture2D t1)
+            s.SetShaderParameter("tex1", t1);
         // the material names no cube map (its sampler is bound outside the material): the map's
         // own reflection cube map (bsil00 has one, reflection3, the one its water reflects)
         var cubePath = Path("CubeMapSampler") ?? MapCube(texDir);
@@ -490,10 +758,6 @@ void fragment() {
             s.SetShaderParameter("nml1", n1);
             s.SetShaderParameter("nml2", n2);
             s.SetShaderParameter("has_cube", true);
-            var a = Floats(p, "ScrollSpeed_nml1_X", [0f]); var b = Floats(p, "ScrollSpeed_nml1_Y", [0f]);
-            var c = Floats(p, "ScrollSpeed_nml2_X", [0f]); var d = Floats(p, "ScrollSpeed_nml2_Y", [0f]);
-            s.SetShaderParameter("scroll1", new Vector2(a[0], b[0]));
-            s.SetShaderParameter("scroll2", new Vector2(c[0], d[0]));
         }
     }
 

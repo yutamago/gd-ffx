@@ -13,6 +13,9 @@ ffx-phyre.workspace = true
 ffx-kernel.workspace = true
 ffx-text.workspace = true
 ffx-vbf.workspace = true
+ffx-scene.workspace = true
+ffx-dxbc.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true
