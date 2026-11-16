@@ -75,6 +75,8 @@ vec3 ffx_fog_apply(vec3 c, float depth) {
     // TEXCOORD0); VERTEX_COLOR_MORPH (COLOR_MORPH here), COLOR0 + VertexColorMorphWeight x (COLOR1 -
     // COLOR0), COLOR1 imported as CUSTOM0; UV_SCROLL, TEXCOORD0 + (UvOffsetX, UvOffsetY), v
     // negated for the export's flip.
+    // TEXCOORD0 reads the UV set the instance binds (the import's ffx_texcoords; UV0_SET1: glTF
+    // TEXCOORD_1, Godot's UV2): bsil06's ground keeps its UVs in set 1, set 0 all zero.
     private const string MapBody = @"
 #if defined(UV_MORPH) || defined(COLOR_MORPH)
 instance uniform float ffx_morph = 0.0;
@@ -86,10 +88,14 @@ uniform float uv_morph_set = 1.0;
 #ifdef UV_SCROLL
 instance uniform vec2 ffx_uv_offset = vec2(0.0);
 #endif
-#if defined(UV_MORPH) || defined(COLOR_MORPH) || defined(UV_SCROLL)
+#if defined(UV_MORPH) || defined(COLOR_MORPH) || defined(UV_SCROLL) || defined(UV0_SET1)
 void vertex() {
+	vec2 uv_set0 = UV;
+#ifdef UV0_SET1
+	UV = UV2;
+#endif
 #ifdef UV_MORPH
-	UV += (mix(UV, UV2, uv_morph_set) - UV) * ffx_morph;
+	UV += (mix(uv_set0, UV2, uv_morph_set) - UV) * ffx_morph;
 #endif
 #ifdef COLOR_MORPH
 	COLOR += (CUSTOM0 - COLOR) * ffx_morph;
@@ -639,6 +645,7 @@ void fragment() {
                     if (Switch(extras, "UV_MORPH")) defines.Add("UV_MORPH");
                     if (Switch(extras, "VERTEX_COLOR_MORPH") && InputSet(extras, "ffx_colors", "COLOR1", 0) > 0) defines.Add("COLOR_MORPH");
                     if (Switch(extras, "UV_SCROLL")) defines.Add("UV_SCROLL");
+                    if (InputSet(extras, "ffx_texcoords", "TEXCOORD0", 0) == 1) defines.Add("UV0_SET1");
                     // the sampler's address modes (the import's ffx_wrap): Godot has one for both axes
                     if (extras.TryGetValue("ffx_wrap", out var wv) && wv.AsGodotDictionary().TryGetValue("TextureSampler", out var tw)
                         && tw.AsGodotArray().Any(x => x.AsString() == "CLAMP" || x.AsString() == "BORDER"))

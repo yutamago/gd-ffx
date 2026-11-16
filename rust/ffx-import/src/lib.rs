@@ -34,8 +34,11 @@ pub mod morph;
 /// position morphs as glTF morph targets, the colour morphs' second colour
 /// as `TEXCOORD_2`/`TEXCOORD_3`, the materials' `ffx_colors`
 /// (docs/importer.md, "Morphing meshes"); the meshes' and primitives'
-/// segment model ids (`ffx_model_id`).
-pub const FORMAT: u64 = 3;
+/// segment model ids (`ffx_model_id`). 4: a primitive whose own stream
+/// bindings put an input on another `TEXCOORD_n` than its material's
+/// `ffx_texcoords` says gets its attributes re-pointed to match
+/// ([`align_texcoords`]).
+pub const FORMAT: u64 = 4;
 
 /// The game places a 3D map's instances at the file's node worlds times
 /// this (`PhyreScene_doOnFieldMapAssetLoaded`; ffx-rust's
@@ -435,7 +438,9 @@ impl Importer {
     /// - per material, which of the primitive's `TEXCOORD_n` each of its
     ///   vertex program's `TEXCOORD` inputs reads (`extras.ffx_texcoords`,
     ///   e.g. `{"TEXCOORD0": 0, "TEXCOORD6": 1}`), from the first primitive
-    ///   drawn with it ([`texcoord_sources`]), and likewise which `COLOR_n`
+    ///   drawn with it ([`texcoord_sources`]); the material's other
+    ///   primitives get their `TEXCOORD_n` attributes re-pointed so the same
+    ///   numbers hold for them ([`align_texcoords`]); likewise which `COLOR_n`
     ///   each `COLOR` input reads (`extras.ffx_colors`);
     /// - each mesh's instance (`extras.ffx_instance`, its index among the
     ///   cluster's `PMeshInstance`s) and the instance's morph fields
@@ -546,7 +551,7 @@ impl Importer {
             {
                 mesh["extras"]["ffx_dobj_kind"] = json!(si.dobj_kind);
             }
-            let Some(prims) = mesh["primitives"].as_array() else {
+            let Some(prims) = mesh["primitives"].as_array_mut() else {
                 continue;
             };
             for p in prims {
@@ -558,9 +563,6 @@ impl Importer {
                 let (Ok(seg), Ok(mat)) = (usize::try_from(seg), usize::try_from(mat)) else {
                     continue;
                 };
-                if texcoords.contains_key(&mat) {
-                    continue;
-                }
                 let Some(fx) = model
                     .materials
                     .get(mat)
@@ -583,10 +585,20 @@ impl Importer {
                         .map(|a| a.iter().filter_map(Value::as_u64).collect())
                         .unwrap_or_default()
                 };
+                let uvs = texcoord_sources(&fx, bindings, &sets("ffx_uv_sets"), "TEXCOORD");
+                if let Some((first, _)) = texcoords.get(&mat) {
+                    // the material's numbers come from its first primitive: this one's
+                    // streams follow them (bsil06's ground shares materials between
+                    // instances whose bound UV stream sits at TEXCOORD_1 and TEXCOORD_0)
+                    if let Some(attrs) = p["attributes"].as_object_mut() {
+                        align_texcoords(attrs, first, &uvs);
+                    }
+                    continue;
+                }
                 texcoords.insert(
                     mat,
                     (
-                        texcoord_sources(&fx, bindings, &sets("ffx_uv_sets"), "TEXCOORD"),
+                        uvs,
                         texcoord_sources(&fx, bindings, &sets("ffx_color_sets"), "COLOR"),
                     ),
                 );
@@ -727,6 +739,40 @@ fn texcoord_sources(
         }
     }
     Value::Object(out)
+}
+
+/// Re-points a primitive's `TEXCOORD_n` attributes so that each `TEXCOORD`
+/// input reads, at the number its material says (`material`, the
+/// material's `ffx_texcoords` from its first primitive), the stream this
+/// primitive's own bindings give it (`own`, [`texcoord_sources`] for this
+/// primitive): `TEXCOORD_<material[input]>` takes the accessor of
+/// `TEXCOORD_<own[input]>`. Accessors are shared, nothing is copied.
+fn align_texcoords(attrs: &mut serde_json::Map<String, Value>, material: &Value, own: &Value) {
+    let (Some(material), Some(own)) = (material.as_object(), own.as_object()) else {
+        return;
+    };
+    let before = attrs.clone();
+    for (input, at) in material {
+        let (Some(at), Some(from)) = (at.as_u64(), own.get(input).and_then(Value::as_u64)) else {
+            continue;
+        };
+        if at == from {
+            continue;
+        }
+        if let Some(acc) = before.get(&format!("TEXCOORD_{from}")) {
+            attrs.insert(format!("TEXCOORD_{at}"), acc.clone());
+        }
+    }
+    // glTF numbers a primitive's sets from 0 without gaps
+    let mut k = 0;
+    while !attrs.contains_key(&format!("TEXCOORD_{k}")) {
+        let Some(acc) = (k + 1..8).find_map(|j| attrs.get(&format!("TEXCOORD_{j}")).cloned())
+        else {
+            break;
+        };
+        attrs.insert(format!("TEXCOORD_{k}"), acc);
+        k += 1;
+    }
 }
 
 /// Each material's sampler address modes ([`sampler_wraps`]) into its
@@ -1205,6 +1251,53 @@ mod tests {
         // a set the primitive does not have: left out
         let t = texcoord_sources(&fx, &[bind(6, 2)], &[0, 1], "TEXCOORD");
         assert_eq!(t, json!({"TEXCOORD0": 0, "TEXCOORD7": 0}));
+    }
+
+    #[test]
+    fn texcoords_follow_the_material_on_its_other_primitives() {
+        // the material's first primitive reads TEXCOORD0 at TEXCOORD_1; this one has
+        // its bound stream at TEXCOORD_0 (one UV stream, set 1)
+        let mut attrs = json!({"POSITION": 0, "TEXCOORD_0": 5})
+            .as_object()
+            .unwrap()
+            .clone();
+        align_texcoords(
+            &mut attrs,
+            &json!({"TEXCOORD0": 1}),
+            &json!({"TEXCOORD0": 0}),
+        );
+        assert_eq!(
+            Value::Object(attrs),
+            json!({"POSITION": 0, "TEXCOORD_0": 5, "TEXCOORD_1": 5})
+        );
+        // the other way: the material reads TEXCOORD_0, this primitive's stream is its second
+        let mut attrs = json!({"TEXCOORD_0": 5, "TEXCOORD_1": 6})
+            .as_object()
+            .unwrap()
+            .clone();
+        align_texcoords(
+            &mut attrs,
+            &json!({"TEXCOORD0": 0}),
+            &json!({"TEXCOORD0": 1}),
+        );
+        assert_eq!(
+            Value::Object(attrs),
+            json!({"TEXCOORD_0": 6, "TEXCOORD_1": 6})
+        );
+        // the same numbers: nothing changes
+        let mut attrs = json!({"TEXCOORD_0": 5, "TEXCOORD_1": 6})
+            .as_object()
+            .unwrap()
+            .clone();
+        align_texcoords(
+            &mut attrs,
+            &json!({"TEXCOORD0": 0, "TEXCOORD7": 1}),
+            &json!({"TEXCOORD0": 0, "TEXCOORD7": 1}),
+        );
+        assert_eq!(
+            Value::Object(attrs),
+            json!({"TEXCOORD_0": 5, "TEXCOORD_1": 6})
+        );
     }
 
     #[test]

@@ -188,7 +188,10 @@ for a blended pass that writes depth, as nearly all blended map parts do;
 per combination of modes and defines. The shader body is the map shader's
 math as its bytecode has it (`ffx-import effect --wgsl`):
 
-- texture x `MaterialColour` x vertex colour (all four), the fog x `fgEff`
+- texture x `MaterialColour` x vertex colour (all four), the texture at
+  the UV set `TEXCOORD0` reads (the import's `ffx_texcoords`: bsil06's
+  ground, flat patches of single texels before, keeps its UVs in glTF
+  `TEXCOORD_1`), the fog x `fgEff`
   when the pixel program reads `fgEff`, x the colour scale, the tone curve.
   `IGNORE_FOG` variants still fog in their programs; their materials have
   `fgEff` 0 (`lchb00`, `klyt00`);
