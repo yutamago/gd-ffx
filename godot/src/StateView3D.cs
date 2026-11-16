@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Collections.Generic;
 using GdFfx.Api;
 using GdFfx.Remake;
@@ -47,6 +48,12 @@ public partial class StateView3D : Node3D
         public (int Bone, int Element)[] BoneMap = [];
         /// <summary>The skeleton's transform in the model's space (inverted).</summary>
         public Transform3D SkeletonInModelInv = Transform3D.Identity;
+        /// <summary>
+        /// A model without a skin (rigid parts, e.g. the save sphere f001): each part node
+        /// <c>MeshNodeK</c> with the game element it follows and its parent's transform in the
+        /// model (inverted).
+        /// </summary>
+        public (Node3D Part, int Element, Transform3D ParentInv)[] Rigid = [];
     }
 
     public override void _Ready()
@@ -294,7 +301,10 @@ public partial class StateView3D : Node3D
             return;
         var skels = model.FindChildren("*", nameof(Skeleton3D), true, false);
         if (skels.Count == 0 || skels[0] is not Skeleton3D skel)
+        {
+            n.Rigid = RigidParts(model);
             return;
+        }
         n.Skeleton = skel;
         // the skeleton's place in the model (the glTF nodes above it)
         Transform3D t = Transform3D.Identity;
@@ -303,6 +313,44 @@ public partial class StateView3D : Node3D
                 t = p3.Transform * t;
         n.SkeletonInModelInv = t.AffineInverse();
         n.BoneMap = BoneOrder(skel);
+    }
+
+    /// <summary>
+    /// A skinless model's parts and the elements they follow: part <c>MeshNodeK</c> follows the
+    /// K-th leaf <c>SkeletonNode_i</c> by element (f001: three parts on elements 2, 3, 4, the
+    /// leaves; the game moves 2 and 3 up 6 and turns them, 4 is the base). Seen on f001, where
+    /// the game places the parts per mesh (<c>graphicCharacterInstanceSetWorldMatrixByMdlID</c>);
+    /// the pairing is inferred, not read from the game.
+    /// </summary>
+    private static (Node3D, int, Transform3D)[] RigidParts(Node3D model)
+    {
+        const string bone = "SkeletonNode_", part = "MeshNode";
+        var leaves = new List<int>();
+        var parts = new SortedDictionary<int, Node3D>();
+        foreach (var x in model.FindChildren("*", nameof(Node3D), true, false))
+        {
+            if (x is not Node3D n3)
+                continue;
+            var name = n3.Name.ToString();
+            if (name.StartsWith(bone, System.StringComparison.Ordinal) && int.TryParse(name[bone.Length..], out var e)
+                && !n3.GetChildren().OfType<Node3D>().Any(c => c.Name.ToString().StartsWith(bone, System.StringComparison.Ordinal)))
+                leaves.Add(e);
+            else if (name.StartsWith(part, System.StringComparison.Ordinal) && int.TryParse(name[part.Length..], out var k))
+                parts[k] = n3;
+        }
+        leaves.Sort();
+        var list = new List<(Node3D, int, Transform3D)>();
+        foreach (var (k, node) in parts)
+        {
+            if (k >= leaves.Count)
+                break;
+            Transform3D t = Transform3D.Identity;
+            for (Node? p = node.GetParent(); p != null && p != model; p = p.GetParent())
+                if (p is Node3D p3)
+                    t = p3.Transform * t;
+            list.Add((node, leaves[k], t.AffineInverse()));
+        }
+        return list.ToArray();
     }
 
     /// <summary>
@@ -341,13 +389,26 @@ public partial class StateView3D : Node3D
     private static int Pose(ActorNode n, Actor a, GameStateView view)
     {
         var skel = n.Skeleton;
-        if (skel == null)
-            return 0;
         Actor? prev = null;
         if (view.Previous != null)
             foreach (var p in view.Previous.Actors)
                 if (p.Slot == a.Slot && p.Bones.Count == a.Bones.Count && view.Interpolates(p, a))
                     prev = p;
+        if (skel == null)
+        {
+            int moved = 0;
+            foreach (var (part, i, parentInv) in n.Rigid)
+            {
+                if (i >= a.Bones.Count)
+                    continue;
+                var t = RowMajor(a.Bones[i].Matrix);
+                if (prev != null)
+                    t = RowMajor(prev.Bones[i].Matrix).InterpolateWith(t, view.Alpha);
+                part.Transform = parentInv * t;
+                moved++;
+            }
+            return moved;
+        }
         int posed = 0;
         // in skeleton order, parents first: a parent's later set would move its children
         foreach (var (b, i) in n.BoneMap)

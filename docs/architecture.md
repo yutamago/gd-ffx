@@ -177,13 +177,16 @@ between the last two snapshots), shown while the game draws it. Besaid's
 birds (objects 18..32, at the origin in the file) fly where the game has
 them; the Besaid check counts the meshes placed (45).
 
-Not done: character models made of rigid parts without a skin. The save
-sphere's base (`f001`: three meshes `MeshNode0..2`, five
-`SkeletonNode`s, no skin in the import) is placed by the game per mesh
-(`graphicCharacterInstanceSetWorldMatrix`, docs/formats/render.md in
-ffx-rust), so posing its bones moves nothing and its ring lies flat. It
-needs the meshes' world matrices in the API (or each mesh's bone in the
-import). Its glowing orb is an effect, not part of the model.
+Character models made of rigid parts without a skin (the save sphere's
+base `f001`: three meshes `MeshNode0..2`, five `SkeletonNode`s, no skin in
+the import) are placed by the game per mesh
+(`graphicCharacterInstanceSetWorldMatrixByMdlID`), so posing bones moves
+nothing. `StateView3D` moves part `MeshNodeK` with the K-th leaf
+`SkeletonNode` (by element) instead: on f001 elements 2, 3 and 4, of which
+the game lifts 2 and 3 by 6 and turns them (the ring and its mount) and
+leaves 4 at the base. The pairing is inferred from f001, not read from the
+game; the picture then matches the original's (the ring floating above the
+pedestal). Its glowing orb is an effect, not part of the model.
 
 ## Effects and the battle HUD (G3)
 
