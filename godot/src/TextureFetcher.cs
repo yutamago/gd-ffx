@@ -51,7 +51,7 @@ public static class TextureFetcher
     public static Pixels? Fetch(string kind, string name, int face = 0)
     {
         if (OnMainThread)
-            return GameHost.Instance?.Game is { } game ? From(game.TextureNow(kind, name, face)) : null;
+            return GameHost.ClassicGame is { } game ? From(game.TextureNow(kind, name, face)) : null;
         var t = Request(kind, name, face);
         return t.Wait(TimeoutMs) ? t.Result : null;
     }

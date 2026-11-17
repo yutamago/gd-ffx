@@ -594,7 +594,7 @@ void fragment() {
         {
             if (OS.GetThreadCallerId() != OS.GetMainThreadId())
                 return LayerShaders[0];
-            on = GameHost.Instance?.Game?.ClassicEffectSwitches(effect, LayerSwitches) ?? [];
+            on = GameHost.ClassicGame?.ClassicEffectSwitches(effect, LayerSwitches) ?? [];
             lock (Switches)
                 Switches[effect] = on;
         }
@@ -879,7 +879,7 @@ void fragment() {
     /// <summary>The map's reflection cube map: the first of reflection, reflection1..4 in its texture folder.</summary>
     private static string? MapCube(string? texDir)
     {
-        if (texDir == null || GameHost.Instance?.Game == null)
+        if (texDir == null || GameHost.ClassicGame == null)
             return null;
         foreach (var n in new[] { "reflection", "reflection1", "reflection2", "reflection3", "reflection4" })
         {

@@ -10,6 +10,7 @@ namespace GdFfx.Remaster;
 /// one's (docs/remake.md, "Overrides").
 /// </summary>
 [GlobalClass]
+[Tool] // the remaster editor reads and writes it (docs/remaster-editor.md): a real instance there, not a placeholder
 public partial class PartOverride : Resource
 {
     /// <summary>The part, instance (<c>.../*</c>), node or added node.</summary>
@@ -34,4 +35,11 @@ public partial class PartOverride : Resource
 
     /// <summary>Free text (why, what to do next).</summary>
     [Export(PropertyHint.MultilineText)] public string Note { get; set; } = "";
+
+    /// <summary>A copy (the scene shared).</summary>
+    public PartOverride Copy() => new()
+    {
+        Id = Id, Remove = Remove, Visibility = Visibility, TransformMode = TransformMode, Transform = Transform,
+        Replace = Replace, Scene = Scene, Note = Note,
+    };
 }

@@ -19,6 +19,18 @@ public partial class GameHost : Node
     public FfxGame? Game { get; private set; }
 
     /// <summary>
+    /// The extension's game object the editor opened the archive with (the remaster plugin,
+    /// docs/remaster-editor.md: no game booted, no autoload running); null in the game.
+    /// </summary>
+    public static FfxGame? EditorGame { get; set; }
+
+    /// <summary>
+    /// The game object to ask for classic content (textures, material variants): the running
+    /// game's, else the editor's (<see cref="EditorGame"/>).
+    /// </summary>
+    public static FfxGame? ClassicGame => Instance?.Game ?? EditorGame;
+
+    /// <summary>
     /// The extension's <c>FfxAudioOut</c>, playing the game's own mix (null when muted:
     /// <see cref="GameSettings.AudioEnabled"/>).
     /// </summary>

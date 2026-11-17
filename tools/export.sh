@@ -66,8 +66,9 @@ remap+=" --remap-path-prefix=$repo=gd-ffx"
 
 # export_filter all_resources packs every resource under godot/, tracked or not:
 # nothing but git's files may be there, apart from what Godot and this script
-# make (.godot/, the .sln, the uid of a script whose uid is not committed) and
-# classic/ (excluded by the presets)
+# make (.godot/, the .sln, the uid of a script whose uid is not committed),
+# classic/ and the remaster editor's map edit scenes, remaster/edit/ (excluded by
+# the presets, as the editor's addons/ is)
 git -C "$repo" rev-parse --git-dir >/dev/null 2>&1 || {
     echo "export.sh: not a git checkout: cannot check godot/ for files outside git" >&2
     exit 2
@@ -76,7 +77,7 @@ stray=()
 while IFS= read -r line; do
     path="${line:3}"
     case "$path" in
-        godot/.godot/* | godot/classic/* | godot/*.sln) continue ;;
+        godot/.godot/* | godot/classic/* | godot/remaster/edit/* | godot/*.sln) continue ;;
         *.uid) grep -qxE 'uid://[a-z0-9]+' "$repo/$path" 2>/dev/null && continue ;;
     esac
     stray+=("$path")

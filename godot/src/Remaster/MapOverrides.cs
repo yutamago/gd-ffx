@@ -13,6 +13,7 @@ namespace GdFfx.Remaster;
 /// hand-set status, notes and render path live here too.
 /// </summary>
 [GlobalClass]
+[Tool] // the remaster editor reads and writes it (docs/remaster-editor.md): a real instance there, not a placeholder
 public partial class MapOverrides : Resource
 {
     /// <summary>The level key (<c>bsil00</c>); informational, the file's folder decides.</summary>

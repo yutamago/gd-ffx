@@ -49,3 +49,6 @@ Thumbs.db
 
 # agent worktrees
 /.claude/
+
+# the remaster editor's map edit scenes (made per map in the editor; they build the classic map at run time)
+/godot/remaster/edit/
