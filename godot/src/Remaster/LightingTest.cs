@@ -342,6 +342,7 @@ public sealed class LightingTest : ITest
             ToneExposure = 1.1f,
             VolumetricFog = true,
             VolumetricDensity = 0.002f,
+            ScreenSsao = true,
             GiMode = GiMode.VoxelGi,
         };
         m.Volumes.Add(new LightingVolume
@@ -426,7 +427,7 @@ public sealed class LightingTest : ITest
             var r = ColourBalance.Compare(_classic, img);
             if (Mathf.Abs(r.DL) > 0.01f || r.ChromaRatio is < 0.97f or > 1.03f)
                 return $"the classic picture after F7 is not the first one: {r}";
-            _seen.Add($"classic again after F7 (dL {r.DL:+0.000;-0.000})");
+            _seen.Add($"classic again after F7 (dL {r.DL:+0.000;-0.000;0.000})");
         }
         else
             _seen.Add("classic again after F7");
@@ -472,7 +473,9 @@ public sealed class LightingTest : ITest
         if (FileAccess.FileExists(bake))
         {
             DirAccess.RemoveAbsolute(bake);
+            // the folders too when the check's bake was all they held
             DirAccess.RemoveAbsolute(bake.GetBaseDir());
+            DirAccess.RemoveAbsolute(bake.GetBaseDir().GetBaseDir());
         }
         LightingLayers.Unregister(Level, "selftest-lighting");
         LightingLayers.Unregister(Level, "variant");

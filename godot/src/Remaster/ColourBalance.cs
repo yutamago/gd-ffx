@@ -25,7 +25,7 @@ public static class ColourBalance
 
         public override string ToString() =>
             FormattableString.Invariant($"classic L {Classic.L:0.000} C {Classic.C:0.000} hue {Classic.HueDeg:0}, remastered L {Remastered.L:0.000} C {Remastered.C:0.000} hue {Remastered.HueDeg:0}: ")
-            + FormattableString.Invariant($"dL {DL:+0.000;-0.000}, chroma x{ChromaRatio:0.00}, hue {DHue:0.0} deg, cells |dL| {CellsDL:0.000}, hue {CellsDHue:0.0} deg")
+            + FormattableString.Invariant($"dL {DL:+0.000;-0.000;0.000}, chroma x{ChromaRatio:0.00}, hue {DHue:0.0} deg, cells |dL| {CellsDL:0.000}, hue {CellsDHue:0.0} deg")
             + (Ok ? "" : " (OFF: " + string.Join("; ", Fails) + ")");
     }
 
@@ -107,8 +107,11 @@ public static class ColourBalance
             .Select(p => HueDiff(p.a.HueDeg, p.b.HueDeg)).ToList());
         var fails = new List<string>();
         string I(FormattableString f) => FormattableString.Invariant(f);
+        // a remastered picture that is the classic one measures nothing (a frame not drawn: a lost GPU device)
+        if (classic.GetData().AsSpan().SequenceEqual(remastered.GetData()))
+            fails.Add("the remastered picture is the classic one");
         if (MathF.Abs(dl) > Lightness)
-            fails.Add(I($"lightness {dl:+0.000;-0.000} (limit {Lightness})"));
+            fails.Add(I($"lightness {dl:+0.000;-0.000;0.000} (limit {Lightness})"));
         if (ratio < ChromaMin || ratio > ChromaMax)
             fails.Add(I($"chroma x{ratio:0.00} (limit {ChromaMin}..{ChromaMax})"));
         if (dh > Hue)

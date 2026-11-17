@@ -96,6 +96,9 @@ def compare(classic, remastered):
     cell_dh = median([hue_diff(a["hue"], b["hue"]) for a, b in zip(cc, rc)
                       if a["hueChroma"] > 0.01 and b["hueChroma"] > 0.01])
     fails = []
+    # a remastered picture that is the classic one measures nothing (a frame not drawn: a lost GPU device)
+    if Image.open(classic).convert("RGB").tobytes() == Image.open(remastered).convert("RGB").resize(size).tobytes():
+        fails.append("the remastered picture is the classic one")
     if abs(dl) > LIGHTNESS:
         fails.append(f"lightness {dl:+.3f} (limit {LIGHTNESS})")
     if not CHROMA[0] <= ratio <= CHROMA[1]:

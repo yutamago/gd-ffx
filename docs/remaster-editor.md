@@ -361,7 +361,7 @@ reads it; a classic map never does.
 | Sky | `SkyMode` (Game: a procedural sky in the game's background and fog colours; Procedural: `SkyTop`, `SkyHorizon`, `SkyGround`; Physical; Panorama: `SkyPanorama`, an HDRI of the project's), `SkyEnergy`, `SkyHideClassic` (the classic sky parts hidden) | Game, the classic sky parts kept |
 | Tone and colour | `ToneMapper` (Linear, Reinhard, Filmic, ACES, AgX), `ToneExposure`, `ToneWhite`, `ToneSaturation`, `ToneContrast` | Filmic, 1, 2.5, 1.15, 1 |
 | Glow | `Glow`, `GlowIntensity`, `GlowThreshold`, `GlowBloom` | on, 0.5, 1, 0 |
-| Screen-space | `ScreenSsao` (+ radius, intensity), `ScreenSsil` (+ intensity), `ScreenSsr` | SSAO on |
+| Screen-space | `ScreenSsao` (+ radius, intensity), `ScreenSsil` (+ intensity), `ScreenSsr` | all off |
 | Global illumination | `GiMode` (None, Sdfgi, VoxelGi, LightmapGi), `GiEnergy`, `GiSize`/`GiCentre` (the VoxelGI's box; zero: the map's middle, at most 1,200 x 400 x 1,200), `GiCascades`, `GiCellSize` (SDFGI) | None |
 | Volumes | `Volumes` (`LightingVolume`s: "Volumes") | none |
 
@@ -457,7 +457,7 @@ what a remastered map's lighting costs:
 |---|---|---|---|
 | GI | the map's | VoxelGI only | none |
 | volumetric fog | the map's (128 x 96 froxels) | the map's (64 x 48) | off |
-| SSAO / SSIL / SSR | the map's | SSAO | none |
+| SSAO / SSIL / SSR | the map's | the map's SSAO | none |
 | shadows | 4 splits, the project's atlas and filter, 3,000 units | 2 splits, 2048, 2,000 | 2 splits, 2048, 1,200 |
 
 The Deck preset sets low. Compatibility draws no GI, volumetric fog or
@@ -493,6 +493,25 @@ twice (blue) and its ambient became 0.09 (black, blue); the game's blue key
 light and ambient multiplied the yellow sand to grey; half the baked vertex
 light was dropped; AgX desaturated; and the refraction sea lost its colour
 under the linear output (a premultiplied colour decoded with its alpha).
+
+Measured on Besaid beach (developer save 7, the defaults, 2026-11-17):
+
+| Renderer | lit from the colour textures | with PBR materials |
+|---|---|---|
+| Forward+, Vulkan on lavapipe (Xvfb) | lightness +0.007, chroma x0.88, hue 2.0°; cells 0.022, 1.7° | +0.003, x0.87, 2.1°; cells 0.034, 2.9° |
+| Compatibility (Xvfb) | +0.040, x0.93, 3.5°; cells 0.040, 2.1° | within the limits |
+| Forward+, D3D12 (Intel Arc 140T, the Windows export) | not measured: the device was lost | |
+
+The GPU check (`tools/compare-shot-win.sh`, two runs): the classic picture
+scores 8.9 against the original's, as on main; the remastered view did not
+draw. A few frames after the map switched to remastered the D3D12 device was
+lost (`0x887a0005`, device removed), in both runs: the first with the sun's
+soft shadows (PCSS at 1.5°) and the shadow atlas set at run time, the second
+without them, SSAO still on. A remastered picture identical to the classic
+one (a frame not drawn) now fails the colour check (it passed the second
+run's script once, falsely). SSAO is off by default since; whether that
+was the cause is not verified on the GPU (R8: the remastered features one at
+a time on the GPU).
 
 ## Your work and git
 

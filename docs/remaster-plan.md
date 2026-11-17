@@ -192,8 +192,8 @@ Open after R2:
 
 ## R3 in detail
 
-R3, lighting and atmosphere, is done (2026-11-17; docs/remaster-editor.md,
-"Lighting" to "The colour check"):
+R3, lighting and atmosphere, is done but for the GPU check (2026-11-17;
+docs/remaster-editor.md, "Lighting" to "The colour check"):
 
 - **R2's grey remaster fixed, and measured.** The colour check
   (`ColourBalance`, `tools/compare/colour.py`): mean OKLab lightness, chroma
@@ -204,9 +204,10 @@ R3, lighting and atmosphere, is done (2026-11-17; docs/remaster-editor.md,
   sun, a black ambient), the game's blue character lights multiplying the
   yellow sand, half the baked vertex light dropped, AgX, and the refraction
   sea losing its colour under the linear output. Now (Besaid, the defaults):
-  Forward+ on lavapipe lightness +0.011, chroma x0.88, hue 1.8° (PBR
-  materials: +0.008, x0.87, 1.8°); Compatibility +0.034, x0.95, 3.2°; the
-  GPU below.
+  Forward+ on lavapipe lightness +0.007, chroma x0.88, hue 2.0° (PBR
+  materials: +0.003, x0.87, 2.1°); Compatibility +0.040, x0.93, 3.5°. On the
+  GPU (D3D12, Intel Arc 140T) the remastered view lost the device in both
+  runs (classic scores 8.9 as on main): no GPU numbers yet (open below).
 - **The game's lighting as editable objects**: `MapLighting`
   (`lighting.tres` beside the overrides; text, stable, layered per file):
   the key light, the ambient, the fog as the game's look gives them (or
@@ -236,11 +237,15 @@ R3, lighting and atmosphere, is done (2026-11-17; docs/remaster-editor.md,
   main, which differ by 0.21 from each other; Forward+ on lavapipe: 0.53 and
   0.52, main against itself 0.84).
 - **Checks**: `--selftest-lighting --devsave=7`, the editor check's lighting
-  steps and the game applying them, the quick sweep classic and remastered,
-  the GPU comparison with the colour check.
+  steps and the game applying them, the quick sweep classic and remastered
+  (10 of 10, 0 errors each), the GPU comparison with the colour check.
 
 Open after R3:
 
+- **the GPU**: the remastered view lost the D3D12 device (Intel Arc 140T)
+  a few frames after the switch, with soft shadows and SSAO, then with SSAO
+  alone; both are off by default now, unverified on the GPU; the colour
+  check's GPU numbers are still to be taken;
 - LightmapGI (lightmap UVs for the maps: an importer step);
 - the shore: the game's painted layers blend in gamma; they stay classic by
   default, and Besaid's lagoon is still paler than the classic one;

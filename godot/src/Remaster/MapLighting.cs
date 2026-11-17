@@ -168,7 +168,8 @@ public partial class MapLighting : Resource
     [Export(PropertyHint.Range, "0,1,0.01")] public float GlowBloom { get; set; }
 
     [ExportGroup("Screen-space", "Screen")]
-    [Export] public bool ScreenSsao { get; set; } = true;
+    /// <summary>SSAO (off by default: unverified on the GPU check, where the D3D12 device was lost with it on).</summary>
+    [Export] public bool ScreenSsao { get; set; }
     [Export(PropertyHint.Range, "0.1,16,0.1")] public float ScreenSsaoRadius { get; set; } = 3f;
     [Export(PropertyHint.Range, "0,16,0.1")] public float ScreenSsaoIntensity { get; set; } = 1.5f;
     [Export] public bool ScreenSsil { get; set; }
