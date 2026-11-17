@@ -31,15 +31,9 @@ public static class ClassicMaterials
 vec3 ffx_curve(vec3 x) {
 	return min(x, vec3(0.4)) * 2.1 + clamp(x, vec3(0.4), vec3(0.58)) * 1.08 - vec3(0.47);
 }
-vec3 ffx_to_linear(vec3 c) {
-	c = clamp(c, vec3(0.0), vec3(1.0));
-	return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
-}
-// the game computes on the stored (gamma) values and shows the result as
-// it is; ffx_gamma_out says whether this renderer converts linear to sRGB on
-// output (then the result goes back to linear first)
-uniform bool ffx_gamma_out = false;
-vec3 ffx_out(vec3 c) { return ffx_gamma_out ? ffx_to_linear(c) : c; }
+// the game computes on the stored (gamma) values and writes the result as it
+// is: so do these (under Forward+ ClassicPost decodes the buffer at the end,
+// docs/architecture.md, Colours)
 // the scene's look (the game-state API's Look; ClassicMaterials.SetLook)
 global uniform vec3 ffx_colour_scale;
 global uniform vec3 ffx_fog_colour;
@@ -127,7 +121,7 @@ void fragment() {
 #ifdef FOG
 	c.rgb = ffx_fog_apply(c.rgb, -VERTEX.z);
 #endif
-	ALBEDO = ffx_out(ffx_curve(c.rgb * ffx_colour_scale));
+	ALBEDO = ffx_curve(c.rgb * ffx_colour_scale);
 #ifdef BLEND
 	ALPHA = clamp(c.a, 0.0, 1.0);
 #endif
@@ -217,7 +211,7 @@ void fragment() {
 	c.rgb = ffx_fog_apply(c.rgb, -VERTEX.z);
 #endif
 	c = clamp(c * vec4(ffx_colour_scale, 1.0), 0.0, 1.0);
-	vec3 o = ffx_out(ffx_curve(c.rgb));
+	vec3 o = ffx_curve(c.rgb);
 #ifdef REFRACTION
 	vec3 Pw = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	vec3 V = normalize(CAMERA_POSITION_WORLD - Pw);
@@ -263,7 +257,7 @@ void fragment() {
 	}
 	vec4 c = t * vertex_colour * material_colour;
 	vec3 o = min(c.rgb * lit, vec3(1.0));
-	ALBEDO = ffx_out(ffx_fog_apply(o, -VERTEX.z));
+	ALBEDO = ffx_fog_apply(o, -VERTEX.z);
 }
 ";
 
@@ -299,7 +293,7 @@ void vertex() {
 void fragment() {
 	vec4 c = texture(tex, UV) * material_colour * COLOR;
 	if (c.a < cut_alpha) { discard; }
-	ALBEDO = ffx_out(c.rgb);
+	ALBEDO = c.rgb;
 	ALPHA = c.a;
 }
 ";

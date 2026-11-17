@@ -17,8 +17,10 @@ public partial class StateView3D : Node3D
 {
     private Camera3D _camera = null!;
     private long _lookOf = -1;
-    private (bool On, float None, float Full, float Gain) _glow = (false, -1, -1, -1);
+    private (bool On, float None, float Full, float Gain, float Spread) _glow = (false, -1, -1, -1, -1);
     private WorldEnvironment _env = null!;
+    /// <summary>Forward+'s post effect (the game's colours and glow; null under Compatibility).</summary>
+    private ClassicPost? _post;
     private readonly Dictionary<ushort, ActorNode> _actors = new();
     private readonly HashSet<ushort> _seen = new();
 
@@ -94,6 +96,13 @@ public partial class StateView3D : Node3D
                 TonemapMode = Environment.ToneMapper.Linear,
             },
         };
+        // Forward+: the buffer holds the game's values, the game's glow and the decode after the
+        // transparent pass (ClassicPost); Compatibility writes them as they are
+        if (ClassicPost.Needed() && !GameSettings.Flag("no-classic-post"))
+        {
+            _post = new ClassicPost();
+            _env.Compositor = new Compositor { CompositorEffects = [_post] };
+        }
         AddChild(_env);
         _layers = new MapLayers { Name = "MapLayers" };
         AddChild(_layers);
@@ -159,6 +168,10 @@ public partial class StateView3D : Node3D
             if (view.Current?.Look is { Valid: true } look)
             {
                 var bg = new Color(look.Background.X, look.Background.Y, look.Background.Z);
+                // Forward+ clears with the colour taken as sRGB (decoded to its linear buffer):
+                // encoded here, so the buffer holds the game's value
+                if (_post != null)
+                    bg = bg.LinearToSrgb();
                 if (_env.Environment.BackgroundColor != bg)
                     _env.Environment.BackgroundColor = bg;
                 ApplyGlow(look);
@@ -191,10 +204,17 @@ public partial class StateView3D : Node3D
     {
         var env = _env.Environment;
         bool on = look.GlowGain > 0 && !GameSettings.Flag("no-glow");
-        var glow = (on, look.GlowNone, look.GlowFull, look.GlowGain);
+        var glow = (on, look.GlowNone, look.GlowFull, look.GlowGain, look.GlowSpread);
         if (glow == _glow)
             return;
         _glow = glow;
+        if (_post != null)
+        {
+            // Forward+: the game's own glow (ClassicPost)
+            env.GlowEnabled = false;
+            (_post.GlowOn, _post.GlowNone, _post.GlowFull, _post.GlowGain, _post.GlowSpread) = glow;
+            return;
+        }
         env.GlowEnabled = on;
         if (!on)
             return;
