@@ -357,6 +357,10 @@ public sealed class BesaidTest(double timeout, string? shot) : ITest
 
     private Phase _phase = Phase.Boot;
     private double _phaseTime;
+    // the screen filters seen while walking (ScreenFilterView): modes, the highest alpha, frames at 1
+    private readonly System.Collections.Generic.HashSet<int> _fadeModes = new();
+    private float _fadeMost;
+    private int _fadeBlack;
     private double _total;
     private string _seen = "";
     private Vector3 _start;
@@ -442,7 +446,11 @@ public sealed class BesaidTest(double timeout, string? shot) : ITest
                 var moved = _start.DistanceTo(_last);
                 if (moved < 5f)
                     return Done(false, $"map {MapNext:x} came without the player moving ({moved:F1} units)");
-                _seen = $"{_seen}; walked {moved:F0} units off the beach to map {MapNext:x} in {_phaseTime:F1} s";
+                _seen = $"{_seen}; walked {moved:F0} units off the beach to map {MapNext:x} in {_phaseTime:F1} s; "
+                    + $"the fade: modes {string.Join(",", _fadeModes.Order())}, highest alpha {_fadeMost:F3}, {_fadeBlack} frames fully black";
+                // the fade to black before a map change ends fully black (Sg_DrawFilter's held mode 3)
+                if (_fadeModes.Contains(3) && _fadeMost < 1f)
+                    return Done(false, $"the fade to black stopped at alpha {_fadeMost:F3} ({_seen})");
                 if (!GameSettings.Flag("check-autosave"))
                     return Done(true, _seen);
                 Next(Phase.AutoSave);
@@ -470,6 +478,15 @@ public sealed class BesaidTest(double timeout, string? shot) : ITest
             case Phase.Walk:
                 if (v.Current?.World.Map == MapBeach)
                     _last = Player(v);
+                if ((Engine.GetMainLoop() as SceneTree)?.Root.FindChild("ScreenFilterView", true, false) is ScreenFilterView filter)
+                    foreach (var (mode, alpha) in filter.Shown)
+                        if (alpha > 0)
+                        {
+                            _fadeModes.Add(mode);
+                            _fadeMost = System.Math.Max(_fadeMost, alpha);
+                            if (alpha >= 1f)
+                                _fadeBlack++;
+                        }
                 if (_phaseTime > 60)
                 {
                     Keys(false);
