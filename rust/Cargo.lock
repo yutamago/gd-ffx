@@ -813,6 +813,7 @@ dependencies = [
  "ffx-state",
  "ffx-text",
  "godot",
+ "serde_json",
 ]
 
 [[package]]

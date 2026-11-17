@@ -52,3 +52,9 @@ Thumbs.db
 
 # the remaster editor's map edit scenes (made per map in the editor; they build the classic map at run time)
 /godot/remaster/edit/
+
+# the remaster editor check's textures (made from the player's game; tools/remaster-editor-check.sh removes them)
+/godot/remaster/check/
+# the remaster's textures and materials made in this checkout (replacements, generated maps: made from
+# the player's game, so never in git; a remaster project keeps them in its own pack: docs/remaster-editor.md)
+/godot/remaster/textures/

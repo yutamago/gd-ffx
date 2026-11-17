@@ -34,7 +34,7 @@ public sealed class EditorSelfTest
     public static readonly Vector3 MoveBy = new(0, 20, 0);
     public static readonly Vector3 BoxAbove = new(0, 30, 0);
 
-    private enum Phase { Archive, Open, Edit, Save, Reopen, Status, Shot, Done }
+    private enum Phase { Archive, Open, Edit, Save, Reopen, Status, Uses, Textures, Batch, Imported, Shot, Done }
 
     private readonly RemasterPlugin _plugin;
     private readonly double _timeout = GameSettings.Number("editor-test-timeout", 240);
@@ -197,8 +197,41 @@ public sealed class EditorSelfTest
                     return statusFail;
                 if (Play() is { } playFail)
                     return playFail;
+                Next(Phase.Uses);
+                return null;
+            case Phase.Uses:
+                if (!_plugin.Uses.Ready)
+                    return _phaseT > 200 ? $"the where-used index is not ready ({_plugin.Uses.Progress.Done} / {_plugin.Uses.Progress.Total} maps)" : null;
+                if (CheckUses() is { } usesFail)
+                    return usesFail;
+                Next(Phase.Textures);
+                return null;
+            case Phase.Textures:
+                if (_frames < 2)
+                    return null;
+                if (Textures(_plugin.Current!) is { } texFail)
+                    return texFail;
+                Next(Phase.Batch);
+                return null;
+            case Phase.Batch:
+                if (Batch(_plugin.Current!) is { } batchFail)
+                    return batchFail;
+                if (_batchDone)
+                    Next(Phase.Imported);
+                return null;
+            case Phase.Imported:
+            {
+                // Godot's own scan and import of the new PNGs (a new folder each texture)
+                if (EditorInterface.Singleton.GetResourceFilesystem().IsScanning() || TextureStore.Importing || _frames < 3)
+                    return _phaseT > 120 ? "the import did not finish" : null;
+                if (!TextureStore.AllImported(out var missing))
+                    return _phaseT > 120 ? $"not imported: {missing}" : null;
+                if (CheckImported(_plugin.Current!) is { } impFail)
+                    return impFail;
+                _seen.Add($"every PNG and material of the index imported ({_phaseT:0.0} s after the last edit)");
                 Next(GameSettings.Arg("editor-shot") is { Length: > 0 } && DisplayServer.GetName() != "headless" ? Phase.Shot : Phase.Done);
                 return null;
+            }
             case Phase.Shot:
                 return Shot();
             case Phase.Done:
@@ -528,6 +561,211 @@ public sealed class EditorSelfTest
         _seen.Add($"play: bsil00 by developer save(s) {string.Join(", ", plan.Saves)} ({args}); "
             + $"{other?.Key}: {otherPlan?.Note}");
         return null;
+    }
+
+    // ---- R2: textures and materials ------------------------------------------------------------
+
+    private string _replaced = "", _material = "";
+    private bool _batchStarted, _batchDone;
+
+    /// <summary>The where-used index: Besaid beach's textures, each with its parts; the cache written.</summary>
+    private string? CheckUses()
+    {
+        var u = _plugin.Uses;
+        if (!u.ByLevel.TryGetValue(Key, out var ids) || ids.Count < 10)
+            return $"where-used: bsil00 has {ids?.Count ?? 0} textures";
+        if (!FileAccess.FileExists(WhereUsed.CachePath))
+            return $"where-used: no cache {WhereUsed.CachePath}";
+        // Besaid's textures by how many of its parts draw them
+        var ranked = ids.Select(id => (Id: id, Parts: u.Uses(id).First(x => x.Level == Key).Parts.Count))
+            .OrderByDescending(x => x.Parts).ThenBy(x => x.Id, System.StringComparer.Ordinal).ToList();
+        if (ranked[0].Parts == 0)
+            return "where-used: no parts on Besaid's textures";
+        int shared = ids.Count(id => u.Uses(id).Count > 1);
+        _seen.Add($"where-used: {u.ByTexture.Count} textures in {u.ByLevel.Count} maps ({(u.BuildMs > 0 ? $"built in {u.BuildMs} ms" : "cached")}); "
+            + $"bsil00 {ids.Count} textures, {shared} also on other maps");
+        return null;
+    }
+
+    /// <summary>The textures the open map's classic materials bind for <paramref name="id"/> (their <c>tex</c>).</summary>
+    private static List<Texture?> Bound(MapEditRoot root, string id)
+    {
+        var r = new List<Texture?>();
+        void Walk(Node n)
+        {
+            if (n is MeshInstance3D { Mesh: { } mesh } mi)
+                for (int s = 0; s < mesh.GetSurfaceCount(); s++)
+                    if (mi.GetSurfaceOverrideMaterial(s) is ShaderMaterial sm && RemasterTextures.ColourId(sm) == id
+                        && sm.HasMeta(Variants.Name(ClassicMaterials.MapShaderMeta)))
+                    {
+                        using var v = sm.GetShaderParameter(Variants.Name("tex"));
+                        r.Add(v.AsGodotObject() as Texture);
+                    }
+            for (int i = 0, k = n.GetChildCount(); i < k; i++)
+                Walk(n.GetChild(i));
+        }
+        Walk(root.Map!);
+        return r;
+    }
+
+    /// <summary>
+    /// A texture replaced by a generated test image, a material generated for another, each one
+    /// undo step (undone and redone); the map's render path set to remastered and the 3D view's
+    /// toggle; the index saved twice the same, without a path of this machine.
+    /// </summary>
+    private string? Textures(MapEditRoot root)
+    {
+        var global = Undo.GetHistoryUndoRedo((int)EditorUndoRedoManager.SpecialHistory.GlobalHistory);
+        var onMap = TextureActions.OnMap(root);
+        var ranked = _plugin.Uses.ByLevel[Key].Where(onMap.ContainsKey)
+            .OrderByDescending(id => onMap[id]).ThenBy(id => id, System.StringComparer.Ordinal).ToList();
+        if (ranked.Count < 4)
+            return $"the open map binds {ranked.Count} of where-used's textures";
+        (_replaced, _material) = (ranked[0], ranked[1]);
+        _plugin.SetEditorLook(false);
+        // 1. replace by a generated test image (a checker: synthetic, nothing of the game)
+        var img = Image.CreateEmpty(64, 64, false, Image.Format.Rgba8);
+        for (int y = 0; y < 64; y++)
+            for (int x = 0; x < 64; x++)
+                img.SetPixel(x, y, (x / 8 + y / 8) % 2 == 0 ? new Color(0.95f, 0.5f, 0.1f) : new Color(0.1f, 0.3f, 0.9f));
+        var classic = Bound(root, _replaced);
+        var v = global.GetVersion();
+        TextureActions.Replace(_plugin, _replaced, img, "editor check: a synthetic test pattern");
+        if (global.GetVersion() != v + 1)
+            return "the replacement is not one undo step";
+        if (TextureStore.Find(_replaced) is not { Replacement.Length: > 0 } e)
+            return "no entry for the replaced texture";
+        var file = TextureStore.Absolute(e.Replacement);
+        if (TextureStore.InProject ? !ResourceLoader.Exists(file) : !FileAccess.FileExists(file))
+            return $"{file}: not written or not imported";
+        var want = RemasterTextures.Texture(file);
+        var bound = Bound(root, _replaced);
+        if (want == null || bound.Count == 0 || bound.Any(t => t != want))
+            return $"the open map does not draw the replacement ({bound.Count} surface(s))";
+        global.Undo();
+        if (TextureStore.Find(_replaced) != null || !Bound(root, _replaced).SequenceEqual(classic))
+            return "undo did not put the classic texture back";
+        global.Redo();
+        if (Bound(root, _replaced).Any(t => t != RemasterTextures.Texture(file)))
+            return "redo did not draw the replacement again";
+        _plugin.Textures!.SetFilter(TextureDock.ModeMap, RemasterTextures.ShortName(_replaced));
+        if (!_plugin.Textures.Listed.Contains(_replaced))
+            return "the texture browser does not list the replaced texture";
+        _plugin.Textures.Select(_replaced);
+        _seen.Add($"replaced {RemasterTextures.ShortName(_replaced)} ({bound.Count} surface(s), {file.GetFile()}, imported), undone, redone");
+        // 2. a material generated from the classic pixels
+        v = global.GetVersion();
+        var t0 = Time.GetTicksMsec();
+        if (TextureActions.GenerateMaterial(_plugin, _material, new PbrRecipe { Upscale = 2, MaxSide = 1024 }) is { } genFail)
+            return genFail;
+        if (global.GetVersion() != v + 1)
+            return "the material is not one undo step";
+        // the maps are imported in the background (a scan): the material's own check waits for it (CheckImported)
+        if (TextureStore.Find(_material) is not { Material.Length: > 0 } me
+            || FileAccess.GetFileAsString(TextureStore.Absolute(me.Material)) is not { } matText
+            || !matText.Contains("orm_texture = ExtResource") || !matText.Contains("normal_texture = ExtResource") || !matText.Contains("heightmap_texture"))
+            return "the material file does not name its maps";
+        global.Undo();
+        if (TextureStore.Find(_material) != null)
+            return "undo did not take the material back";
+        global.Redo();
+        _seen.Add($"material of {RemasterTextures.ShortName(_material)} made ({Time.GetTicksMsec() - t0} ms, "
+            + $"{TextureStore.Find(_material)!.Material.GetFile()}), undone, redone");
+        // 3. the render path: remastered (written), the view follows; the toggle both ways
+        _plugin.SetMapState(Key, MapStatus.InProgress, RenderPath.Remastered, "editor check: moved, hidden, removed, replaced, added; textures");
+        if ((ResourceLoader.Load(MapStore.PathOf(Key), "", ResourceLoader.CacheMode.Ignore) as MapOverrides)?.RenderPath != RenderPath.Remastered)
+            return "the render path is not written";
+        if (MapLook.Find(root.Map!) is not { Remastered: true } look || !_plugin.EditorRemastered)
+            return "the open map does not draw remastered after its render path";
+        _plugin.SetEditorLook(false);
+        if (look.Remastered || Bound(root, _replaced).Count == 0)
+            return "the view's toggle did not draw it classic";
+        _plugin.SetEditorLook(true);
+        _seen.Add($"render path remastered: {look.Surfaces} surface(s) lit, {look.Sky.Count} sky part(s) classic; the toggle both ways");
+        // 4. the index: stable, no path of this machine
+        TextureStore.Write();
+        var a = FileAccess.GetFileAsBytes(TextureStore.IndexPath);
+        TextureStore.Write();
+        var b = FileAccess.GetFileAsBytes(TextureStore.IndexPath);
+        var text = System.Text.Encoding.UTF8.GetString(a);
+        if (!a.SequenceEqual(b))
+            return "the texture index changed on a save without an edit";
+        var home = System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile);
+        if (home.Length > 1 && text.Contains(home, System.StringComparison.Ordinal))
+            return "the texture index holds a path of this machine";
+        _seen.Add($"index {TextureStore.IndexPath.GetFile()} ({a.Length} bytes), the same twice");
+        return null;
+    }
+
+    /// <summary>After the import: the material an ORMMaterial3D over its imported maps, drawn by the open map (remastered).</summary>
+    private string? CheckImported(MapEditRoot root)
+    {
+        if (TextureStore.Find(_material) is not { Material.Length: > 0 } me
+            || ResourceLoader.Load(TextureStore.Absolute(me.Material), "", ResourceLoader.CacheMode.Ignore) is not OrmMaterial3D orm
+            || orm.OrmTexture is not CompressedTexture2D || orm.NormalTexture is not CompressedTexture2D
+            || orm.AlbedoTexture is not CompressedTexture2D || !orm.HeightmapEnabled)
+            return "the material is not an ORMMaterial3D over its imported maps";
+        int lit = 0;
+        void Count(Node n)
+        {
+            if (n is MeshInstance3D { Mesh: { } mesh } mi)
+                for (int s = 0; s < mesh.GetSurfaceCount(); s++)
+                    if (mi.GetSurfaceOverrideMaterial(s) is ShaderMaterial sm && PartIds.GetString(sm, RemasterLook.LitTextureMeta) == _material
+                        && sm.Shader.Code.Contains("#define HAS_ORM"))
+                        lit++;
+            for (int i = 0, k = n.GetChildCount(); i < k; i++)
+                Count(n.GetChild(i));
+        }
+        Count(root.Map!);
+        if (lit == 0)
+            return "no surface draws the generated material after the import";
+        _seen.Add($"the material imported ({orm.AlbedoTexture.GetWidth()} px maps), {lit} surface(s) draw it");
+        return null;
+    }
+
+    /// <summary>The batch over the open map: two materials generated for review, one unticked, the other accepted as one undo step.</summary>
+    private string? Batch(MapEditRoot root)
+    {
+        var batch = _plugin.Textures!.Batch;
+        if (!_batchStarted)
+        {
+            _batchStarted = true;
+            return batch.Start(BatchPanel.ScopeMap, 2);
+        }
+        if (batch.Running)
+            return _phaseT > 120 ? "the batch did not finish" : null;
+        if (batch.Made.Count != 2)
+            return $"the batch made {batch.Made.Count} material(s) for review, not 2";
+        var (keep, drop) = (batch.Made[0].Id, batch.Made[1].Id);
+        if (TextureStore.Find(keep) != null || TextureStore.Find(drop) != null)
+            return "the batch wrote before the review";
+        batch.Untick(drop);
+        var global = Undo.GetHistoryUndoRedo((int)EditorUndoRedoManager.SpecialHistory.GlobalHistory);
+        var v = global.GetVersion();
+        batch.Accept();
+        if (global.GetVersion() != v + 1 || TextureStore.Find(keep)?.Material is not { Length: > 0 } || TextureStore.Find(drop) != null)
+            return "the batch's accept: not one step, or the unticked one kept";
+        global.Undo();
+        if (TextureStore.Find(keep) != null)
+            return "undo did not take the batch back";
+        global.Redo();
+        WriteTexturesExpect();
+        _seen.Add($"batch: 2 made for review, {RemasterTextures.ShortName(keep)} kept, {RemasterTextures.ShortName(drop)} unticked; undone, redone");
+        _batchDone = true;
+        return null;
+    }
+
+    /// <summary>What the game's <c>--selftest-materials --textures-file=</c> checks: <c>DIR/textures-expect.json</c>.</summary>
+    private void WriteTexturesExpect()
+    {
+        var expect = new Dictionary<string, object>
+        {
+            ["index"] = TextureStore.IndexPath,
+            ["replaced"] = _replaced,
+            ["material"] = _material,
+        };
+        var file = $"{MapStore.Dir}/textures-expect.json";
+        System.IO.File.WriteAllText(GameSettings.Globalize(file), JsonSerializer.Serialize(expect, new JsonSerializerOptions { WriteIndented = true }));
     }
 
     private string? Shot()

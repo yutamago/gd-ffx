@@ -137,7 +137,60 @@ Open after R1b:
   enough (statuses without overrides, thumbnails);
 - a jump to any map (the game has none): play starts at developer saves only;
 - the script-moved objects where the game puts them and their morphs (R5);
-- the render path is stored but not used until R2.
+- ~~the render path is stored but not used until R2~~ (used: R2).
+
+## R2 in detail
+
+R2, textures and materials, is done (2026-11-17; docs/remaster-editor.md,
+"Textures" to "Your work and git"):
+
+- **Replacement by texture ID, project-wide**: `res://remaster/textures/textures.tres`
+  (a `RemasterTextureSet`, one `RemasterTexture` per ID: replacement, preset
+  colour/cut-out/normal/mask, material, recipe, source, note), each texture's
+  files content-named in its folder, the PNGs imported by their preset.
+  Drawn wherever the game draws the texture, by the classic shaders on a
+  classic map (maps, water, characters, 2D layers) and in the editor, bound
+  again at once after an edit (`RemasterTextures.Refresh`).
+- **Where used**: every map's textures and parts from the archive
+  (`classic_texture_uses`, parsing only), built in the editor a few maps a
+  frame (13,352 textures in 276 maps, 6 s), cached in `user://` by the
+  archive.
+- **PBR materials per texture ID**: ffx-remix's generators ported (MIT, the
+  same author: de-lighting, height, normal, roughness, occlusion, metallic,
+  emission, Lanczos) make an `ORMMaterial3D` by a `PbrRecipe`, editable in
+  the inspector; the batch (a map, an area, the changed maps, all) with a
+  review step; upscaling by Lanczos, or ComfyUI when configured (off by
+  default).
+- **The per-map render path**: a remastered map draws its parts lit with
+  the PBR materials (or their colour textures), the game's blend, cull, UV
+  sets, scrolls and morphs kept, the sky classic, under a provisional rig
+  from the game's look (key light, ambient, sky, fog; AgX); the classic path
+  stays pixel-exact (Besaid 11.9 under Compatibility, as main). The compare:
+  the editor's 3D toolbar toggle, F7 in the game, the options' Render path.
+- **Editor UI**: the Textures dock (browser by map / where used / project,
+  the before/after split, uses with a jump to the part, replace, upscale,
+  generate, edit, revert), the batch panel, each edit one undo step.
+- **Packs**: texture layers through `ModLoader` like the overrides (later
+  pack wins per texture ID and field; `Classic` undoes).
+- **Checks**: `tools/remaster-editor-check.sh` (R2's steps in the editor,
+  then the game with the editor's textures), `--selftest-materials
+  --devsave=7` (the replacement classic, the material remastered, F7, a live
+  replacement, materials from classic pixels; pictures with `--shot`),
+  `--selftest-mods` (the texture layers of two packs).
+
+Open after R2:
+
+- the lighting is provisional (R3: the game's lights and fog as objects,
+  GI, a sky of Godot's instead of the classic dome);
+- where-used covers the maps' 3D models only (characters, 2D layers,
+  effects, menus next);
+- no PBR model template for ComfyUI yet, and the client is untested against
+  a real server;
+- the baked vertex light is kept at one level everywhere
+  (`ffx_vertex_light` 0.5), not per map or part;
+- a recipe's live preview, per-texture recipes in the batch;
+- the water, the 2D layers and the characters keep their classic shaders on
+  a remastered map (R6, R7).
 
 ## Beyond the milestones
 

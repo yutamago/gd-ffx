@@ -57,6 +57,8 @@ public sealed class UserSettings
     public double Speed = 1;
     /// <summary>The FPS / frame-time overlay shown (F9).</summary>
     public bool FpsOverlay;
+    /// <summary>The render path (docs/remaster-editor.md, "The render path"): <c>map</c> (as each map says), <c>classic</c> or <c>remastered</c> for all.</summary>
+    public string RenderPath = "map";
 
     // ---- the choices the overlay offers ------------------------------------------------------
 
@@ -154,6 +156,7 @@ public sealed class UserSettings
         Volume = (float)Math.Clamp(D("audio", "volume", Volume), 0, 1);
         Speed = Math.Clamp(D("debug", "speed", Speed), 0.25, 8);
         FpsOverlay = B("debug", "fps_overlay", FpsOverlay);
+        RenderPath = Pick(Remaster.RenderPaths.Choices, S("video", "render_path", RenderPath), RenderPath);
     }
 
     /// <summary>
@@ -176,6 +179,7 @@ public sealed class UserSettings
         cfg.SetValue("audio", "volume", Volume.ToString("0.###", CultureInfo.InvariantCulture));
         cfg.SetValue("debug", "speed", Speed.ToString("0.###", CultureInfo.InvariantCulture));
         cfg.SetValue("debug", "fps_overlay", FpsOverlay);
+        cfg.SetValue("video", "render_path", RenderPath);
         var ok = GameSettings.SaveSettingsFile(cfg);
         if (!ok)
             GD.PrintErr($"ffx: cannot write the settings to {GameSettings.SettingsPath}");
@@ -257,5 +261,5 @@ public sealed class UserSettings
         string.Create(CultureInfo.InvariantCulture,
             $"window {WindowMode}, 3D x{Scale3D:0.##} {Upscaler}, MSAA {Msaa}, AA {ScreenAA}{(Taa ? "+TAA" : "")}, vsync {VSync}, "
             + $"fps cap {(MaxFps == 0 ? "none" : MaxFps.ToString(CultureInfo.InvariantCulture))}, glow {(Glow ? "on" : "off")}, preset {Quality}, "
-            + $"volume {Volume * 100:0}%, speed x{Speed:0.##}, fps overlay {(FpsOverlay ? "on" : "off")}");
+            + $"volume {Volume * 100:0}%, speed x{Speed:0.##}, fps overlay {(FpsOverlay ? "on" : "off")}, render path {RenderPath}");
 }

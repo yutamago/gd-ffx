@@ -39,8 +39,13 @@ export: the game folder stays user-set (`--game-dir=`, `FFX_GAME_DIR`, or
 docs/running.md), and the classic content is imported on the player's machine
 into Godot's user data folder (`user://classic`). `export_presets.cfg` also
 excludes a stale `res://classic/` folder, the remaster editor
-(`addons/`, editor only: its C# is compiled only with `TOOLS`) and its map
-edit scenes (`remaster/edit/`; docs/remaster-editor.md).
+(`addons/`, editor only: its C# is compiled only with `TOOLS`), its map
+edit scenes (`remaster/edit/`; docs/remaster-editor.md), the editor check's
+textures (`remaster/check/`) and the remaster's textures and materials made
+in the checkout (`remaster/textures/`: made from the player's game; a
+remaster ships as a pack of its own, docs/remaster-editor.md, "Your work and
+git"). `tools/export.sh` refuses to run while either of the last two exists
+(they are ignored by git, and not on its list of allowed files).
 
 The Linux export needs glibc 2.34 or newer, which the Steam Deck's SteamOS 3
 has. It hasn't been tried on a Deck yet. Run it headless like the editor

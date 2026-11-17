@@ -1,11 +1,14 @@
 # The remaster editor
 
-gd-ffx's editor plugin for the remaster (docs/remaster-plan.md, R1b):
+gd-ffx's editor plugin for the remaster (docs/remaster-plan.md, R1b and R2):
 browse the game's maps, open one as an editable scene of its classic parts,
 move, hide, remove, replace and add parts with Godot's own tools, and save
 the edits as the map's override files (docs/remake.md, "Overrides"), which
-the game applies. Everything it writes is IDs and your own work, never the
-game's content.
+the game applies; replace textures, make physically based materials for them
+and draw a map remastered ("Textures" and below). What it writes into the
+project is IDs and your own work; images made from the game's textures are
+your work products too, but never belong in gd-ffx's git ("Your work and
+git").
 
 The plugin is `godot/addons/ffx_remaster` (C#, editor only). It is enabled
 in `project.godot` and opens with the project.
@@ -43,7 +46,7 @@ in `project.godot` and opens with the project.
   `overrides`, `additions`, `remade`, `PBR` (render path remastered).
 - The selected map: its key, place, level, events with their map numbers.
   **Status** (Original, InProgress, Remastered, Approved), **Render**
-  (Classic, Remastered: used from R2) and the notes are written into the
+  (Classic, Remastered: "The render path") and the notes are written into the
   map's `overrides.tres` at once, each change one undo step (the editor's
   global history). A map whose overrides say nothing at all has no file.
 - **Open map**, **Save edits**, **Play** with the developer save to start
@@ -159,6 +162,202 @@ map numbers of its events: `FfxGame.classic_dev_saves`, as
 one gets a save in the same area, if there is one ("walk there"); the game
 has no jump to a map, so other maps are reached by playing there.
 
+## Textures
+
+The **Textures** dock (beside **Remaster**) works on textures by their
+stable ID (`x:/.../tex/d3d11/<name>.dds.phyre`; docs/importer.md, "Stable
+part IDs"). A texture is shared by every part and map that draws it, so its
+replacement and its material are project-wide, not per map.
+
+- **The list**: **Open map** (the textures the open map draws, with how many
+  surfaces), **Where used** (every texture of every map: "Where used"), or
+  **Project** (the ones the project changes). The search matches the ID and
+  the maps using it. **Edits** says `replaced`, `PBR`, or the pack a change
+  comes from.
+- **The compare**: the classic texture (read from the player's archive) left
+  of the split, the replacement or the material's albedo, normal or ORM map
+  right of it; the slider moves the split.
+- **Used by**: each map drawing it, with its parts; a double click opens the
+  map and selects the first part.
+- **Replace...**: an image file (PNG, WebP, JPEG) as the texture, wherever it
+  is drawn: classic maps too (the classic shaders sample it as they sampled
+  the game's, docs/architecture.md, "Map materials"), the water's colour and
+  normal textures, characters, 2D layers. Its preset is a cut-out when its
+  alpha is all 0 or 255, else colour.
+- **Upscale x2**, **x4**: the colour texture (the replacement, else the
+  classic one) upscaled as the replacement ("Upscaling").
+- **Generate material**, **Edit material**, **Recipe**: "Materials".
+- **Revert**: back to the classic texture (no replacement, no material).
+
+Every edit is one step of the editor's (global) undo history; undo and redo
+touch no file, the images being written once under their content's name.
+
+### The files
+
+The project's texture layer is `res://remaster/textures/` (the editor check
+uses `--remaster-textures=DIR`):
+
+```
+res://remaster/textures/
+├── textures.tres                       RemasterTextureSet: one RemasterTexture per texture ID, sorted
+└── map/bsil/bsil00/<name>/             each texture's folder (RemasterTextures.Folder)
+    ├── replacement.<hash>.png          the replacement, imported by its preset
+    ├── albedo.<hash>.png               the material's maps
+    ├── normal.<hash>.png, orm.<hash>.png, height.<hash>.png, emission.<hash>.png
+    └── material.<hash>.tres            an ORMMaterial3D over them (text, the maps by path)
+```
+
+A `RemasterTexture` (`godot/src/Remaster/RemasterTexture.cs`): `Id`, `Mode`
+(`Edit`; `Classic` undoes an earlier layer's), `Replacement` (an image or
+texture resource), `Preset` (`Colour`, `CutOut`, `Normal`, `Mask`), `Material`
+(an `ORMMaterial3D`, a `StandardMaterial3D` or a `ShaderMaterial` of your
+own), `Recipe` (how the material was made, `PbrRecipe`), `Source` (where the
+replacement comes from: by hand, upscaled how, the tool, model and licence of
+an AI step) and `Note`. Paths are relative to the index's folder (or
+`res://`, `user://`, absolute), so the folder moves into a pack as it is.
+The index is text in a stable order with stable resource IDs: a save
+without an edit changes no byte.
+
+The PNGs are imported by Godot with their preset (lossless with mipmaps; a
+normal map as one; a colour or cut-out texture with its alpha border fixed;
+no 3D detection). A new texture's folder is new to Godot's file system: the
+plugin asks for a scan, imports what it leaves, and reloads the textures
+when the import is done; until then they load from the PNGs themselves.
+
+### Layers
+
+Like the overrides (docs/remake.md, "Layers"), per texture ID and per field
+(the replacement, the material), the last layer that sets one wins:
+
+1. the project's `res://remaster/textures/textures.tres` (layer `base`);
+2. each mounted pack's `res://mods/<pack>/remaster/textures/textures.tres`,
+   in load order;
+3. sets registered at run time (`RemasterTextures.Register`; the checks).
+
+`--no-overrides` or `--no-textures` turns them off. The merge is made on
+the main thread (`RemasterTextures.Current`) and read by the loading
+workers, which bind the replacements as they make the classic materials;
+the images load on first use.
+
+## Where used
+
+Which maps and parts draw each texture, over every map of the catalogue
+with a 3D model: the extension's `classic_texture_uses(level)` parses the
+map's model (no glTF, no pixels; ffx-import's `texture_uses`: each segment's
+material, the instance's material set first) and the plugin reads a few
+maps a frame after the archive opens (on the Steam copy, 2026-11-17: 13,352
+textures in 276 maps, 6 s). It is cached in
+`user://remaster/texture-uses.json` (never in git), keyed by the game folder
+and `FFX_Data.vbf`'s size and time; **Index** in the dock builds it again.
+Characters, menus and effects are not in it yet.
+
+## Materials
+
+**Generate material** makes the texture's physically based material from
+its colour texture (the replacement, else the classic one) with the
+generators ported from ffx-remix (MIT, the same author;
+`godot/src/Remaster/Texturing/`: `MapGenerator`, `Lanczos`), as its
+`PbrRecipe` says (the texture's recipe, the one **Recipe** opened in the
+inspector, else the defaults):
+
+| Step | Recipe | How |
+|---|---|---|
+| upscale | `Upscale` 1, 2, 4; `Upscaler` lanczos or comfyui; `MaxSide` | Lanczos-3 in linear light, premultiplied ("Upscaling") |
+| de-lighting (albedo) | `Delight` 0..1, `DelightRadius` | the painted light divided out (a blur and a self-guided filter of the log luminance), occlusion and cavities lifted, highlights squeezed, colour casts flattened; hue and mean brightness kept |
+| height | `HeightContrast`; `HeightScale` (parallax depth, 0: none) | blurred perceptual luminance |
+| normal | `NormalStrength`, `NormalBlur` | Sobel slope of the height, OpenGL convention (green up, as Godot reads it) |
+| roughness | `RoughnessBase`, `RoughnessRange` | darker and busier is rougher |
+| occlusion | `OcclusionRadius`, `OcclusionStrength` | horizon-based, from the height |
+| metallic | `Metallic` | a constant (FFX's textures show little bare metal: paint it) |
+| emission | `EmissionThreshold` (above 1: none) | the colour where the brightest channel passes it |
+
+The result is an `ORMMaterial3D` (occlusion, roughness, metallic in one
+texture) with the albedo, normal and height maps: Godot's own material,
+**Edit material** opens it in the inspector (its preview, every parameter).
+A `StandardMaterial3D` or a `ShaderMaterial` of your own can stand in its
+place (set the entry's `Material`).
+
+### The batch
+
+Below the dock: materials for many textures at once. The scope is the open
+map's textures, the selected map's area, every map the project changes, or
+every map (the where-used index); **Skip done** leaves out textures that
+have a material. **Generate** makes up to 48 into the review list, one at a time
+on a worker thread so the editor stays usable (each with its albedo;
+nothing is written yet); untick the bad
+ones, **Accept ticked** writes the rest as one undo step, **Discard** drops
+them all. Run again for the next 48.
+
+### Upscaling
+
+Built in: Lanczos-3 (`Lanczos`), any factor, colour in linear light and
+premultiplied by alpha. With a ComfyUI server of your own (off by default:
+set the editor setting `ffx_remaster/comfyui_url`, e.g.
+`http://127.0.0.1:8188`, and `ffx_remaster/comfyui_upscale_model`, default
+`RealESRGAN_x4plus.pth`) **Upscale** sends the texture there instead
+(`ComfyUpscaler`: core nodes only, LoadImage, UpscaleModelLoader,
+ImageUpscaleWithModel, ImageScaleBy, SaveImage) and makes the answer the
+replacement. gd-ffx ships no model and downloads nothing; use models whose
+licences allow it and write the model and its licence into the texture's
+`Source`. The ComfyUI client has not been run against a real server yet.
+
+## The render path
+
+Each map draws **classic** (the game's own shaders, pixel for pixel the
+classic look) or **remastered**, as its overrides' `RenderPath` says (the
+dock's **Render**):
+
+- its parts draw under Godot's lit pipeline (`RemasterLook`, `MapLook`): the
+  texture's PBR material, or its colour texture (the replacement or the
+  classic one) as a plain rough surface. The lit material keeps what the
+  classic one does the game's way: blend, cull and depth modes, the alpha
+  test, the UV set, the scrolling UVs (clouds), the morphs the game drives.
+  The game's vertex colours hold baked light and tint (128 neutral):
+  `ffx_vertex_light` (0.5) keeps half of it under the real lights;
+- the sky keeps the classic look: sky domes (`m_DObjKind` 1) and, after
+  ffx-remix's R-45 rule, the parts grouped by texture that reach 1,000 units
+  from the vertical axis, centred on it and rising above the ground (Besaid's
+  four scrolling cloud quarters); water, 2D layers and characters keep their
+  classic shaders;
+- a provisional lighting rig (`RemasterLighting`, until R3): a directional
+  light from the game's key light (`Look.lights[0]`, turned as the characters'
+  shader turns it; shadows), the map's ambient as the fill (never black), a
+  procedural sky from its background and fog colours, Godot's depth fog from
+  the game's fog, the AgX tone map and Godot's glow. Under Forward+
+  `ClassicPost` is off and the classic shaders still drawing write their
+  colours as linear ones (`ffx_linear_out`), so Godot's encode gives them
+  back (docs/architecture.md, "Colours"); under Compatibility they write them
+  as they are (measured: the characters unchanged that way).
+
+Checked on the GPU (2026-11-17, the Windows export, D3D12 Forward+, Intel
+Arc 140T, `tools/compare-shot-win.sh` with `FFX_SHOT_TEST="--selftest-materials
+--selftest-timeout=240"`): Besaid beach remastered with materials made from
+its six biggest textures, the clouds and the characters in their classic
+colours, the sand and cliffs sunlit with shadows; the classic path still
+scores 8.7 there (8.9 before, within a run's spread) and 11.9 under
+Compatibility (as main on the same machine). Under Compatibility (Xvfb) the
+sunlit sand comes out brighter than on the GPU: the provisional rig is
+tuned for Forward+.
+
+To compare: the 3D view's **Remastered** toggle (the editor's 3D toolbar; a
+map opens as its render path says), F7 in the game (classic and remastered
+in turn, every map, for the run), the options' **Render path** (as each map
+says, classic everywhere, remastered everywhere; saved), or
+`--render-path=map|classic|remastered`.
+
+## Your work and git
+
+Replacements and generated maps are your own work products, but the ones
+made from the game's textures (upscaled, de-lit, generated) derive from the
+player's copy: they never go into gd-ffx's git. `res://remaster/textures/`
+is gitignored in gd-ffx and left out of its exports; gd-ffx's examples are
+synthetic (the checks make their test images at run time and remove them).
+A remaster project is a pack of its own (docs/remake.md, "Making a pack"):
+move the folder to `res://mods/<pack>/remaster/textures/` (its paths are
+relative) and export it with the pack's other files. Whether you may
+publish such a pack depends on what it holds; textures made by hand from
+nothing of the game's are yours.
+
 ## Checks
 
 ```bash
@@ -185,9 +384,48 @@ FFX_EDITOR_SHOT=1 FFX_GAME_DIR=<game> tools/remaster-editor-check.sh [OUT_DIR]  
    running scene against what the editor wrote: removed, hidden, moved by
    the saved offset on the game's placement, replaced, the box where the
    editor showed it (within 0.05 units), the catalogue's status.
-3. The round trip (`--remaster-editor-roundtrip`, DIR holding R1a's
+   Then R2 (with `--remaster-textures=res://remaster/check/textures`, in the
+   project so Godot imports the PNGs; gitignored, removed at the end): the
+   where-used index (Besaid's textures, the cache), the open map's most drawn
+   texture replaced by a generated test image (a checker) and its surfaces
+   drawing it, a material generated for the second from its classic pixels,
+   each one undo step, undone and redone; Besaid's render path set to
+   remastered (written), the map drawn remastered, the view's toggle both
+   ways; the index saved twice the same and without a path of this machine;
+   the batch over the open map (two made for review, one unticked, the other
+   kept as one undo step, undone, redone); then every PNG and material
+   imported, the material an ORMMaterial3D over its imported maps, drawn by
+   the map. It writes `DIR/textures-expect.json`.
+3. The game with the editor's textures (`--selftest-materials
+   --textures-file=.../textures.tres --textures-expect=DIR/textures-expect.json
+   --devsave=7`; "The game's check" below).
+4. The round trip (`--remaster-editor-roundtrip`, DIR holding R1a's
    example): opened, each entry shown as its edit and both additions at
    their anchors; saved without an edit, the same entries and additions.
+
+### The game's check
+
+```bash
+FFX_GAME_DIR=<game> godot --headless --path godot -- --selftest-materials --devsave=7
+FFX_GAME_DIR=<game> FFX_SHOT_TEST="--selftest-materials --selftest-timeout=150" tools/compare-shot.sh - OUT_DIR   # pictures (Xvfb)
+```
+
+`--selftest-materials` makes its textures at run time (in
+`user://selftest-materials`, removed at the end): before Besaid beach
+loads, it takes the map's two most drawn colour textures from the
+where-used answer, a synthetic replacement for the first and a material
+generated from it, registered as a layer, the render path forced classic.
+Then: the replacement drawn by the classic shaders at load (unshaded, every
+other surface its classic texture); Besaid's render path remastered (a
+registered overrides layer): the material drawn lit with its maps, the
+other surfaces lit from their colour textures, the sky classic, the rig on;
+F7 (as a key press) classic, F7 remastered; a replacement for the second
+texture registered while the map is shown and bound at once
+(`RemasterTextures.Refresh`); materials made from the classic pixels of the
+map's six biggest textures, drawn remastered. With `--shot=FILE.png` under a
+renderer: FILE.png (classic, with the second replacement) and
+FILE-remastered.png. With `--textures-file`, the editor's textures instead
+of its own first two.
 
 The pictures show the player's game: keep them out of git.
 
@@ -210,7 +448,17 @@ export that holds either (`project.godot` still names the plugin's
 - Script-moved objects are shown at their file place, not where the game
   puts them, and morphs are not played (R5 brings the game's data into the
   editor).
-- The render path is stored only (R2).
+- The where-used index covers the maps' 3D models only (not characters,
+  2D layers, effects or menus).
+- Godot prints a few "Failed loading resource" lines while new PNGs are
+  being imported (a scan and an import after a texture's first edit); they
+  load from the files meanwhile.
+- The ComfyUI client is untested against a real server; there is no PBR
+  model template yet (ffx-remix's `pbr-from-albedo` is the model to port).
+- The lighting is provisional (R3); the game's baked vertex light is half
+  kept everywhere (`ffx_vertex_light`), not per map.
+- The materials' recipe has no live preview; the batch has no per-texture
+  recipe.
 - A headless editor save prints Godot's own "Parameter "t" is null" (no
   thumbnail without a renderer).
 
@@ -225,7 +473,21 @@ export that holds either (`project.godot` still names the plugin's
 | `MapEditSave.cs` | the scene's state as override entries and an additions scene |
 | `MapStore.cs` | the project's per-map files, held while the editor runs; the stable text |
 | `PartInspector.cs` | the part's inspector section |
+| `TextureDock.cs` | the Textures dock: the browser, the compare, the uses, the actions |
+| `BatchPanel.cs` | the batch and its review |
+| `TextureActions.cs` | replace, upscale, generate, revert, edit (one undo step each, through `RemasterPlugin.SetTexture`) |
+| `TextureStore.cs` | the project's texture index and files, the import |
+| `WhereUsed.cs` | the where-used index and its cache |
+| `ComfyUpscaler.cs` | the optional ComfyUI upscaling |
 | `EditorSelfTest.cs` | the check |
+
+Game side (R2): `RemasterTexture`, `RemasterTextureSet`, `PbrRecipe` (the
+resources), `RemasterTextures` (the layers, the merge, the images and
+materials, the binding on the classic materials), `PbrBuilder` and
+`Texturing/` (the generators), `RemasterLook` and `MapLook` (the lit
+materials, the swap), `RemasterLighting` and `RenderPaths` (the rig, the
+choice), `MaterialsTest`; `ClassicMaterials` binds the replacements and
+notes each map material's modes and defines (`ffx_map_shader`).
 
 Game side: `GameHost.ClassicGame` (the running game's object, else the
 editor's), `ClassicLibrary.Load` in the editor (the glTF images kept in

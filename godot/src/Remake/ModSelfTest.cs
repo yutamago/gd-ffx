@@ -80,6 +80,9 @@ public static class ModSelfTest
                 ["res://mods/alpha/moved.tscn"] = movedSrc,
                 ["res://mods/alpha/control.tscn"] = Src("control.tscn", "[gd_scene format=3]\n\n[node name=\"NotA3DScene\" type=\"Control\"]\n"),
                 ["res://mods/selftest_shared.txt"] = Src("alpha.txt", "alpha"),
+                [TexturesPath("alpha")] = Src("alpha-textures.tres", Textures(
+                    (T1, "Replacement = \"r.png\"\nMaterial = \"m.tres\""), (T2, "Replacement = \"a2.png\""), (T4, "Mode = 1"))),
+                ["res://mods/alpha/remaster/textures/r.png"] = Png(Src, "r.png"),
                 [OverridesPath("alpha")] = Src("alpha.tres", Overrides(
                     ("#a/*", "Remove = 2"), ("#b/0", "Visibility = 1"), ("#c/*", "Remove = 1"))
                     + "Status = 2\nRenderPath = 1\nNotes = \"alpha\"\n"),
@@ -90,6 +93,9 @@ public static class ModSelfTest
                     "{ \"chr\": { \"c999\": \"res://mods/beta/stand_in.tscn\", \"c997\": \"res://mods/beta/stand_in.tscn\" } }"),
                 ["res://mods/beta/stand_in.tscn"] = sceneSrc,
                 ["res://mods/selftest_shared.txt"] = Src("beta.txt", "beta"),
+                [TexturesPath("beta")] = Src("beta-textures.tres", Textures(
+                    (T1, "Replacement = \"b.png\""), (T2, "Replacement = \"b2.png\"\nMaterial = \"res://mods/beta/m2.tres\""),
+                    (T3, "Material = \"m.tres\""), (T4, "Replacement = \"b4.png\""))),
                 [OverridesPath("beta")] = Src("beta.tres", Overrides(
                     ("#a/*", "Remove = 1\nVisibility = 1"), ("#b/0", "TransformMode = 1\nTransform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 5, 0)"))
                     + "Status = 1\nNotes = \"beta\"\n"),
@@ -161,6 +167,18 @@ public static class ModSelfTest
             Check(Part("#c/*") is { Removed: true } && merged!.Parts.Count == 3, "the parts of both packs, by full ID");
             Check(merged is { Status: Remaster.MapStatus.Remastered, RenderPath: Remaster.RenderPath.Remastered, Notes: "alpha" },
                 $"the map's status, render path and notes from the later pack: {merged?.Status}, {merged?.RenderPath}");
+            // the texture layers of the two packs: alpha (later) wins per texture and field
+            Remaster.RemasterTextures.Invalidate();
+            var tex = Remaster.RemasterTextures.Current;
+            const string A = "res://mods/alpha/remaster/textures/", B = "res://mods/beta/remaster/textures/";
+            Check(Remaster.RemasterTextures.For(T1) is { Replacement: A + "r.png", Material: A + "m.tres", Layer: "alpha" },
+                $"a texture in two packs: the later one's replacement and material ({Remaster.RemasterTextures.For(T1)})");
+            Check(Remaster.RemasterTextures.For(T2) is { Replacement: A + "a2.png", Material: "res://mods/beta/m2.tres" },
+                $"per field: the later pack's replacement, the earlier one's material ({Remaster.RemasterTextures.For(T2)})");
+            Check(Remaster.RemasterTextures.For(T3) is { Replaced: false, Material: B + "m.tres", Layer: "beta" }, "a texture in one pack");
+            Check(Remaster.RemasterTextures.For(T4) == null, "a later pack's Classic undoes an earlier replacement");
+            Check(Remaster.RemasterTextures.Texture(A + "r.png") is { } packed && packed.GetWidth() == 4,
+                "a replacement PNG loads from inside its pack");
             Check(Remaster.RemasterOverrides.Levels().Contains("zzzz00") && Remaster.RemasterOverrides.Exists("zzzz00")
                 && !Remaster.RemasterOverrides.Exists("zzzz01"), "the levels with overrides");
             notes.Add("map overrides layered over 2 packs");
@@ -204,6 +222,38 @@ public static class ModSelfTest
             : $"ffx selftest: FAIL ({string.Join("; ", fails)})");
         GameHost.Instance?.Game?.Stop();
         node.GetTree().Quit(pass ? 0 : 1);
+    }
+
+    // texture IDs of the pack check (not the game's: no such files)
+    private const string T1 = "x:/ffx_data/gamedata/ps3data/map/zzzz/zzzz00/tex/d3d11/one.dds.phyre",
+        T2 = "x:/ffx_data/gamedata/ps3data/map/zzzz/zzzz00/tex/d3d11/two.dds.phyre",
+        T3 = "x:/ffx_data/gamedata/ps3data/map/zzzz/zzzz00/tex/d3d11/three.dds.phyre",
+        T4 = "x:/ffx_data/gamedata/ps3data/map/zzzz/zzzz00/tex/d3d11/four.dds.phyre";
+
+    private static string TexturesPath(string pack) => $"res://mods/{pack}/remaster/textures/{Remaster.RemasterTextures.FileName}";
+
+    /// <summary>A texture index's text: its entries (ID, property lines).</summary>
+    private static string Textures(params (string Id, string Props)[] entries)
+    {
+        var t = new System.Text.StringBuilder();
+        t.Append($"[gd_resource type=\"Resource\" script_class=\"RemasterTextureSet\" load_steps={entries.Length + 3} format=3]\n\n");
+        t.Append("[ext_resource type=\"Script\" path=\"res://src/Remaster/RemasterTextureSet.cs\" id=\"1\"]\n");
+        t.Append("[ext_resource type=\"Script\" path=\"res://src/Remaster/RemasterTexture.cs\" id=\"2\"]\n\n");
+        for (int i = 0; i < entries.Length; i++)
+            t.Append($"[sub_resource type=\"Resource\" id=\"t{i}\"]\nscript = ExtResource(\"2\")\nId = \"{entries[i].Id}\"\n{entries[i].Props}\n\n");
+        t.Append("[resource]\nscript = ExtResource(\"1\")\n");
+        t.Append($"Textures = Array[ExtResource(\"2\")]([{string.Join(", ", Enumerable.Range(0, entries.Length).Select(i => $"SubResource(\"t{i}\")"))}])\n");
+        return t.ToString();
+    }
+
+    /// <summary>A 4 x 4 test PNG (synthetic) written by <paramref name="src"/>'s folder; its path.</summary>
+    private static string Png(System.Func<string, string, string> src, string name)
+    {
+        var img = Image.CreateEmpty(4, 4, false, Image.Format.Rgba8);
+        img.Fill(new Color(1, 0, 1));
+        var path = src(name, "");
+        img.SavePng(path);
+        return path;
     }
 
     private static string OverridesPath(string pack) =>

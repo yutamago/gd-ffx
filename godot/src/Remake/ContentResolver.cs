@@ -105,6 +105,8 @@ public static class ContentResolver
         var texDir = kind == "map" && id.StartsWith('/') && id.EndsWith('/') ? $"PS3Data{id}tex/" : null;
         // a map's overrides merged here (main thread: they load resources), applied on the worker
         var merged = kind == "map" ? Remaster.RemasterOverrides.For(id) : null;
+        // the remaster's texture replacements merged here too (main thread), bound on the worker
+        Remaster.RemasterTextures.Ensure();
         return Background.Run(() => GcTrace.Load($"{kind} {id}", () =>
         {
             var n = ClassicLibrary.Load(path, texDir);

@@ -22,6 +22,8 @@ public partial class RemasterPlugin : EditorPlugin
     public EditorClassic Session { get; } = new();
 
     private MapBrowserDock? _dock;
+    private TextureDock? _textures;
+    private CheckButton? _lookToggle;
     private PartInspector? _inspector;
     private EditorSelfTest? _test;
 
@@ -30,11 +32,27 @@ public partial class RemasterPlugin : EditorPlugin
 
     public MapBrowserDock? Dock => _dock;
 
+    public TextureDock? Textures => _textures;
+
+    /// <summary>The where-used index (built after the archive opens, cached in <c>user://</c>).</summary>
+    public WhereUsed Uses { get; } = new();
+
     public override void _EnterTree()
     {
         Instance = this;
         _dock = new MapBrowserDock(this);
         AddDock(_dock);
+        TextureStore.Attach();
+        ComfyUpscaler.RegisterSettings();
+        var fs = EditorInterface.Singleton.GetResourceFilesystem();
+        fs.ResourcesReimported += OnReimported;
+        fs.FilesystemChanged += OnFilesystemChanged;
+        _textures = new TextureDock(this);
+        AddDock(_textures);
+        // the 3D view's compare: the open map classic or remastered (its render path when opened)
+        _lookToggle = new CheckButton { Text = "Remastered", TooltipText = "Draw the open map remastered (PBR materials, the provisional lights) or classic" };
+        _lookToggle.Toggled += on => SetEditorLook(on);
+        AddControlToContainer(CustomControlContainer.SpatialEditorMenu, _lookToggle);
         _inspector = new PartInspector(this);
         AddInspectorPlugin(_inspector);
         SceneSaved += OnSceneSaved;
@@ -53,8 +71,21 @@ public partial class RemasterPlugin : EditorPlugin
     {
         SceneSaved -= OnSceneSaved;
         SceneChanged -= OnSceneChanged;
+        var efs = EditorInterface.Singleton.GetResourceFilesystem();
+        efs.ResourcesReimported -= OnReimported;
+        efs.FilesystemChanged -= OnFilesystemChanged;
         if (_inspector != null)
             RemoveInspectorPlugin(_inspector);
+        if (_lookToggle != null)
+        {
+            RemoveControlFromContainer(CustomControlContainer.SpatialEditorMenu, _lookToggle);
+            _lookToggle.QueueFree();
+        }
+        if (_textures != null)
+        {
+            RemoveDock(_textures);
+            _textures.QueueFree();
+        }
         if (_dock != null)
         {
             RemoveDock(_dock);
@@ -72,6 +103,14 @@ public partial class RemasterPlugin : EditorPlugin
     public override void _Process(double delta)
     {
         Session.Poll();
+        if (TextureStore.Poll())
+        {
+            RemasterTextures.Invalidate();
+            TexturesChanged();
+        }
+        if (Uses.Building && Uses.Step())
+            _textures?.UsesChanged();
+        _textures?.Tick(delta);
         _test?.Step(delta);
     }
 
@@ -80,6 +119,9 @@ public partial class RemasterPlugin : EditorPlugin
     {
         bool ok = Session.Open(dir);
         _dock?.ArchiveChanged();
+        if (ok)
+            Uses.Start(Session);
+        _textures?.UsesChanged();
         return ok;
     }
 
@@ -134,8 +176,95 @@ public partial class RemasterPlugin : EditorPlugin
 
     private void OnSceneChanged(Node? root) => _dock?.CurrentChanged();
 
-    /// <summary>The edit scene finished building (the dock shows its parts).</summary>
-    public void MapBuilt(MapEditRoot root) => _dock?.CurrentChanged();
+    /// <summary>The edit scene finished building (the dock shows its parts; drawn as its render path says).</summary>
+    public void MapBuilt(MapEditRoot root)
+    {
+        _dock?.CurrentChanged();
+        bool remastered = MapStore.Find(root.Key)?.RenderPath == RenderPath.Remastered;
+        _lookToggle?.SetPressedNoSignal(remastered);
+        SetEditorLook(remastered);
+        _textures?.MapChanged();
+        _textures?.SelectPendingPart();
+    }
+
+    // ---- the render path in the editor --------------------------------------------------------
+
+    /// <summary>Whether the open map is drawn remastered in the 3D view.</summary>
+    public bool EditorRemastered => _lookToggle?.ButtonPressed == true;
+
+    /// <summary>Draws the open map remastered or classic (the 3D view's toggle; no undo: a view, not an edit).</summary>
+    public int SetEditorLook(bool remastered)
+    {
+        if (_lookToggle != null && _lookToggle.ButtonPressed != remastered)
+            _lookToggle.SetPressedNoSignal(remastered);
+        if (Current is not { Built: true, Map: { } map })
+            return 0;
+        int n = MapLook.Of(map).Set(remastered);
+        if (n > 0)
+            GD.Print($"ffx remaster: {Current.Key} drawn {(remastered ? "remastered" : "classic")} in the editor ({n} surface(s))");
+        return n;
+    }
+
+    // ---- textures and materials, each one undo step --------------------------------------------
+
+    /// <summary>Sets <paramref name="id"/>'s entry in the project's texture layer (an empty entry removes it): one undo step.</summary>
+    public void SetTexture(string id, RemasterTexture after, string action) => SetTextures([(id, after)], action);
+
+    /// <summary>Sets several textures' entries as one undo step (the batch).</summary>
+    public void SetTextures(IReadOnlyList<(string Id, RemasterTexture After)> edits, string action)
+    {
+        if (edits.Count == 0)
+            return;
+        Undo.CreateAction(action, UndoRedo.MergeMode.Disable, this);
+        // the entries as dictionaries: a resource without a path would count as the edited scene's
+        // (Godot's per-scene histories), the action is the global history's
+        foreach (var (id, after) in edits)
+        {
+            Undo.AddDoMethod(this, MethodName.ApplyTexture, id, TextureStore.ToDictionary(after));
+            Undo.AddUndoMethod(this, MethodName.ApplyTexture, id, TextureStore.ToDictionary(TextureStore.Copy(id)));
+        }
+        Undo.CommitAction();
+    }
+
+    /// <summary>Writes <paramref name="id"/>'s entry (the undo history calls it) and shows it on the open map.</summary>
+    public void ApplyTexture(string id, Godot.Collections.Dictionary entry)
+    {
+        TextureStore.Put(id, TextureStore.FromDictionary(id, entry));
+        TexturesChanged();
+    }
+
+    /// <summary>Godot imported files: the project's textures among them load imported now (they loaded from their PNGs until then).</summary>
+    private void OnReimported(string[] files)
+    {
+        var dir = TextureStore.Dir + "/";
+        if (System.Array.Exists(files, f => f.StartsWith(dir, System.StringComparison.Ordinal)))
+        {
+            RemasterTextures.Invalidate();
+            TexturesChanged();
+        }
+    }
+
+    private void OnFilesystemChanged()
+    {
+        // a scan's first import of the project's new PNGs: load them imported now
+        if (TextureStore.Set.Textures.Count > 0)
+        {
+            RemasterTextures.Invalidate();
+            TexturesChanged();
+        }
+    }
+
+    /// <summary>The project's textures changed: the open map binds them again (classic and lit), the docks list them again.</summary>
+    public void TexturesChanged()
+    {
+        if (Current is { Built: true, Map: { } map })
+        {
+            RemasterTextures.Refresh(map);
+            if (MapLook.Find(map) is { } look)
+                look.Set(look.Remastered);
+        }
+        _textures?.TexturesChanged();
+    }
 
     // ---- edits, each one undo step ------------------------------------------------------------
 
@@ -284,6 +413,9 @@ public partial class RemasterPlugin : EditorPlugin
         res.Notes = notes;
         MapStore.Write(key, null, keepAdditions: true);
         _dock?.MapsChanged();
+        // the open map follows its render path
+        if (Current is { Built: true } root && root.Key == key)
+            SetEditorLook((RenderPath)path == RenderPath.Remastered);
     }
 
     // ---- play ---------------------------------------------------------------------------------

@@ -25,6 +25,11 @@ public partial class StateView3D : Node3D
     private WorldEnvironment _env = null!;
     /// <summary>Forward+'s post effect (the game's colours and glow; null under Compatibility).</summary>
     private ClassicPost? _post;
+    /// <summary>The remastered render path's lighting (on while the shown map draws remastered).</summary>
+    private Remaster.RemasterLighting _rig = null!;
+
+    /// <summary>The remastered path's lighting (for tests).</summary>
+    public Remaster.RemasterLighting Rig => _rig;
     private readonly Dictionary<ushort, ActorNode> _actors = new();
     private readonly HashSet<ushort> _seen = new();
 
@@ -124,7 +129,11 @@ public partial class StateView3D : Node3D
         AddChild(_layers);
         AddChild(new EffectView { Name = "EffectView" });
         AddChild(new EffectDrawView { Name = "EffectDrawView" });
-        AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-55, 30, 0), LightEnergy = 0.8f });
+        var light = new DirectionalLight3D { RotationDegrees = new Vector3(-55, 30, 0), LightEnergy = 0.8f };
+        AddChild(light);
+        // the remastered render path's provisional lighting (R2; off while the map draws classic)
+        _rig = new Remaster.RemasterLighting(_env, _post, light);
+        AddChild(_rig);
         _boneMesh = new SphereMesh { Radius = 0.6f, Height = 1.2f, RadialSegments = 6, Rings = 3 };
     }
 
@@ -219,6 +228,7 @@ public partial class StateView3D : Node3D
         if (view.Current?.Menus.EscMenu != true || GlobalTime < 0)
             GlobalTime = ClassicMaterials.SetTime(view.Previous, view.Current, view.Alpha);
         UpdateMap(host.Classic, view.Current);
+        UpdateRenderPath(view);
         _prefetch.Tick(host.Classic, host.Game, view.Current, _mapLevel, _parked?.Level ?? "", ObjectIndex);
         _layers.Tick(view.Current, view.Current?.World.Map ?? -1, _camera.Far, cam);
         Perf.End(Perf.Section.View3D, t0);
@@ -256,7 +266,7 @@ public partial class StateView3D : Node3D
         var env = _env.Environment;
         bool on = look.GlowGain > 0 && !GameSettings.Flag("no-glow");
         var glow = (on, look.GlowNone, look.GlowFull, look.GlowGain, look.GlowSpread);
-        if (glow == _glow)
+        if (glow == _glow || _rig.Active)
             return;
         _glow = glow;
         if (_post != null)
@@ -277,6 +287,57 @@ public partial class StateView3D : Node3D
         env.GlowIntensity = look.GlowGain * s * s;
         for (int i = 0; i < 7; i++)
             env.SetGlowLevel(i, i == 0 ? 1f : 0f);
+    }
+
+    // ---- the render path ----------------------------------------------------------
+
+    private string _pathLevel = "\0";
+    private int _pathVersion = -1;
+    private bool _pathRemastered;
+
+    /// <summary>Whether the shown map draws remastered now (for tests).</summary>
+    public bool Remastered => _rig.Active;
+
+    /// <summary>
+    /// The shown map's look (docs/remaster-editor.md, "The render path"): remastered when its
+    /// render path (or the options' choice, or the F7 toggle) says so, its parts with the lit
+    /// materials (<see cref="Remaster.MapLook"/>) and the provisional rig on; classic otherwise.
+    /// A remade map keeps its own materials, the rig follows the choice.
+    /// </summary>
+    private void UpdateRenderPath(GameStateView view)
+    {
+        // the choice evaluated when the map or the choice changes, not every frame (it makes strings)
+        if (_pathLevel != _mapLevel || _pathVersion != Remaster.RenderPaths.Version)
+        {
+            (_pathLevel, _pathVersion) = (_mapLevel, Remaster.RenderPaths.Version);
+            _pathRemastered = Remaster.RenderPaths.Remastered(_mapLevel);
+        }
+        bool want = _map != null && _pathRemastered;
+        if (_map is { } m && m.Name == "ClassicMap")
+        {
+            int n = Remaster.MapLook.Of(m).Set(want);
+            if (n > 0)
+                GD.Print($"ffx: map {_mapLevel} drawn {(want ? "remastered" : "classic")} ({n} surface(s); lit materials: "
+                    + $"{Remaster.RemasterLook.Count.Pbr} PBR, {Remaster.RemasterLook.Count.Plain} from the colour texture)");
+        }
+        bool was = _rig.Active;
+        _rig.Set(want, view.Current?.Look, view.Decoded);
+        if (was && !_rig.Active)
+        {
+            // the classic look again, from the next snapshot
+            _lookOf = -1;
+            _glow = (false, -1, -1, -1, -1);
+        }
+    }
+
+    public override void _UnhandledKeyInput(InputEvent e)
+    {
+        if (e is InputEventKey { Pressed: true, Echo: false } k && k.PhysicalKeycode == GameHost.RemasterKey
+            && GameHost.Instance?.Captured != true && _mapLevel.Length > 0)
+        {
+            Remaster.RenderPaths.Toggle(_mapLevel);
+            GetViewport().SetInputAsHandled();
+        }
     }
 
     // ---- the map's objects ------------------------------------------------------

@@ -246,7 +246,14 @@ public partial class EffectDrawView : MeshInstance3D
             + (look.NoDepthTest ? ", depth_test_disabled" : ""));
     }
 
-    private static Shader Make(string modes) => new()
+    private static Shader Make(string modes)
+    {
+        // the global uniforms (ffx_linear_out) exist before a shader reads them
+        ClassicMaterials.EnsureGlobals();
+        return MakeShader(modes);
+    }
+
+    private static Shader MakeShader(string modes) => new()
     {
         Code = "shader_type spatial;\nrender_mode unshaded, cull_disabled, " + modes + ";\n" + @"
 uniform sampler2D tex : filter_linear_mipmap, repeat_enable;
@@ -266,6 +273,8 @@ uniform bool frame_buffer = false;
 uniform int form = 0;
 uniform bool alpha_one = false;
 uniform bool zero_colour = false;
+// 1 while the scene draws remastered (ClassicMaterials' ffx_out): the game's values written as linear
+global uniform float ffx_linear_out;
 void fragment() {
 	// the game samples file textures with v counted from the stored first row, the image's
 	// bottom (the PNG is upright): (u, 1 - v)
@@ -287,7 +296,8 @@ void fragment() {
 		o = vec4(a * v.rgb, a);
 	}
 	o = clamp(o, 0.0, 1.0); // the target is UNORM: clamped before the blend
-	ALBEDO = zero_colour ? vec3(0.0) : o.rgb;
+	ALBEDO = zero_colour ? vec3(0.0) : ffx_linear_out < 0.5 ? o.rgb
+		: mix(o.rgb / 12.92, pow((o.rgb + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), o.rgb));
 	ALPHA = alpha_one ? 1.0 : o.a;
 }
 ",

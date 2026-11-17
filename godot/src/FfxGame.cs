@@ -28,6 +28,7 @@ public partial class FfxGame : RefCounted
         public static readonly StringName classic_texture = "classic_texture";
         public static readonly StringName classic_texture_is_cube = "classic_texture_is_cube";
         public static readonly StringName classic_map_catalogue = "classic_map_catalogue";
+        public static readonly StringName classic_texture_uses = "classic_texture_uses";
         public static readonly StringName classic_dev_saves = "classic_dev_saves";
         public static readonly StringName decode_text = "decode_text";
         public static readonly StringName effect_draws = "effect_draws";
@@ -437,6 +438,17 @@ public partial class FfxGame : RefCounted
     }
 
     /// <summary>Whether the material texture at <paramref name="path"/> is a cube map.</summary>
+    /// <summary>
+    /// The textures <paramref name="level"/>'s 3D model samples and the parts drawn with each, as
+    /// JSON (<c>{"model", "textures": [{"id", "samplers", "parts"}]}</c>, parts relative to the
+    /// model): the remaster's where-used index. Empty without the archive or a 3D model.
+    /// </summary>
+    public string ClassicTextureUses(string level)
+    {
+        using var v = Node.Call(M.classic_texture_uses, level);
+        return v.AsString();
+    }
+
     public bool ClassicTextureIsCube(string path) => Node.Call(M.classic_texture_is_cube, path).AsBool();
 
     /// <summary>Which of <paramref name="names"/> a material's effect variant (<c>extras.ffx_effect</c>) switches on; empty without the archive.</summary>
