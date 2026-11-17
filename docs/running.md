@@ -221,7 +221,8 @@ Runs the map check (`--selftest-map`) headless on each developer save
 map or battle map shown with classic content and posed characters for
 3 seconds. One line a save: PASS/FAIL with the level, models, objects,
 effect draws and distortion, and the log's error and missing-classic
-counts (logs in `/tmp/gd-ffx-sweep`). About 25 s a save.
+counts (logs in `/tmp/gd-ffx-sweep`). About 25 s a save. `FFX_CLASSIC=DIR`
+uses that classic cache instead of the project's.
 
 ## Benchmark
 
@@ -233,7 +234,8 @@ Runs Godot headless with `--bench` at developer saves, one run at a time
 through `tools/capped.sh`: `besaid` (save 7), `besaid-walk` (save 7, holding
 down and left: off the beach to the next map, a load while playing), `lchb`
 (save 22, Luca's harbour, a dozen characters), `battle` (save 7 with
-`--battle=3,0,0`). Once the scene is shown with its models it waits
+`--battle=3,0,0`), `battle-cloth` (save 12 with `--battle=34,0,0`: Tidus, Yuna
+and Lulu, about 1,400 simulated cloth vertices). Once the scene is shown with its models it waits
 `--bench-settle` seconds (3), records `--bench-seconds` (20) of frames and
 prints `ffx bench:` lines (`BenchTest`, the probes in `Perf`):
 
@@ -559,6 +561,26 @@ fetcher's answers (main thread, a dictionary a texture).
 The battle's HUD and menu allocate 2.4 KiB a frame (no finalizable objects: 0.4 to 1 ms
 collections, 3 a second at 3,600 fps, about one every 25 s at 60).
 
+### Cloth
+
+The characters' cloth (docs/architecture.md, "Cloth"), measured with the
+same build with the capture off (`FFX_NO_CLOTH=1`) and on (2026-11-17,
+Debug, headless, one run each, the machine shared with another agent's
+checks):
+
+| Scene | cloth | fps | frame mean / p99 / max (ms) | main thread a frame | collections gen0/1/2 |
+|---|---|---|---|---|---|
+| Besaid (save 7: Tidus, 104 simulated vertices) | off | 1,493 | 0.67 / 3.49 / 7.1 | 0.8 KiB | 2/0/0 |
+| | on | 1,482 | 0.67 / 3.60 / 10.8 | 0.8 KiB | 2/0/0 |
+| battle-cloth (save 12, battle 34: 1,433) | off | 2,234 | 0.45 / 2.59 / 10.4 | 3.1 KiB | 12/8/1 |
+| | on | 2,378 | 0.42 / 3.02 / 11.7 | 3.1 KiB | 13/5/1 |
+
+The `Cloth` section (the frames fetched, the texture rebuilt once an
+update) took 0.008 ms a frame on average in the battle (p99 0.45 ms, at
+most 5.4 ms in one frame) and allocates nothing a frame; the frames are
+copied into kept buffers, the texture updated in place. The differences
+between the runs are their noise.
+
 ## Comparing with the original
 
 `FFX_GAME_DIR=<game> tools/compare-shot.sh REF.png OUT_DIR [devsave]`
@@ -609,6 +631,16 @@ points at it (`--shot`: `NAME-target.png` too). It counts the hits from the
 snapshots (an HP change, a monster leaving with HP left) and fails when the
 HUD popped another number of damage numbers; with `--to-results` also when
 no killing blow popped.
+
+The Besaid check also waits for Tidus's cloth (docs/architecture.md,
+"Cloth") and fails when it is not placed on his model, a segment matches
+no surface, or it does not move relative to him; the map and battle checks
+report it (`cloth: N character(s), ...`). `FFX_NO_CLOTH=1` turns the
+capture off (`cloth off`), `FFX_CLOTH_DEBUG=1` tints the cloth vertices
+(green near the skinned position, red 2 units off and more). On another
+save than 7, `FFX_SHOT_ARGS="--shots=N" tools/compare-shot.sh` takes N
+pictures 0.1 s apart (`godot-1.png` ... and `godot.png` last), e.g. with
+`--battle=34,0,0` on save 12.
 
 `--selftest-remake --devsave=7` and `--selftest-mods --no-game` (G6):
 remade content and mod packs (docs/remake.md); `--selftest-launcher --no-game`:

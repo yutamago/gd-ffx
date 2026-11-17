@@ -411,6 +411,76 @@ showed it. A playtester's upside-down character inside a cliff there is
 not explained by this yet. `--walk=KEYS:SECONDS` makes the map check walk
 before its picture (`FFX_SHOT_ARGS="--walk=up:25" tools/compare-shot.sh`).
 
+## Cloth (G5)
+
+A playtester: "physics attachments on characters look frozen in place (long
+hair etc)". The snapshot's bones are the elements' matrices only; the game
+moves hair and clothes with a vertex simulation of its own (ffx-rust's
+docs/state-api.md, "Cloth"). ffx-rust's cloth capture (`ffx_host::cloth`)
+records, after each update, every cloth segment the game hands its draw: the
+character (actor slot), the segment's PS2 model and piece, and per vertex (in
+the segment's vertex order) its render-space position and weight. The game's
+character shaders draw vertex `k` at `mix(skinned_k, positions[k],
+weights[k])`; so does gd-ffx.
+
+- **The capture** is switched on at boot (`rust/ffx-gd/src/game.rs`;
+  `FFX_NO_CLOTH` leaves it off). `FfxGame.cloth_held(update)` encodes the frame
+  of exactly that update (`CLTH`; none of another update: its cloth would sit
+  where the skeleton is not) into a buffer the node holds until its next
+  call, `cloth_address` its address; C# copies it into a kept buffer
+  (`FfxGame.ClothInto`, `Held.CopyInto`), as the effect draws.
+- **The import** (docs/importer.md, "Cloth") marks each cloth primitive
+  (`extras.ffx_cloth`: model, piece, first number, vertex count, the
+  `TEXCOORD_n` of the numbers) and numbers its vertices: vertex `k` carries
+  `first + k`, which Godot's loader brings in as a `CUSTOMn` channel. The
+  mapping does not depend on Godot keeping the vertices' order (it does keep
+  it, measured on c001) or not merging equal ones.
+- **The load** (`ClothView.Prepare`, from `ClassicLibrary.Load`): each cloth
+  surface gets a copy of its character material with the cloth shader
+  (`ClassicMaterials.Cloth`: the character shader plus `ClothVertex`, one
+  shader per `CUSTOMn`), its mesh the cloth surfaces as integer metadata, its
+  node a cull margin of 8 units.
+- **Each update** (`ClothView`, from `StateView3D`): when a new frame came (or
+  a model with cloth entered), every shown character's cloth meshes are
+  placed in one float texture, `ffx_cloth` (RGBA32F, 512 texels a row, grown
+  by rows, never shrunk): two texels a vertex number, the previous and the
+  current update's position and weight. A mesh's place is its instance's
+  `ffx_cloth_base` (an instance uniform; -1 when the frame has none of its
+  segments: skinned only). A segment is matched by (actor, model, piece,
+  vertex count); a segment of a shown character that matches no surface is
+  logged once. A vertex the previous frame lacks gets the current one twice.
+- **The shader** mixes the skinned position (Godot's `VERTEX` after skinning,
+  taken to world space by `MODEL_MATRIX`) with the texel pair's position,
+  interpolated by `ffx_cloth_alpha` (the view's alpha, set each frame: the
+  bones' interpolation), by its weight, and back to model space. Render space
+  is Godot's world, as for the effect draws. Normals stay the skinned ones.
+  `FFX_CLOTH_DEBUG=1` tints the cloth vertices by how far the cloth moves them
+  from the skinned position (green under 0.25 units, red from 2), by weight.
+
+Measured (2026-11-17, headless; the checks' notes): developer save 7 (Besaid),
+Tidus: 5 segments, 198 vertices, 104 simulated, all 104 moving relative to him
+each update, at most 0.014 units an update standing still (ffx-rust's probe
+found the same); save 29 (Luca's stadium), `c105`: 2 segments, 181 vertices,
+117 simulated, up to 0.62 units an update; save 12 in battle 34 (its own party:
+Tidus, Yuna, Lulu): 38 segments, 1,991 vertices, 1,433 simulated, all moving,
+no segment without a surface. Offscreen (Compatibility, `FFX_CLOTH_DEBUG=1`):
+Tidus's hood, jacket hem and shorts green (on the skin, as anchors and short
+cloth are); Yuna's long sleeves red (hanging away from the arm's skinned pose)
+and changing shape from picture to picture, joined at the shoulder; her skirt
+hem, Lulu's dress hem and belts green. Without the tint nothing is torn or
+detached. The cost: 0.008 ms a frame on average in that battle (p99 0.45 ms;
+the texture rebuilt 30 times a second), nothing allocated a frame (the bench's
+`Cloth` section; docs/running.md, "Benchmark").
+
+Under Forward+ (Vulkan on Mesa's lavapipe, offscreen under Xvfb:
+`VK_ICD_FILENAMES=.../lvp_icd.json`, `--rendering-driver vulkan`) the tinted
+picture of Tidus is the same as under Compatibility.
+
+Not yet: the cloth's normals (lit as skinned); D3D12 and a real GPU not run; a cloth instance of another
+model than the character's own (ffx-rust saw Wakka's `w012` as instance 1 of
+his record, with ffx-rust's `--party`, which gd-ffx has not) would be logged
+as matching no surface and stay skinned.
+
 ## Map transitions (G5)
 
 A playtester saw the characters of the next map over the old one before the
