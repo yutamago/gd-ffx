@@ -13,13 +13,17 @@
 //! - [`snapshots`]: the game-state API's snapshots (ffx-rust's
 //!   `ffx-state`), the newest two, for Godot to interpolate between;
 //! - [`state`]: the few state values the G0 debug view reads;
-//! - [`keys`]: Godot's keys as the game's scan codes.
+//! - [`keys`]: Godot's keys as the game's scan codes;
+//! - [`esc`]: the ESC menu's Flash callbacks, called for gd-ffx's native page;
+//! - [`encounters`]: the battle maps of the current map's random encounters.
 //!
 //! Nothing of the game is built in: it is read from the player's folder at
 //! run time.
 
 pub mod audio;
 pub mod classic;
+pub mod encounters;
+pub mod esc;
 pub mod game;
 pub mod keys;
 pub mod platform;
