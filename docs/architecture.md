@@ -453,7 +453,7 @@ request": from `World.map_change` set):
 |---|---|---|---|---|
 | warm (imported before) | before (`--no-prefetch --no-hold`) | 1,213 ms, 15 to 18 frames of Tidus over the beach | 2,103 ms | 2.44 GB |
 | | hold, no loading ahead (`--no-prefetch`) | 1,048 to 2,807 ms, held | 2,075 to 4,056 ms | 2.25 to 2.30 GB |
-| | now | **0 ms** (loaded ahead) | 775 to 1,009 ms | 2.53 to 2.77 GB |
+| | now | **0 ms** (loaded ahead) | 775 to 1,009 ms | 2.70 GB |
 | cold (a new cache) | hold, no loading ahead | 3,917 to 3,997 ms | 4,750 to 5,031 ms | 2.32 GB |
 | | now | **0 ms** (imported and loaded on the beach) | 1,023 to 1,043 ms | 2.53 GB |
 
