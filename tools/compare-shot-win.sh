@@ -9,6 +9,8 @@
 #
 #   FFX_GAME_DIR=<game> tools/compare-shot-win.sh REF.png|bmp OUT_DIR [devsave, default 7] [d3d12|vulkan]
 # FFX_SHOT_ARGS: more arguments for the check, as tools/compare-shot.sh.
+# FFX_SHOT_TEST: the check to run instead, as tools/compare-shot.sh (e.g.
+# "--selftest-materials --selftest-timeout=200": godot.png and godot-remastered.png)
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 ref="$1"; out="$2"; save="${3:-7}"; driver="${4:-d3d12}"
@@ -23,6 +25,7 @@ win() { wslpath -w "$1"; }
 mkdir -p "$out/docs"
 if [[ "$save" == 7 ]]; then test="--selftest-besaid --no-walk --selftest-timeout=12"
 else test="--selftest-map --selftest-timeout=90"; fi
+test="${FFX_SHOT_TEST:-$test}"
 # shellcheck disable=SC2086
 timeout 300 "$exe" --audio-driver Dummy --rendering-driver "$driver" -- \
     --game-dir="$(win "$(readlink -f "$game")")" --documents="$(win "$out/docs")" \

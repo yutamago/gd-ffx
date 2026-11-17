@@ -21,7 +21,14 @@ public static class RenderPaths
         ?? (GameSettings.Arg("render-path") is "classic" or "remastered" or "map" ? GameSettings.Arg("render-path")! : UserSettings.Current.RenderPath);
 
     /// <summary>Sets the choice for this run (the options do it through the setting; null: back to the setting).</summary>
-    public static void Set(string? choice) => _toggled = choice;
+    public static void Set(string? choice)
+    {
+        _toggled = choice;
+        Version++;
+    }
+
+    /// <summary>Bumped whenever the choice may have changed (views cache <see cref="Remastered"/> by it).</summary>
+    public static int Version { get; private set; }
 
     /// <summary>The map's own render path (its overrides' last layer; classic without).</summary>
     public static bool MapSays(string level) => RemasterOverrides.For(level)?.RenderPath == RenderPath.Remastered;
@@ -41,6 +48,7 @@ public static class RenderPaths
     public static string Toggle(string level)
     {
         _toggled = Remastered(level) ? "classic" : "remastered";
+        Version++;
         GD.Print($"ffx: render path {_toggled} (toggled on {PartIds.LevelKey(level)})");
         return _toggled;
     }

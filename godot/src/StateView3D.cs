@@ -291,6 +291,10 @@ public partial class StateView3D : Node3D
 
     // ---- the render path ----------------------------------------------------------
 
+    private string _pathLevel = "\0";
+    private int _pathVersion = -1;
+    private bool _pathRemastered;
+
     /// <summary>Whether the shown map draws remastered now (for tests).</summary>
     public bool Remastered => _rig.Active;
 
@@ -302,7 +306,13 @@ public partial class StateView3D : Node3D
     /// </summary>
     private void UpdateRenderPath(GameStateView view)
     {
-        bool want = _map != null && Remaster.RenderPaths.Remastered(_mapLevel);
+        // the choice evaluated when the map or the choice changes, not every frame (it makes strings)
+        if (_pathLevel != _mapLevel || _pathVersion != Remaster.RenderPaths.Version)
+        {
+            (_pathLevel, _pathVersion) = (_mapLevel, Remaster.RenderPaths.Version);
+            _pathRemastered = Remaster.RenderPaths.Remastered(_mapLevel);
+        }
+        bool want = _map != null && _pathRemastered;
         if (_map is { } m && m.Name == "ClassicMap")
         {
             int n = Remaster.MapLook.Of(m).Set(want);

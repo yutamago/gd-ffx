@@ -9,7 +9,7 @@ namespace GdFfx.RemasterEditor;
 /// <summary>
 /// The batch (docs/remaster-editor.md, "The batch"): materials for many textures at once (the
 /// open map's, the selected map's area, every map the project changes, every map), generated
-/// in the background a texture a frame into a review list (no file written yet), then the
+/// one texture at a time on a worker into a review list (no file written yet), then the
 /// ticked ones accepted as one undo step, or all discarded. At most <see cref="Chunk"/> a run:
 /// run again for the next.
 /// </summary>
@@ -34,7 +34,10 @@ public partial class BatchPanel : VBoxContainer
     /// <summary>Generated and waiting for review.</summary>
     public IReadOnlyList<(string Id, PbrImages Maps, PbrRecipe Recipe)> Made => _made;
 
-    public bool Running => _todo.Count > 0;
+    public bool Running => _todo.Count > 0 || _job != null;
+
+    /// <summary>The texture being generated on a worker (its colour pixels read on the main thread first: the extension answers there only).</summary>
+    private (string Id, PbrRecipe Recipe, System.Threading.Tasks.Task<PbrImages> Task)? _job;
 
     public BatchPanel(RemasterPlugin plugin, TextureDock dock)
     {
@@ -115,11 +118,34 @@ public partial class BatchPanel : VBoxContainer
 
     public void Tick()
     {
+        if (_job is { } job)
+        {
+            if (!job.Task.IsCompleted)
+                return;
+            _job = null;
+            if (job.Task.IsCompletedSuccessfully)
+                AddMade(job.Id, job.Task.Result, job.Recipe);
+            else
+                GD.PrintErr($"ffx remaster: batch: {job.Id}: {job.Task.Exception?.InnerException?.Message}");
+        }
         if (_todo.Count == 0)
+        {
+            if (_made.Count > 0 || _status.Text.StartsWith("generating", System.StringComparison.Ordinal))
+                _status.Text = $"{_made.Count} material(s) to review: untick the bad ones, then Accept";
             return;
+        }
         var id = _todo.Dequeue();
         var recipe = new PbrRecipe { Upscale = _upscale.Selected switch { 1 => 2, 2 => 4, _ => 1 }, Delight = (float)_delight.Value };
-        if (TextureActions.Make(id, recipe) is { } maps)
+        if (TextureActions.Source(id) is { } img)
+        {
+            var px = PbrBuilder.From(img);
+            _job = (id, recipe, System.Threading.Tasks.Task.Run(() => PbrBuilder.Make(px, recipe)));
+        }
+        _status.Text = $"generating: {_made.Count} done, {_todo.Count + (_job != null ? 1 : 0)} to go";
+    }
+
+    private void AddMade(string id, PbrImages maps, PbrRecipe recipe)
+    {
         {
             _made.Add((id, maps, recipe));
             var it = _review.CreateItem(_review.GetRoot() ?? _review.CreateItem());
@@ -133,7 +159,6 @@ public partial class BatchPanel : VBoxContainer
             thumb.Resize(64, 64 * thumb.GetHeight() / System.Math.Max(1, thumb.GetWidth()), Image.Interpolation.Bilinear);
             it.SetIcon(1, ImageTexture.CreateFromImage(thumb));
         }
-        _status.Text = _todo.Count > 0 ? $"generating: {_made.Count} done, {_todo.Count} to go" : $"{_made.Count} material(s) to review: untick the bad ones, then Accept";
     }
 
     /// <summary>Unticks <paramref name="id"/> in the review (the checks).</summary>
@@ -163,6 +188,7 @@ public partial class BatchPanel : VBoxContainer
     public void Discard()
     {
         _todo.Clear();
+        _job = null;
         _made.Clear();
         _review.Clear();
         _status.Text = "";

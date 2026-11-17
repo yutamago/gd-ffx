@@ -282,8 +282,9 @@ place (set the entry's `Material`).
 Below the dock: materials for many textures at once. The scope is the open
 map's textures, the selected map's area, every map the project changes, or
 every map (the where-used index); **Skip done** leaves out textures that
-have a material. **Generate** makes up to 48 a frame at a time into the
-review list (each with its albedo; nothing is written yet); untick the bad
+have a material. **Generate** makes up to 48 into the review list, one at a time
+on a worker thread so the editor stays usable (each with its albedo;
+nothing is written yet); untick the bad
 ones, **Accept ticked** writes the rest as one undo step, **Discard** drops
 them all. Run again for the next 48.
 
