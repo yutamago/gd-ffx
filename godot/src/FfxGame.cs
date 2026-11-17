@@ -27,6 +27,7 @@ public partial class FfxGame : RefCounted
         public static readonly StringName classic_request = "classic_request";
         public static readonly StringName classic_texture = "classic_texture";
         public static readonly StringName classic_texture_is_cube = "classic_texture_is_cube";
+        public static readonly StringName classic_map_catalogue = "classic_map_catalogue";
         public static readonly StringName decode_text = "decode_text";
         public static readonly StringName effect_draws = "effect_draws";
         public static readonly StringName effect_draws_address = "effect_draws_address";
@@ -408,6 +409,18 @@ public partial class FfxGame : RefCounted
     /// <summary>A texture's pixels now (main thread only), as <see cref="TexturesFinished"/>'s entries.</summary>
     public Dictionary TextureNow(string kind, string name, int face) =>
         Node.Call(M.texture_now, kind, name, face).AsGodotDictionary();
+
+    /// <summary>
+    /// The map catalogue as JSON (docs/importer.md, "The map catalogue"; main thread only): every
+    /// field level and battle stage with its events, map numbers, place names in
+    /// <paramref name="languages"/> (empty: all eight) and area; empty without the archive.
+    /// <see cref="Remaster.MapCatalogue"/> reads it.
+    /// </summary>
+    public string ClassicMapCatalogue(params string[] languages)
+    {
+        using var v = Node.Call(M.classic_map_catalogue, languages);
+        return v.AsString();
+    }
 
     /// <summary>Whether the material texture at <paramref name="path"/> is a cube map.</summary>
     public bool ClassicTextureIsCube(string path) => Node.Call(M.classic_texture_is_cube, path).AsBool();

@@ -720,7 +720,8 @@ the save and load screens too.
 
 `--selftest-remake --devsave=7` and `--selftest-mods --no-game` (G6):
 remade content and mod packs (docs/remake.md); `--selftest-launcher --no-game`:
-the launcher (docs/launcher.md).
+the launcher (docs/launcher.md). `--selftest-overrides --devsave=7` (R1): a
+map's remaster overrides in the running game (docs/remake.md, "Overrides").
 
 
 ```bash

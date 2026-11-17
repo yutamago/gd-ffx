@@ -80,6 +80,9 @@ public static class ModSelfTest
                 ["res://mods/alpha/moved.tscn"] = movedSrc,
                 ["res://mods/alpha/control.tscn"] = Src("control.tscn", "[gd_scene format=3]\n\n[node name=\"NotA3DScene\" type=\"Control\"]\n"),
                 ["res://mods/selftest_shared.txt"] = Src("alpha.txt", "alpha"),
+                [OverridesPath("alpha")] = Src("alpha.tres", Overrides(
+                    ("#a/*", "Remove = 2"), ("#b/0", "Visibility = 1"), ("#c/*", "Remove = 1"))
+                    + "Status = 2\nRenderPath = 1\nNotes = \"alpha\"\n"),
             });
             Build(System.IO.Path.Combine(mods, "beta.pck"), new()
             {
@@ -87,6 +90,9 @@ public static class ModSelfTest
                     "{ \"chr\": { \"c999\": \"res://mods/beta/stand_in.tscn\", \"c997\": \"res://mods/beta/stand_in.tscn\" } }"),
                 ["res://mods/beta/stand_in.tscn"] = sceneSrc,
                 ["res://mods/selftest_shared.txt"] = Src("beta.txt", "beta"),
+                [OverridesPath("beta")] = Src("beta.tres", Overrides(
+                    ("#a/*", "Remove = 1\nVisibility = 1"), ("#b/0", "TransformMode = 1\nTransform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 5, 0)"))
+                    + "Status = 1\nNotes = \"beta\"\n"),
             });
             // no fragment: the convention's file only
             Build(System.IO.Path.Combine(mods, "gamma.pck"), new()
@@ -141,6 +147,24 @@ public static class ModSelfTest
             Check(moved is { Remade: true } && movedRoot != null && Mathf.IsEqualApprox(movedRoot.Position.Y, -5f),
                 $"a remade scene comes wrapped, its root's transform kept ({movedRoot?.Position})");
             moved?.Node?.Free();
+            // remaster overrides in two packs: merged per part and per field, the later pack winning
+            Remaster.RemasterOverrides.Invalidate();
+            var merged = Remaster.RemasterOverrides.For("/map/zzzz/zzzz00/");
+            var model = Remaster.PartIds.ModelIdOf("zzzz00");
+            Remaster.MergedPart? Part(string id) => merged?.Parts.GetValueOrDefault(model + id);
+            Check(merged != null && merged.Layers.Select(l => l.Name).SequenceEqual(["beta", "alpha"]),
+                $"map overrides from two packs, in load order: {string.Join(", ", merged?.Layers.Select(l => l.Name) ?? [])}");
+            Check(Part("#a/*") is { Removed: false, Hidden: true } a && a.Layers.SequenceEqual(["beta", "alpha"]),
+                "a later pack keeps a part an earlier one removed; the earlier one's hiding stays");
+            Check(Part("#b/0") is { Moved: true, Hidden: true } b && Mathf.IsEqualApprox(b.Transform.Origin.Y, 5f),
+                "a part moved by one pack and hidden by the other is both");
+            Check(Part("#c/*") is { Removed: true } && merged!.Parts.Count == 3, "the parts of both packs, by full ID");
+            Check(merged is { Status: Remaster.MapStatus.Remastered, RenderPath: Remaster.RenderPath.Remastered, Notes: "alpha" },
+                $"the map's status, render path and notes from the later pack: {merged?.Status}, {merged?.RenderPath}");
+            Check(Remaster.RemasterOverrides.Levels().Contains("zzzz00") && Remaster.RemasterOverrides.Exists("zzzz00")
+                && !Remaster.RemasterOverrides.Exists("zzzz01"), "the levels with overrides");
+            notes.Add("map overrides layered over 2 packs");
+
             // bad entries fall back to classic (none here), without an exception
             foreach (var id in new[] { "c994", "c993" })
             {
@@ -180,6 +204,23 @@ public static class ModSelfTest
             : $"ffx selftest: FAIL ({string.Join("; ", fails)})");
         GameHost.Instance?.Game?.Stop();
         node.GetTree().Quit(pass ? 0 : 1);
+    }
+
+    private static string OverridesPath(string pack) =>
+        $"res://mods/{pack}/remaster/maps/zzzz00/{Remaster.RemasterOverrides.FileName}";
+
+    /// <summary>A map overrides resource's text: its parts (ID, property lines), then the caller's resource properties.</summary>
+    private static string Overrides(params (string Id, string Props)[] parts)
+    {
+        var t = new System.Text.StringBuilder();
+        t.Append($"[gd_resource type=\"Resource\" script_class=\"MapOverrides\" load_steps={parts.Length + 3} format=3]\n\n");
+        t.Append("[ext_resource type=\"Script\" path=\"res://src/Remaster/MapOverrides.cs\" id=\"1\"]\n");
+        t.Append("[ext_resource type=\"Script\" path=\"res://src/Remaster/PartOverride.cs\" id=\"2\"]\n\n");
+        for (int i = 0; i < parts.Length; i++)
+            t.Append($"[sub_resource type=\"Resource\" id=\"p{i}\"]\nscript = ExtResource(\"2\")\nId = \"{parts[i].Id}\"\n{parts[i].Props}\n\n");
+        t.Append("[resource]\nscript = ExtResource(\"1\")\nLevel = \"zzzz00\"\n");
+        t.Append($"Parts = Array[ExtResource(\"2\")]([{string.Join(", ", Enumerable.Range(0, parts.Length).Select(i => $"SubResource(\"p{i}\")"))}])\n");
+        return t.ToString();
     }
 
     /// <summary>Writes a pack <paramref name="pck"/> of <paramref name="files"/> (res:// path → source file).</summary>

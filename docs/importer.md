@@ -161,6 +161,89 @@ hold the wings down and up.
   the element numbers do not put parents first (c001's joints come as 0, 1,
   2, 74, 3, ...), and a parent set after its child would move the child.
 
+## Stable part IDs
+
+Every classic model, node, mesh instance, segment and texture has an ID
+made from the archive's own names (`rust/ffx-import/src/ids.rs`), the same
+on every import and on every player's copy. The remaster's overrides
+(docs/remake.md, "Overrides") are keyed by them. The forms are ffx-remix's,
+so a part has one name in both projects:
+
+| What | ID | Example |
+|---|---|---|
+| a model | `x:/<archive path>` | `x:/ffx_data/gamedata/ps3data/map/bsil/bsil00/mdl/d3d11/bsil00.dae.phyre` |
+| a node (`PNode`) | `<model>#<node>` | `...bsil00.dae.phyre#polySurface4` |
+| a mesh instance (every segment) | `<model>#<node>/*` | `...#polySurface4/*` |
+| a part (one segment of an instance) | `<model>#<node>/<k>` | `...#polySurface32/0` |
+| a texture | `x:/<archive path>` | `x:/ffx_data/gamedata/ps3data/map/bsil/bsil00/tex/d3d11/<name>.dds.phyre` |
+| a field map (an event) | `x:map/<event>` | `x:map/bsil0000` |
+| a battle stage | `x:map/<stage>` | `x:map/bika00_a` |
+| a level (gd-ffx's map key) | `x:level/<level>` | `x:level/bsil00` |
+
+An instance's `<node>` is the name of the `PNode` that shares its world
+matrix, or the instance's own name when none does; two instances on one
+name get `~1`, `~2`... in instance order (nodes likewise). `<k>` is the
+segment's place in the instance's segment list. Archive paths are lower
+case. A model without instances has the instance `#mesh/*` and the parts
+`#mesh/<segment>`. In an overrides file an ID starting with `#` is
+relative to the map's classic 3D model.
+
+The export (import format 6, `asset.extras.ffx_import`) writes them as glTF
+extras: `extras.ffx_id` on each node (the instance's node, its mesh and
+each primitive: the part), `extras.ffx_texture_ids` on each material
+(sampler → texture ID), `asset.extras.ffx_model` the model's ID. An import
+of an older format is made again. `ClassicLibrary.Load` keeps them on the
+Godot side (`godot/src/Remaster/PartIds.cs`): metadata `ffx_part` on each
+node made from a glTF node, `ffx_parts` on a mesh instance (its surfaces'
+part IDs, surface i the glTF primitive i), `ffx_texture_ids` and
+`ffx_texture_samplers` on each mesh's own surface material. Nodes are
+matched by their glTF node's unique name, which Godot gives the scene
+node: `GLTFState.get_scene_node` is not safe after `generate_scene` (it
+replaces each `ImporterMeshInstance3D` by a `MeshInstance3D` and frees the
+old one, which the table still holds; reading it crashed the loading
+worker). `PartIndex` finds a scene's parts by ID.
+
+`ffx-import parts <level or model>` lists a model's IDs (its nodes, each
+instance and its parts).
+
+## The map catalogue
+
+Every field map and battle stage of the player's archive, with its level,
+events, map numbers, place names in the game's languages and area, read
+the way the game's loaders read them (`rust/ffx-import/src/maps.rs`; the
+chain is ffx-remix's, ported in method, not in files):
+
+- `eventid.bin` (`initEventList` `0x00907f50`): the event names by map
+  number;
+- `cdrom.fnd`/`cdrom.fid`: each event's script (`.ebp`) and the map files
+  of each map index (the `MAP1` file's folder is the level,
+  `graphicLevelAnalysisName` `0x00641d00`: `map/bsil/bsil00`);
+- the script's header: its entrances, entrance 0's map index
+  (`AtelGetMapIndex` `0x0086bd90`) and the place-name index
+  (`AtelSetSaveDicIndex` `0x00870ef0`);
+- section 11 of each language's `macrodic.dcp`: the place names, in `jp`,
+  `us`, `fr`, `sp`, `de`, `it`, `kr`, `ch`; the text before ` - ` (or `・`)
+  is the area's title;
+- battle stages: every `ps3data/btlmap/<area>/<stage>/mdl/d3d11/<stage>.dae.phyre`.
+
+On the Steam copy: 335 levels, 279 field levels (from 329 events, as
+several events show one level: `bsil00` is `bsil0000` and `bsmm0000`) and
+56 battle stages, in 32 areas; of the 402 events in `eventid.bin` 72 have
+no script and one no map (test and system entries). It takes 0.07 s.
+
+gd-ffx keys a map by its level (`bsil00`, the game's `World.level`
+`/map/bsil/bsil00/`). `FfxGame.classic_map_catalogue(languages)` returns
+the catalogue as JSON (main thread; empty without the archive),
+`godot/src/Remaster/MapCatalogue.cs` reads it: `MapCatalogue.Find` by key,
+level or event name, `FindMap` by map number, and each entry's `State()`
+says what the project has for it (docs/remake.md, "Overrides": whether it
+has overrides or a remade scene, derived; its status, render path and
+notes, set by hand). Nothing of the catalogue is stored: it is read from
+the player's copy each time.
+
+`ffx-import maps [languages...] [--json]` prints it (one line a level: kind,
+key, area, 3D/2D, place, events with their map numbers, level).
+
 ## Command line
 
 ```bash
@@ -171,6 +254,8 @@ cargo run --release -p ffx-import -- --game-dir <game> --out <dir> map2d /map/ka
 cargo run --release -p ffx-import -- --game-dir <game> devsaves      # the developers' saves: map, entrance, scenario
 cargo run --release -p ffx-import -- --game-dir <game> model /map/kami/kami01/   # a model's nodes, instances, materials
 cargo run --release -p ffx-import -- --game-dir <game> effects /map/bsil/bsil00/  # its materials' effect variant states, instances' render orders
+cargo run --release -p ffx-import -- --game-dir <game> parts /map/bsil/bsil00/  # a model's stable part IDs
+cargo run --release -p ffx-import -- --game-dir <game> maps us jp [--json]   # the map catalogue
 cargo run --release -p ffx-import -- --game-dir <game> effect --wgsl TransparentNoMSAA 'PS3Data/Shaders/PhyreDefaultLitShader.fx#DE71...'  # a variant's programs as WGSL (ffx-dxbc)
 ```
 

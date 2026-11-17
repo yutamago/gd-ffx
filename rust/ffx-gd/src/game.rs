@@ -768,6 +768,23 @@ impl FfxGame {
         )
     }
 
+    /// The map catalogue as JSON (docs/importer.md, "The map catalogue"):
+    /// every field level and battle stage with its events, map numbers,
+    /// place names in `languages` (empty: all eight) and area; empty
+    /// without the archive (`classic_open`).
+    #[func]
+    fn classic_map_catalogue(&self, languages: PackedStringArray) -> GString {
+        let langs: Vec<String> = languages
+            .as_slice()
+            .iter()
+            .map(GString::to_string)
+            .collect();
+        let langs: Vec<&str> = langs.iter().map(String::as_str).collect();
+        classic()
+            .map_catalogue(&langs)
+            .map_or_else(GString::new, |s| GString::from(s.as_str()))
+    }
+
     /// Whether the material texture at `path` is a cube map.
     #[func]
     fn classic_texture_is_cube(&self, path: GString) -> bool {

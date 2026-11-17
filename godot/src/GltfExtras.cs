@@ -28,6 +28,18 @@ public sealed class GltfExtras
     /// <summary>glTF mesh i's cloth surfaces (the import's primitive extras <c>ffx_cloth</c>; empty: none).</summary>
     public required ClothSurface[][] Cloth { get; init; }
 
+    /// <summary>glTF node i's stable ID (<c>extras.ffx_id</c>, docs/importer.md "Stable part IDs"; null: none).</summary>
+    public string?[] NodeIds { get; init; } = [];
+
+    /// <summary>glTF node i's mesh (-1: none).</summary>
+    public int[] NodeMeshes { get; init; } = [];
+
+    /// <summary>glTF mesh i's primitives' part IDs (<c>extras.ffx_id</c>; null: none).</summary>
+    public string?[][] PartIds { get; init; } = [];
+
+    /// <summary>The model's ID (<c>asset.extras.ffx_model</c>; null: an import before format 6).</summary>
+    public string? Model { get; init; }
+
     /// <summary>The JSON of the .glb (or .gltf) at <paramref name="path"/> (an OS path); null when it cannot be read.</summary>
     public static GltfExtras? Read(string path)
     {
@@ -73,15 +85,44 @@ public sealed class GltfExtras
                 mats.Add(MaterialExtras.From(m));
         var meshes = new List<MeshExtras>();
         var cloth = new List<ClothSurface[]>();
+        var parts = new List<string?[]>();
         if (root.TryGetProperty("meshes", out var ms) && ms.ValueKind == JsonValueKind.Array)
             foreach (var m in ms.EnumerateArray())
             {
                 meshes.Add(m.ValueKind == JsonValueKind.Object && m.TryGetProperty("extras", out var x)
                     ? MeshExtras.From(x) : MeshExtras.None);
                 cloth.Add(ClothSurface.Of(m));
+                var ids = new List<string?>();
+                if (m.ValueKind == JsonValueKind.Object && m.TryGetProperty("primitives", out var prims))
+                    foreach (var p in Items(prims))
+                        ids.Add(IdOf(p));
+                parts.Add([.. ids]);
             }
-        return new GltfExtras { Materials = [.. mats], Meshes = [.. meshes], Cloth = [.. cloth] };
+        var nodeIds = new List<string?>();
+        var nodeMeshes = new List<int>();
+        if (root.TryGetProperty("nodes", out var ns) && ns.ValueKind == JsonValueKind.Array)
+            foreach (var n in ns.EnumerateArray())
+            {
+                nodeIds.Add(IdOf(n));
+                nodeMeshes.Add(n.ValueKind == JsonValueKind.Object && n.TryGetProperty("mesh", out var mi)
+                    && Number(mi) is { } k ? (int)k : -1);
+            }
+        string? model = null;
+        if (root.TryGetProperty("asset", out var asset) && asset.ValueKind == JsonValueKind.Object
+            && asset.TryGetProperty("extras", out var ax) && ax.ValueKind == JsonValueKind.Object
+            && ax.TryGetProperty("ffx_model", out var fm))
+            model = Str(fm);
+        return new GltfExtras
+        {
+            Materials = [.. mats], Meshes = [.. meshes], Cloth = [.. cloth],
+            NodeIds = [.. nodeIds], NodeMeshes = [.. nodeMeshes], PartIds = [.. parts], Model = model,
+        };
     }
+
+    /// <summary>An object's <c>extras.ffx_id</c> (null: none).</summary>
+    private static string? IdOf(JsonElement e) =>
+        e.ValueKind == JsonValueKind.Object && e.TryGetProperty("extras", out var x) && x.ValueKind == JsonValueKind.Object
+            && x.TryGetProperty("ffx_id", out var id) ? Str(id) : null;
 
     /// <summary>A JSON number as Godot's JSON reads it (a double), else null.</summary>
     internal static double? Number(JsonElement e) => e.ValueKind == JsonValueKind.Number ? e.GetDouble() : null;
@@ -127,6 +168,9 @@ public sealed class MaterialExtras
 
     /// <summary>Whether the extras have <c>ffx_textures</c> at all.</summary>
     public bool HasTextures;
+
+    /// <summary><c>extras.ffx_texture_ids</c>: each sampler's texture ID (docs/importer.md, "Stable part IDs").</summary>
+    public readonly Dictionary<string, string> TextureIds = new();
 
     /// <summary><see cref="Parameters"/>' floats of <paramref name="name"/>, or <paramref name="fallback"/> when missing or shorter.</summary>
     public float[] Floats(string name, float[] fallback) =>
@@ -181,6 +225,11 @@ public sealed class MaterialExtras
                                 modes.Add(s);
                         r.Wrap[q.Name] = [.. modes];
                     }
+                    break;
+                case "ffx_texture_ids":
+                    foreach (var q in GltfExtras.Members(p.Value))
+                        if (GltfExtras.Str(q.Value) is { } s)
+                            r.TextureIds[q.Name] = s;
                     break;
                 case "ffx_textures":
                     r.HasTextures = true;

@@ -224,6 +224,7 @@ public partial class StateView3D : Node3D
         Perf.End(Perf.Section.View3D, t0);
         t0 = Perf.Start();
         UpdateObjects(view);
+        _overrides?.Update();
         LookAtObject();
         Perf.End(Perf.Section.Objects, t0);
         t0 = Perf.Start();
@@ -285,6 +286,21 @@ public partial class StateView3D : Node3D
 
     /// <summary>The classic map's morphing meshes (<see cref="MapObjects"/>).</summary>
     private List<Morph> _morphs = [];
+
+    /// <summary>The shown map's overrides (docs/remake.md, "Overrides"; null: none).</summary>
+    private Remaster.MapOverrideRuntime? _overrides;
+
+    /// <summary>The shown map's overrides (for checks and the editor; null: none).</summary>
+    public Remaster.MapOverrideRuntime? Overrides => _overrides;
+
+    /// <summary>The shown map's node (null: none, or 2D layers only).</summary>
+    public Node3D? MapNode => _map;
+
+    /// <summary>Whether the game places <paramref name="node"/> (a mesh of one of its map objects) each frame (for checks).</summary>
+    public bool IsGamePlaced(Node3D node) => _objectNodes?.ContainsValue(node) == true;
+
+    /// <summary>Whether the game morphs <paramref name="mesh"/> (for checks).</summary>
+    public bool IsMorphed(MeshInstance3D mesh) => _morphs.Exists(m => m.Mesh == mesh);
 
     private long _objectsPrevOf = -1;
     private readonly Dictionary<uint, GdFfx.Api.SceneObject> _objectsPrev = new();
@@ -514,9 +530,12 @@ public partial class StateView3D : Node3D
                     if (a.Origin.DistanceTo(t.Origin) < GameStateView.WarpDistance * 4)
                         t = a.InterpolateWith(t, view.Alpha);
                 }
+                // the map's overrides on top: an offset over the game's placement, a hidden part held hidden
+                var drawn = m.Drawn;
+                _overrides?.Place(node, ref t, ref drawn);
                 if (t.Basis.Determinant() != 0)
                     node.GlobalTransform = t;
-                node.Visible = m.Drawn;
+                node.Visible = drawn;
                 ObjectsPlaced++;
             }
     }
@@ -600,6 +619,7 @@ public partial class StateView3D : Node3D
             _map = parked.Node;
             _objectNodes = parked.Nodes;
             _morphs = parked.Morphs;
+            _overrides = parked.Overrides;
             _mapLevel = level;
             if (_map != null)
                 AddChild(_map);
@@ -616,6 +636,7 @@ public partial class StateView3D : Node3D
                 Park(_mapLevel);
                 _objectNodes = null;
                 _morphs = [];
+                _overrides = null;
                 _mapLevel = level;
                 _mapSource = "2D layers only";
                 GD.Print($"ffx: map {level} shown (2D layers only)");
@@ -630,6 +651,7 @@ public partial class StateView3D : Node3D
         var objects = content.Remade ? null : content.Prepared as MapObjects;
         _objectNodes = objects?.Nodes;
         _morphs = objects?.Morphs ?? [];
+        _overrides = content.Overrides;
         _mapLevel = level;
         _mapSource = content.Remade ? "remade" : ahead ? "loaded ahead" : "loaded then";
         if (map == null)
@@ -641,7 +663,8 @@ public partial class StateView3D : Node3D
     }
 
     /// <summary>The map shown before the current one, out of the tree, with its object index (null none).</summary>
-    private (string Level, Node3D? Node, Dictionary<(uint Id, int K), Node3D>? Nodes, List<Morph> Morphs)? _parked;
+    private (string Level, Node3D? Node, Dictionary<(uint Id, int K), Node3D>? Nodes, List<Morph> Morphs,
+        Remaster.MapOverrideRuntime? Overrides)? _parked;
 
     /// <summary>
     /// Takes the shown map out of the tree and keeps it as the one to come back to (the player
@@ -655,13 +678,14 @@ public partial class StateView3D : Node3D
         if (_map != null && level.Length > 0 && !GameSettings.Flag("no-prefetch"))
         {
             RemoveChild(_map);
-            _parked = (level, _map, _objectNodes, _morphs);
+            _parked = (level, _map, _objectNodes, _morphs, _overrides);
         }
         else
             _map?.QueueFree();
         _map = null;
         _objectNodes = null;
         _morphs = [];
+        _overrides = null;
     }
 
     private readonly MapPrefetch _prefetch = new();

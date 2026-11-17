@@ -177,7 +177,8 @@ loads `scenes/main.tscn`. `ModLoader` (the first autoload) reads the base
 remake registry and, from `GameHost.Start`, mounts the mod packs
 (docs/remake.md); `GameHost` (an autoload) owns the game (booted in
 `Start`), its input and the view;
-`StateView3D` draws the camera, the classic map and the characters'
+`StateView3D` draws the camera, the classic map (with its remaster
+overrides on top: docs/remake.md, "Overrides") and the characters'
 classic models posed by the game (docs/importer.md), each once its model
 is loaded (markers only without classic content: "Map transitions"); `DebugView` is the overlay (F12).
 

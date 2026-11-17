@@ -73,6 +73,47 @@ not: Godot is the renderer and the editor.
 - **Play from the editor:** start the game at a map (a developer save
   there, or a jump) to see the edit live.
 
+### R1 progress (2026-11-17)
+
+R1a, the foundation without the editor, is done:
+
+- **Stable part IDs**: the import (format 6) writes ffx-remix's IDs as glTF
+  extras and gd-ffx keeps them as node, mesh and material metadata
+  (docs/importer.md, "Stable part IDs"; `ffx-import parts`).
+- **The map catalogue**: 335 levels (279 field levels from 329 events, 56
+  battle stages), 32 areas, place names in the game's eight languages
+  (docs/importer.md, "The map catalogue"; `ffx-import maps`,
+  `FfxGame.classic_map_catalogue`, `MapCatalogue`).
+- **The override format**: `MapOverrides` (`overrides.tres`) and
+  `additions.tscn` per map: remove, hide/show, move (offset on the game's
+  placement or absolute), replace by a scene, add under an anchor; status,
+  notes and render path per map; layered over the project and the packs,
+  per part and per field (docs/remake.md, "Overrides").
+- **Overrides in the game**, on the classic import and a remade map,
+  keeping the game's placement, morphs and visibility, loaded ahead with
+  the map; the catalogue entry's derived and hand-set status. Checks:
+  `--selftest-overrides --devsave=7`, the layering in `--selftest-mods`.
+
+Open for R1b, the editor plugin (`godot/addons/ffx_remaster`):
+
+- the dock: the map browser over `MapCatalogue` (search, areas, status,
+  thumbnails; the catalogue needs the archive open in the editor, so the
+  plugin starts `ffx-gd`'s classic importer there);
+- "open": an editable scene of the classic map (imported, scaled by 10,
+  every part a node named and tagged by its ID, a segment as its own node
+  so it can be picked), the current overrides applied and shown as edits;
+- edits by Godot's gizmos and inspector turned into `PartOverride`s (a
+  move into an offset relative to the file's placement, a delete into
+  `Remove`, a hidden node into `Hidden`, a dropped scene onto a part into
+  `Replace`, a new node into `additions.tscn` with its anchor), one undo
+  step each; save writes `overrides.tres` and `additions.tscn`; the status
+  and notes in the inspector;
+- a project index (`res://remaster/project.tres`) if per-map files are not
+  enough (statuses without overrides, thumbnails);
+- play from the editor: start the game at the map (a developer save there,
+  or a jump) with the edits live;
+- the render path is stored but not used until R2.
+
 ## Beyond the milestones
 
 - **Art direction and references.** A per-area reference board, the
