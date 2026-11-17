@@ -639,10 +639,12 @@ renders.
 
 The battle check (`--selftest-battle`) also waits for the target selection
 (Attack's first confirm): the native menu names the target and a hand
-points at it (`--shot`: `NAME-target.png` too). It counts the hits from the
-snapshots (an HP change, a monster leaving with HP left) and fails when the
-HUD popped another number of damage numbers; with `--to-results` also when
-no killing blow popped.
+points at it (`--shot`: `NAME-target.png` too). It collects the game's
+damage numbers from the snapshots (API 12), checks each HP number against
+the HP its battler lost in that update (all it had when the number is
+more: the overkill) and every HP change against a number, and fails when
+the HUD popped other numbers than the game's; with `--to-results` also
+when no killing blow with overkill popped.
 
 The Besaid check also waits for Tidus's cloth (docs/architecture.md,
 "Cloth") and fails when it is not placed on his model, a segment matches
