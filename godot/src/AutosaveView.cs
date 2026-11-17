@@ -25,6 +25,8 @@ public partial class AutosaveView : Control
 
     /// <summary>Prompts played so far, and the frame shown now (0: none), for tests.</summary>
     public int Played { get; private set; }
+    /// <summary>Prompts played in this run (all views).</summary>
+    public static int TotalPlayed { get; private set; }
     public int Frame { get; private set; }
 
     public override void _Ready()
@@ -60,6 +62,7 @@ public partial class AutosaveView : Control
             {
                 _t = 0;
                 Played++;
+                TotalPlayed++;
                 GD.Print($"ffx: autosave prompt {Played} ({_frames.Count} frames)");
             }
         }

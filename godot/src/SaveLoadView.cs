@@ -31,6 +31,8 @@ public partial class SaveLoadView : Control
     /// <summary>What is drawn now, one line a row, the focused one marked (for tests).</summary>
     public List<string> Shown { get; } = new();
     public static SaveLoadView? Instance { get; private set; }
+    /// <summary>Whether it drew the game's list in this run.</summary>
+    public static bool EverShown { get; private set; }
 
     public override void _Ready()
     {
@@ -74,6 +76,8 @@ public partial class SaveLoadView : Control
                 Shown.Add(it.Extra.Length > 0 && it.Date.Length == 0 ? $"{(i == st.Focus ? ">" : " ")}[{it.Extra}]" : $"{(i == st.Focus ? ">" : " ")}{Label(it)} | {it.Place} | {it.Date} | {it.Name} | {it.PlayTime} | {string.Join(",", it.Party)} | {it.Thumbnail}");
         if (st.Message != null)
             Shown.Add($"[message] {st.Message}");
+        if (Shown.Count > 0)
+            EverShown = true;
         if (st.Question is { } q)
             Shown.Add($"[question] {q.Text} ({(st.Button == 0 ? ">" : "")}{q.Yes} / {(st.Button == 1 ? ">" : "")}{q.No})");
         QueueRedraw();

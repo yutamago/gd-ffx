@@ -131,9 +131,21 @@ public static class FlashScreens
         var opened = Movies.Select(m => m.Name).Distinct().OrderBy(n => n).ToList();
         var shown = Movies.Where(m => m.Draws > 0).Select(m => m.Name).Distinct().OrderBy(n => n).ToList();
         var missing = opened.Where(n => !Native.ContainsKey(n)).ToList();
+        // the native screens drew what the game showed
+        var undrawn = new List<string>();
+        if (shown.Contains("chocobo.swf") && AutosaveView.TotalPlayed == 0)
+            undrawn.Add("chocobo.swf (no autosave prompt played)");
+        if (shown.Any(n => n.StartsWith("saveload")) && !SaveLoadView.EverShown)
+            undrawn.Add("saveload (no list drawn)");
+        if (GameHost.Instance?.NativeOpening == true && opened.Contains("openingscreen.swf") && OpeningView.Instance is not { LogoShown: true })
+            undrawn.Add("openingscreen.swf (no logo drawn)");
+        if (Tips.Count > 0)
+            undrawn.Add($"{Tips.Count} tip(s) not shown");
         var note = $"flash movies opened: {string.Join(" ", opened)}; shown: {(shown.Count > 0 ? string.Join(" ", shown) : "none")}"
-            + (missing.Count > 0 ? $"; WITHOUT a native screen: {string.Join(" ", missing)}" : "; all native");
-        return (missing.Count == 0, note);
+            + $"; {TipsPlayed.Count} tip(s), {AutosaveView.TotalPlayed} autosave prompt(s)"
+            + (missing.Count > 0 ? $"; WITHOUT a native screen: {string.Join(" ", missing)}" : "; all native")
+            + (undrawn.Count > 0 ? $"; NOT DRAWN: {string.Join(", ", undrawn)}" : "");
+        return (missing.Count == 0 && undrawn.Count == 0, note);
     }
 }
 
