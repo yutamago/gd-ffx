@@ -50,12 +50,17 @@ public partial class BattleHudView : Control
     }
 
     private readonly Dictionary<int, int> _lastHp = new();
+    private readonly HashSet<int> _present = new();
+    private readonly List<int> _gone = new();
     private readonly Dictionary<(string, string), string> _names = new();
     private readonly List<(Label Label, Vector3 At, double Age)> _pops = new();
     private uint _lastUpdate;
 
     /// <summary>Damage numbers popped so far (for tests).</summary>
     public int Popped { get; private set; }
+
+    /// <summary>Of <see cref="Popped"/>, the killing blows on battlers that left the list with HP left (for tests).</summary>
+    public int PoppedKills { get; private set; }
 
     /// <summary>Seconds a damage number stays.</summary>
     public const double PopTime = 1.2;
@@ -77,11 +82,11 @@ public partial class BattleHudView : Control
         return null;
     }
 
-    private void Pop(GdFfx.Api.Snapshot s, int index, int change)
+    private bool Pop(GdFfx.Api.Snapshot s, int index, int change)
     {
         var a = ActorOf(s, index);
         if (a == null)
-            return;
+            return false;
         var l = new Label { Text = Mathf.Abs(change).ToString(), MouseFilter = MouseFilterEnum.Ignore };
         l.AddThemeFontSizeOverride("font_size", 30);
         Ui.SetColour(l, change < 0 ? new Color(1f, 1f, 1f) : new Color(0.5f, 1f, 0.55f));
@@ -91,18 +96,39 @@ public partial class BattleHudView : Control
         // over the body: its position in Godot's space, about a character's height up
         _pops.Add((l, GameStateView.FieldPoint(a.Position) + Vector3.Up * 14f, 0));
         Popped++;
+        return true;
     }
 
+    /// <summary>
+    /// The damage numbers of this update: each battler's HP change since the last update, and the
+    /// killing blow on a battler that left the list with HP left. A monster that dies with a
+    /// death pattern leaves <c>Snapshot.battlers</c> in the update of the blow (its
+    /// <c>in_battle</c> cleared; ffx-rust's docs/state-api.md, "Battlers"), so its HP is never
+    /// seen at 0: its last HP is popped as the blow (the overkill beyond it is not in the
+    /// snapshot). Before, only the HP changes popped, and the kills showed no number.
+    /// </summary>
     private void UpdatePops(GdFfx.Api.Snapshot? s, double delta)
     {
         if (s != null && s.World.Battle && s.Update != _lastUpdate)
         {
             _lastUpdate = s.Update;
+            _present.Clear();
             foreach (var b in s.Battlers)
             {
+                _present.Add(b.Index);
                 if (_lastHp.TryGetValue(b.Index, out var was) && was != b.Hp)
                     Pop(s, b.Index, b.Hp - was);
                 _lastHp[b.Index] = b.Hp;
+            }
+            _gone.Clear();
+            foreach (var index in _lastHp.Keys)
+                if (!_present.Contains(index))
+                    _gone.Add(index);
+            foreach (var index in _gone)
+            {
+                if (_lastHp[index] > 0 && Pop(s, index, -_lastHp[index]))
+                    PoppedKills++;
+                _lastHp.Remove(index);
             }
         }
         else if (s == null || !s.World.Battle)

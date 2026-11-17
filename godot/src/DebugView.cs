@@ -752,6 +752,9 @@ public sealed class MessageTest(double timeout, string? shot) : ITest
 /// targets, effect 50001800 by the example remade effect (registered at the start)
 /// (with <c>--shot=FILE.png</c> under a renderer, a picture). With <c>--to-results</c> it
 /// attacks on until the battle is won and reports the results screen (<see cref="BattleEndView"/>).
+/// Every hit pops a number: the check counts the hits from the snapshots itself (an HP change,
+/// a monster leaving the list with HP left: its killing blow) and fails when the HUD popped
+/// another count, or (with <c>--to-results</c>) no kill popped.
 /// </summary>
 public sealed class BattleTest : ITest
 {
@@ -782,11 +785,52 @@ public sealed class BattleTest : ITest
 
     public string Note { get; private set; } = "";
 
+    // the hits seen in the snapshots (each should pop a number), the monsters' among them, the kills
+    private readonly System.Collections.Generic.Dictionary<int, int> _hp = new();
+    private int _hits, _monsterHits, _kills;
+    private uint _hitsOf;
+
+    private void CountHits(GdFfx.Api.Snapshot? c)
+    {
+        if (c == null || !c.World.Battle || c.Update == _hitsOf)
+            return;
+        _hitsOf = c.Update;
+        var present = new System.Collections.Generic.HashSet<int>();
+        foreach (var b in c.Battlers)
+        {
+            present.Add(b.Index);
+            if (_hp.TryGetValue(b.Index, out var was) && was != b.Hp && BattleHudView.ActorOf(c, b.Index) != null)
+            {
+                _hits++;
+                if (b.Index >= BattleHudView.FirstMonster)
+                    _monsterHits++;
+            }
+            _hp[b.Index] = b.Hp;
+        }
+        foreach (var index in _hp.Keys.ToList())
+            if (!present.Contains(index))
+            {
+                if (_hp[index] > 0 && BattleHudView.ActorOf(c, index) != null)
+                {
+                    _hits++;
+                    _kills++;
+                    if (index >= BattleHudView.FirstMonster)
+                        _monsterHits++;
+                }
+                _hp.Remove(index);
+            }
+    }
+
+    /// <summary>The pops against the hits (null when they agree).</summary>
+    private string? PopsMismatch(BattleHudView? hud) =>
+        hud == null || hud.Popped != _hits ? $"{hud?.Popped} damage numbers popped for {_hits} hits ({_kills} kills)" : null;
+
     public bool? Step(FfxGame game, GameState s, GameStateView v, double delta)
     {
         _total += delta;
         if (!s.Running && s.Seconds > 1)
             return Done(false, $"the game ended: {s.Outcome}");
+        CountHits(v.Current);
         var root = (Engine.GetMainLoop() as SceneTree)?.Root;
         var menu = root?.FindChild("BattleMenuView", true, false) as BattleMenuView;
         var view3d = root?.FindChild("StateView3D", true, false) as StateView3D;
@@ -796,7 +840,11 @@ public sealed class BattleTest : ITest
             return Done(false, $"timed out: battle {c?.World.Battle}, level {c?.World.Level}, map shown {view3d?.MapLevel}, "
                 + $"models {view3d?.Posed.Models}, menu [{string.Join(", ", menu?.Shown ?? [])}]");
         if (_attacked.Length > 0 && c != null)
+        {
+            if (PopsMismatch(hud) is { } off)
+                return Done(false, $"{off}; {_attacked}");
             return Results(c, root, delta);
+        }
         if (_first.Length > 0 && c != null && menu != null)
             Target(c, menu, root);
         if (c == null || menu == null || view3d == null || hud == null || !c.World.Battle || (menu.Shown.Count < 2 && _first.Length == 0)
@@ -819,10 +867,13 @@ public sealed class BattleTest : ITest
         }
         var effects = root?.FindChild("EffectView", true, false) as EffectView;
         // Attack: confirm (Enter) tapped until a damage number pops
-        // the target chosen (the selection seen, then closed by the confirm), and a damage number
-        if (_target.Length > 0 && _targetClosed && hud.Popped > 0)
+        if (PopsMismatch(hud) is { } wrong)
+            return Done(false, $"{wrong}; {_first}");
+        // the target chosen (the selection seen, then closed by the confirm), and the attack's
+        // damage number (a monster's HP or its kill)
+        if (_target.Length > 0 && _targetClosed && _monsterHits > 0)
         {
-            var attacked = $"{_first}; {_target}; {hud.Popped} damage number(s) popped; {effects?.Started ?? 0} effect(s) started "
+            var attacked = $"{_first}; {_target}; {hud.Popped} damage number(s) popped for {_hits} hits; {effects?.Started ?? 0} effect(s) started "
                 + $"({effects?.RemadeStarted ?? 0} remade as {RemadeId}); effect draws by pass [{string.Join(", ", EffectDrawView.PassDraws)}], "
                 + $"{EffectDrawView.FadeFrames} frame(s) with a screen fade";
             if (!GameSettings.Flag("to-results"))
@@ -960,8 +1011,10 @@ public sealed class BattleTest : ITest
         if (_down)
             Tap(false);
         uint ap = TotalAp(e);
-        bool pass = _apView.Length > 0 && _gilAt >= 0 && _stateChanged;
-        return Done(pass, $"{_attacked}; the results screen: {_resultsFirst}; the AP counted: {_apView}; the gil paid: {_gilView} "
+        var hud = root?.FindChild("BattleHudView", true, false) as BattleHudView;
+        bool pass = _apView.Length > 0 && _gilAt >= 0 && _stateChanged && _kills > 0 && PopsMismatch(hud) == null;
+        return Done(pass, $"{_attacked}; the battle's damage numbers: {hud?.Popped} popped for {_hits} hits, "
+            + $"{hud?.PoppedKills} of them killing blows ({_kills} kills); the results screen: {_resultsFirst}; the AP counted: {_apView}; the gil paid: {_gilView} "
             + $"(states {string.Join(" ", _states.Select(x => $"0x{x:x}"))}; AP left {_firstAp} -> {ap}, gil left {_firstGilLeft} -> 0, party gil {_firstGil} -> {c.Save.Gil}, "
             + $"most AP shown {view?.MostAp}, level-up flash frames {view?.Flashes}, state changed {_stateChanged})");
     }
