@@ -191,7 +191,7 @@ public static class RemasterTextures
             t = ResourceLoader.Load(path) as Texture2D;
         // not imported (yet): the file itself
         if (t == null && FileAccess.FileExists(path) && path.GetExtension().ToLowerInvariant() is "png" or "webp" or "jpg" or "jpeg"
-            && Image.LoadFromFile(ProjectSettings.GlobalizePath(path)) is { } img && !img.IsEmpty())
+            && LoadImage(path) is { } img && !img.IsEmpty())
         {
             if (img.IsCompressed())
                 img.Decompress();
@@ -221,6 +221,22 @@ public static class RemasterTextures
             return false;
         var text = FileAccess.GetFileAsString(import);
         return !text.Contains("\npath=", System.StringComparison.Ordinal) && !text.Contains("\npath.", System.StringComparison.Ordinal);
+    }
+
+    /// <summary>An image file by any of Godot's paths (<c>res://</c>, also inside a pack; <c>user://</c>; absolute).</summary>
+    private static Image? LoadImage(string path)
+    {
+        var bytes = FileAccess.GetFileAsBytes(path);
+        if (bytes.Length == 0)
+            return null;
+        var img = new Image();
+        var err = path.GetExtension().ToLowerInvariant() switch
+        {
+            "png" => img.LoadPngFromBuffer(bytes),
+            "webp" => img.LoadWebpFromBuffer(bytes),
+            _ => img.LoadJpgFromBuffer(bytes),
+        };
+        return err == Error.Ok ? img : null;
     }
 
     private static Material? LoadMaterial(string path)
