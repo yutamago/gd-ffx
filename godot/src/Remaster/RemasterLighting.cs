@@ -285,7 +285,7 @@ public sealed partial class RemasterLighting : Node3D
     private static readonly Color Warm = Unit(new Color(1f, 0.78f, 0.56f));
 
     /// <summary>Compatibility lights in gamma (its lit shaders get the values as they are): the energies it gets instead (measured: the colour check).</summary>
-    public static float CompatKeyScale = 0.55f, CompatAmbientScale = 1.25f, CompatExposure = 0.9f;
+    public static float CompatKeyScale = 0.55f, CompatAmbientScale = 1.25f, CompatExposure = 0.8f;
 
     /// <summary>The file's values with the game's look in the places that follow it.</summary>
     public static ResolvedLighting Resolve(MapLighting m, GdFfx.Api.Look look)
