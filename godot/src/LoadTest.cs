@@ -77,8 +77,13 @@ public sealed class LoadTest(double timeout, string? shotDir) : ScriptedTest<Loa
                 Press(Key.Enter);
                 Next(Stage.Loading);
                 break;
-            case Stage.Loading when !SaveLoadView.Active && s.World.Map != DebugView.MapTitle && s.World.Map != 0 && s.World.Level.Length > 0 && !s.World.Level.Contains("/titl/"):
-                return Finish(true, $"Yes loaded row {_expected}: map {s.World.Map:x} ({s.World.Level})");
+            case Stage.Loading when !SaveLoadView.Active && s.World.Map != DebugView.MapTitle && s.World.Map != 0 && s.World.Level.Length > 0
+                && !s.World.Level.Contains("/titl/") && Find<StateView3D>("StateView3D") is { } view && view.MapLevel == s.World.Level && view.Posed.Models > 0:
+                // the loaded map shown, its characters posed: 3 s more, as the map check
+                Next(Stage.Done);
+                break;
+            case Stage.Done when PhaseT > 3:
+                return Finish(true, $"Yes loaded row {_expected}: map {s.World.Map:x} ({s.World.Level}) shown");
             case Stage.Loading when PhaseT > 30:
                 return Finish(false, $"no map after Yes (map {s.World.Map:x}, save state {s.Menus.SaveState:x}, message {st.Message})");
         }

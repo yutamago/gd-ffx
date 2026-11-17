@@ -690,7 +690,11 @@ fn jpeg(tables: Option<&[u8]>, data: &[u8], alpha: Option<&[u8]>) -> Option<Imag
     }
     if let Some(a) = alpha.filter(|a| !a.is_empty()) {
         let mut z = Vec::new();
-        if flate2::read::ZlibDecoder::new(a).read_to_end(&mut z).is_ok() && z.len() >= n {
+        if flate2::read::ZlibDecoder::new(a)
+            .read_to_end(&mut z)
+            .is_ok()
+            && z.len() >= n
+        {
             for (i, &al) in z.iter().take(n).enumerate() {
                 // the colour planes are premultiplied by the alpha
                 let p = &mut rgba[i * 4..i * 4 + 4];
