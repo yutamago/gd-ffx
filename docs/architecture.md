@@ -249,6 +249,11 @@ the seams (Besaid's sand near the save sphere; both renderers).
 Isolated bright pixels in the ground half of the picture went from 88 to 9,
 and the 9 are on Tidus and the save sphere's glow, where the original's
 picture has 9 too. Besaid's score is unchanged (11.6, 11.7 against 11.8).
+Under Forward+ (D3D12, `tools/compare-shot-win.sh`) the seams are gone as
+well and the score is 8.9 as before; the bright single pixels the count
+still finds there lie in the sand's sharper texture at the cliff's foot
+(gd-ffx keeps high-quality textures; the reference is low texture quality),
+not along an edge.
 The cost is the full-size vertex formats (positions 12 bytes instead of 8,
 normals and tangents unpacked) on the map's static meshes; characters,
 skinned, were never compressed.
