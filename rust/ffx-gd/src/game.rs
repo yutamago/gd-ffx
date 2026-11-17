@@ -806,6 +806,18 @@ impl FfxGame {
             .collect()
     }
 
+    /// The textures `level`'s 3D model samples and the parts drawn with
+    /// each, as JSON (`{"model", "textures": [{"id", "samplers", "parts"}]}`,
+    /// parts relative to the model): the remaster's where-used index
+    /// (docs/remaster-editor.md, "Textures"). Parsing only, a few
+    /// milliseconds a map; empty without the archive or a 3D model.
+    #[func]
+    fn classic_texture_uses(&self, level: GString) -> GString {
+        classic()
+            .texture_uses(&level.to_string())
+            .map_or_else(GString::new, |s| GString::from(s.as_str()))
+    }
+
     /// Whether the material texture at `path` is a cube map.
     #[func]
     fn classic_texture_is_cube(&self, path: GString) -> bool {

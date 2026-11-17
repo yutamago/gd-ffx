@@ -532,6 +532,22 @@ impl Importer {
         Ok(ids::ModelIds::of(path, &model))
     }
 
+    /// Which parts of the model at `path` sample which textures: per
+    /// texture ID ([`ids::texture_id`]), its samplers and the part IDs
+    /// whose segment's material (the instance's material set, else the
+    /// segment's own) names it, in the model's order. Parsing only: no
+    /// glTF, no pixels (the remaster's where-used index,
+    /// docs/remaster-editor.md).
+    ///
+    /// # Errors
+    /// When the model is missing or does not parse.
+    pub fn texture_uses(&self, path: &str) -> Result<Vec<ids::TextureUse>> {
+        let bytes = self.read(path)?;
+        let model =
+            ffx_phyre::Model::parse(&bytes).map_err(|e| Error::Model(format!("{path}: {e}")))?;
+        Ok(ids::texture_uses(&model, &ids::ModelIds::of(path, &model)))
+    }
+
     /// The model at `path` as a glTF binary with its base colour textures
     /// embedded (PNG), as stored (no axis change: see the module's doc),
     /// with gd-ffx's extras ([`Importer::add_extras`]).

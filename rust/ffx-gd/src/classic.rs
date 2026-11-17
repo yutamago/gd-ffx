@@ -286,6 +286,31 @@ impl Classic {
             .map(|o| o.importer.map_catalogue(languages).to_string())
     }
 
+    /// The textures `level`'s 3D model samples and the parts drawn with
+    /// each (`ffx_import::Importer::texture_uses`) as JSON:
+    /// `{"model": ID, "textures": [{"id", "samplers", "parts"}]}`, the part
+    /// IDs relative to the model (`#<node>/<k>`); `None` without the archive
+    /// or a 3D model, or when it does not parse.
+    #[must_use]
+    pub fn texture_uses(&self, level: &str) -> Option<String> {
+        let o = lock(&self.open).clone()?;
+        let path = o.importer.map_model(level)?;
+        let uses = o.importer.texture_uses(&path).ok()?;
+        let model = ffx_import::ids::model_id(&path);
+        let textures: Vec<serde_json::Value> = uses
+            .into_iter()
+            .map(|u| {
+                let parts: Vec<&str> = u
+                    .parts
+                    .iter()
+                    .map(|p| p.strip_prefix(model.as_str()).unwrap_or(p))
+                    .collect();
+                serde_json::json!({"id": u.texture, "samplers": u.samplers, "parts": parts})
+            })
+            .collect();
+        Some(serde_json::json!({"model": model, "textures": textures}).to_string())
+    }
+
     /// The developers' saves (`ffx_import::Importer::dev_saves`); empty
     /// without the archive.
     #[must_use]

@@ -143,6 +143,68 @@ impl ModelIds {
     }
 }
 
+/// One texture a model samples ([`texture_uses`]): its ID, the samplers it
+/// is bound to, and the parts drawn with it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TextureUse {
+    pub texture: String,
+    pub samplers: Vec<String>,
+    pub parts: Vec<String>,
+}
+
+/// Which parts sample which textures: each segment of each instance (or
+/// each segment, for a model without instances) with its material (the
+/// instance's material set, else the segment's own), each of that
+/// material's textures. In the order the textures are first met; a part
+/// and a sampler are listed once per texture.
+#[must_use]
+pub fn texture_uses(model: &ffx_phyre::Model, ids: &ModelIds) -> Vec<TextureUse> {
+    let mut out: Vec<TextureUse> = Vec::new();
+    let mut at: HashMap<String, usize> = HashMap::new();
+    let mut add = |material: Option<usize>, part: &str| {
+        let Some(m) = material.and_then(|m| model.materials.get(m)) else {
+            return;
+        };
+        for t in &m.textures {
+            let id = texture_id(&t.path);
+            let i = *at.entry(id.clone()).or_insert_with(|| {
+                out.push(TextureUse {
+                    texture: id,
+                    ..TextureUse::default()
+                });
+                out.len() - 1
+            });
+            let u = &mut out[i];
+            if !u.samplers.contains(&t.sampler) {
+                u.samplers.push(t.sampler.clone());
+            }
+            if !u.parts.iter().any(|p| p == part) {
+                u.parts.push(part.to_owned());
+            }
+        }
+    };
+    if model.instances.is_empty() {
+        for (s, seg) in model.segments.iter().enumerate() {
+            if let Some(part) = ids.parts.first().and_then(|p| p.get(s)) {
+                add(seg.material, part);
+            }
+        }
+    } else {
+        for (i, inst) in model.instances.iter().enumerate() {
+            for (k, &(s, mat)) in inst.segments.iter().enumerate() {
+                let Some(part) = ids.parts.get(i).and_then(|p| p.get(k)) else {
+                    continue;
+                };
+                add(
+                    mat.or_else(|| model.segments.get(s).and_then(|x| x.material)),
+                    part,
+                );
+            }
+        }
+    }
+    out
+}
+
 /// `names` with the second and later of each name suffixed `~1`, `~2`...
 fn dedupe(names: &[&str]) -> Vec<String> {
     let mut seen: HashMap<&str, usize> = HashMap::new();
@@ -194,5 +256,58 @@ mod tests {
     #[test]
     fn repeated_names_get_a_number() {
         assert_eq!(dedupe(&["a", "b", "a", "a"]), ["a", "b", "a~1", "a~2"]);
+    }
+
+    #[test]
+    fn texture_uses_follow_the_instances_materials() {
+        use ffx_phyre::{Instance, Material, MaterialTexture, Model, Segment};
+        let tex = |sampler: &str, path: &str| MaterialTexture {
+            sampler: sampler.into(),
+            path: path.into(),
+        };
+        let mut model = Model::default();
+        model.materials = vec![
+            Material {
+                textures: vec![tex("TextureSampler", "PS3Data/map/a/b/tex/Sand.dds")],
+                ..Material::default()
+            },
+            Material {
+                textures: vec![
+                    tex("TextureSampler", "PS3Data/map/a/b/tex/rock.dds"),
+                    tex("NormalMapSampler", "PS3Data/map/a/b/tex/sand.dds"),
+                ],
+                ..Material::default()
+            },
+        ];
+        model.segments = vec![
+            Segment {
+                material: Some(0),
+                ..Segment::default()
+            },
+            Segment::default(),
+        ];
+        let inst = |name: &str, segments| Instance {
+            name: name.into(),
+            node: None,
+            segments,
+            skeleton: None,
+            bounds: None,
+        };
+        // the second instance's set gives segment 0 material 1, segment 1 its own (none)
+        model.instances = vec![
+            inst("i", vec![(0, None), (1, None)]),
+            inst("j", vec![(0, Some(1))]),
+        ];
+        let path = "FFX_Data/GameData/PS3Data/map/a/b/mdl/d3d11/b.dae.phyre";
+        let uses = texture_uses(&model, &ModelIds::of(path, &model));
+        let sand = "x:/ffx_data/gamedata/ps3data/map/a/b/tex/d3d11/sand.dds.phyre";
+        let rock = "x:/ffx_data/gamedata/ps3data/map/a/b/tex/d3d11/rock.dds.phyre";
+        let m = model_id(path);
+        assert_eq!(uses.len(), 2);
+        assert_eq!(uses[0].texture, sand);
+        assert_eq!(uses[0].samplers, ["TextureSampler", "NormalMapSampler"]);
+        assert_eq!(uses[0].parts, [format!("{m}#i/0"), format!("{m}#j/0")]);
+        assert_eq!(uses[1].texture, rock);
+        assert_eq!(uses[1].parts, [format!("{m}#j/0")]);
     }
 }
