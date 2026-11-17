@@ -329,6 +329,16 @@ dock's **Render**):
   back (docs/architecture.md, "Colours"); under Compatibility they write them
   as they are (measured: the characters unchanged that way).
 
+Checked on the GPU (2026-11-17, the Windows export, D3D12 Forward+, Intel
+Arc 140T, `tools/compare-shot-win.sh` with `FFX_SHOT_TEST="--selftest-materials
+--selftest-timeout=240"`): Besaid beach remastered with materials made from
+its six biggest textures, the clouds and the characters in their classic
+colours, the sand and cliffs sunlit with shadows; the classic path still
+scores 8.7 there (8.9 before, within a run's spread) and 11.9 under
+Compatibility (as main on the same machine). Under Compatibility (Xvfb) the
+sunlit sand comes out brighter than on the GPU: the provisional rig is
+tuned for Forward+.
+
 To compare: the 3D view's **Remastered** toggle (the editor's 3D toolbar; a
 map opens as its render path says), F7 in the game (classic and remastered
 in turn, every map, for the run), the options' **Render path** (as each map
