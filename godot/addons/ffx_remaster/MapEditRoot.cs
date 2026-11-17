@@ -99,6 +99,9 @@ public partial class MapEditRoot : Node3D
     /// <summary>The import's root (scaled by 10).</summary>
     public Node3D? Map { get; private set; }
 
+    /// <summary>The map's remastered lighting as nodes (R3; null until built).</summary>
+    public LightingEdit? Lighting { get; private set; }
+
     /// <summary>Where added nodes without an anchor go.</summary>
     public Node3D? AdditionsGroup { get; private set; }
 
@@ -131,11 +134,12 @@ public partial class MapEditRoot : Node3D
             RemoveChild(stale);
             stale.QueueFree();
         }
-        if (GetNodeOrNull("Additions") is { } staleAdd && staleAdd.HasMeta(EditorNode))
-        {
-            RemoveChild(staleAdd);
-            staleAdd.QueueFree();
-        }
+        foreach (var name in new[] { "Additions", "Lighting", "LightingPreview", "RemasterLighting" })
+            if (GetNodeOrNull(name) is { } staleAdd && staleAdd.HasMeta(EditorNode))
+            {
+                RemoveChild(staleAdd);
+                staleAdd.QueueFree();
+            }
         SetProcess(true);
     }
 
@@ -146,7 +150,10 @@ public partial class MapEditRoot : Node3D
         if (!Built)
             TryBuild();
         else
+        {
             KeepPreviews();
+            Lighting?.Tick(RemasterPlugin.Instance?.EditorRemastered == true, delta);
+        }
     }
 
     public override void _Notification(int what)
@@ -211,6 +218,7 @@ public partial class MapEditRoot : Node3D
         AdditionsGroup.Owner = this;
         Map = map;
         ApplyProject();
+        Lighting = LightingEdit.Build(this);
         Built = true;
         Status = $"{Key}: {Parts.Count} parts ({Time.GetTicksMsec() - t0} ms)";
         GD.Print($"ffx remaster: opened {Level} for editing: {Parts.Count} parts, {CountAdded()} added node(s), "

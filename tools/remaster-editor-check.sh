@@ -15,6 +15,11 @@
 #     with its review, each edit undone and redone;
 #  3. the game with the editor's textures (--selftest-materials --textures-file):
 #     the replacement drawn classic, the material remastered, F7;
+#     then R3: the game's lighting as nodes (the key light from a stand-in look in
+#     OUT_DIR/looks), the key light turned, the exposure and the fog changed, a
+#     volume added, undo/redo, lighting.tres saved (the same twice), opened again;
+#     the game applies the overrides and the lighting (drawn remastered: the key
+#     light as turned, the exposure, the volume);
 #  4. the R1a example's hand-written overrides opened in the editor, shown as
 #     edits, and saved back with the same meaning (--remaster-editor-roundtrip).
 #
@@ -33,7 +38,7 @@ tex="res://remaster/check/textures"
 rm -rf "$repo/godot/remaster/check"
 trap 'rm -rf "$repo/godot/remaster/check"' EXIT
 cd "$repo/godot"
-args=(--path . -- --remaster-editor-test --remaster-maps="$out/maps" --remaster-textures="$tex")
+args=(--path . -- --remaster-editor-test --remaster-maps="$out/maps" --remaster-textures="$tex" --remaster-looks="$out/looks")
 if [[ -n "${FFX_EDITOR_SHOT:-}" ]]; then
     env -u WAYLAND_DISPLAY -u DISPLAY timeout 400 "$repo/tools/capped.sh" xvfb-run -a -s "-screen 0 1600x900x24" \
         "$godot" --editor --display-driver x11 --rendering-driver opengl3 --audio-driver Dummy \
@@ -46,6 +51,7 @@ grep -E '^ffx editortest: (PASS|FAIL)' "$out/editor.log" | tail -1 || echo "ffx 
 [[ $editor -eq 0 ]] || exit 1
 timeout 300 "$repo/tools/capped.sh" "$godot" --headless --path . -- --selftest-saved-overrides \
     --overrides-file="$out/maps/bsil00/overrides.tres" --overrides-expect="$out/maps/expect.json" \
+    --lighting-file="$out/maps/bsil00/lighting.tres" --lighting-expect="$out/maps/lighting-expect.json" --remaster-looks="$out/looks" \
     --devsave=7 --documents="$out/docs" --selftest-timeout=150 >"$out/game.log" 2>&1
 game=$?
 rm -rf "$out/docs"

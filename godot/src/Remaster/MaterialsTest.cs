@@ -314,7 +314,7 @@ public sealed class MaterialsTest : ITest
     }
 
     /// <summary>The map's surfaces drawn with classic map materials, and the texture ID each samples.</summary>
-    private static List<(MeshInstance3D Mesh, int Surface, Material Material, string? Id)> Surfaces(Node map)
+    internal static List<(MeshInstance3D Mesh, int Surface, Material Material, string? Id)> Surfaces(Node map)
     {
         var r = new List<(MeshInstance3D, int, Material, string?)>();
         void Walk(Node n)
@@ -389,8 +389,8 @@ public sealed class MaterialsTest : ITest
                 continue;
             if (sm.HasMeta(Variants.Name(ClassicMaterials.MapShaderMeta)))
             {
-                // only the sky keeps the classic map shader
-                if (MapLook.Find(view.MapNode!)?.Sky.Contains(mi.Name) != true)
+                // only the sky and the blended layers (MapLighting.BlendedParts) keep the classic map shader
+                if (MapLook.Find(view.MapNode!)?.Sky.Contains(mi.Name) != true && !RemasterLook.IsBlended(sm))
                     return $"{mi.Name}/{s} still draws classic";
                 classic++;
                 continue;
@@ -416,7 +416,7 @@ public sealed class MaterialsTest : ITest
         bool fwd = UserSettings.ForwardPlus();
         if (fwd && RemasterLighting.LinearOut < 0.5f)
             return "Forward+: the classic shaders do not write linear colours while remastered";
-        _seen.Add($"remastered: {lit} surface(s) with the PBR material, {plain} lit from their colour texture, {classic} sky surface(s) classic; "
+        _seen.Add($"remastered: {lit} surface(s) with the PBR material, {plain} lit from their colour texture, {classic} sky and blended surface(s) classic; "
             + $"sun {view.Rig.Sun.LightEnergy:0.00} at {view.Rig.Sun.GlobalRotationDegrees.X:0}/{view.Rig.Sun.GlobalRotationDegrees.Y:0} deg");
         return null;
     }

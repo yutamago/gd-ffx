@@ -34,7 +34,12 @@ public sealed class EditorSelfTest
     public static readonly Vector3 MoveBy = new(0, 20, 0);
     public static readonly Vector3 BoxAbove = new(0, 30, 0);
 
-    private enum Phase { Archive, Open, Edit, Save, Reopen, Status, Uses, Textures, Batch, Imported, Shot, Done }
+    private enum Phase { Archive, Open, Edit, Save, Reopen, Status, Uses, Textures, Batch, Imported, Lighting, LightingReopen, Shot, Done }
+
+    /// <summary>The game's key light as the check's stand-in look says it travels (Besaid beach's, as the game shows it).</summary>
+    public static readonly Vector3 LookKey = new Vector3(0.04f, -0.54f, -0.84f).Normalized();
+    /// <summary>Where the check turns the key light to.</summary>
+    public static readonly Vector3 TurnedKey = new Vector3(0.5f, -0.6f, -0.62f).Normalized();
 
     private readonly RemasterPlugin _plugin;
     private readonly double _timeout = GameSettings.Number("editor-test-timeout", 240);
@@ -59,6 +64,21 @@ public sealed class EditorSelfTest
         GD.Print($"ffx editortest: start (overrides into {MapStore.Dir})");
         if (MapStore.Dir == RemasterOverrides.BaseDir)
             Finish(false, "--remaster-maps=DIR is required (the check must not write the project's overrides)");
+        // the game's look of Besaid beach as a stand-in (the editor runs no game): with --remaster-looks=DIR only
+        if (GameSettings.Arg("remaster-looks") is { Length: > 0 })
+        {
+            var look = new GdFfx.Api.Look
+            {
+                Valid = true,
+                CharacterAmbient = new Vector3(0.34f, 0.34f, 0.45f),
+                Background = new Vector3(0.306f, 0.357f, 0.537f),
+                FogColour = new Vector3(0.453f, 0.58f, 0.776f),
+                FogNear = 62, FogFar = 9022, FogCurve = 0.8f, FogLimit = 0.149f,
+            };
+            // the characters' shader lights by sign x L: the light travels -sign x L
+            look.Lights.Add(new GdFfx.Api.Light { Direction = -LookKey * ClassicMaterials.LightSign, Colour = new Vector3(0.93f, 0.99f, 1.05f), Level = 1.3f });
+            LookCache.Write(Level, look);
+        }
     }
 
     private string Full(string id) => PartIds.Full(id, PartIds.ModelIdOf(Level));
@@ -229,6 +249,27 @@ public sealed class EditorSelfTest
                 if (CheckImported(_plugin.Current!) is { } impFail)
                     return impFail;
                 _seen.Add($"every PNG and material of the index imported ({_phaseT:0.0} s after the last edit)");
+                Next(Phase.Lighting);
+                return null;
+            }
+            case Phase.Lighting:
+                if (_frames < 3)
+                    return null;
+                if (Lighting(_plugin.Current!) is { } lightFail)
+                    return lightFail;
+                Next(Phase.LightingReopen);
+                return null;
+            case Phase.LightingReopen:
+            {
+                if (_frames == 1)
+                {
+                    EditorInterface.Singleton.ReloadSceneFromPath(MapEditRoot.EditScenePath(Key));
+                    return null;
+                }
+                if (_plugin.Current is not { Built: true, Lighting: not null } root || _frames < 4)
+                    return _phaseT > 60 ? "the map did not open again" : null;
+                if (LightingReopened(root) is { } bad)
+                    return bad;
                 Next(GameSettings.Arg("editor-shot") is { Length: > 0 } && DisplayServer.GetName() != "headless" ? Phase.Shot : Phase.Done);
                 return null;
             }
@@ -560,6 +601,129 @@ public sealed class EditorSelfTest
         var otherPlan = other != null ? s.PlanFor(other) : null;
         _seen.Add($"play: bsil00 by developer save(s) {string.Join(", ", plan.Saves)} ({args}); "
             + $"{other?.Key}: {otherPlan?.Note}");
+        return null;
+    }
+
+    // ---- R3: lighting ----------------------------------------------------------------------------
+
+    private string _lightingText = "";
+
+    /// <summary>
+    /// The game's lighting as nodes (IDs, the key light from the look), then a turn of the key
+    /// light (as the gizmo makes it), the exposure and the fog in the inspector, a volume added,
+    /// one undo step each, undone and redone; saved (lighting.tres, the same twice), read back.
+    /// </summary>
+    private string? Lighting(MapEditRoot root)
+    {
+        if (root.Lighting is not { } l)
+            return "no lighting nodes";
+        if (PartIds.Of(l.Key) != MapLighting.KeyId(Key) || PartIds.Of(l.Ambient) != MapLighting.AmbientId(Key)
+            || PartIds.Of(l.Fog) != MapLighting.FogId(Key) || PartIds.Of(l.Environment) != MapLighting.EnvironmentId(Key))
+            return "the lighting nodes are not tagged with their IDs";
+        if (!l.FromGame)
+            return $"the look was not read from {LookCache.PathOf(Level)}";
+        var dir = (-l.Key.GlobalBasis.Z).Normalized();
+        if (dir.AngleTo(LookKey) > 0.002f)
+            return $"the key light travels {dir}, the game's look says {LookKey}";
+        if (l.Environment.Get("ToneExposure").AsSingle() != 1f || l.Fog.Get("FogMode").AsInt32() != (int)LightSource.Game)
+            return "the facets do not show the defaults";
+        var turned = new Transform3D(Basis.LookingAt(TurnedKey, Vector3.Up), l.Key.Position);
+        var fail = OneStep(root, "turn the key light", () =>
+        {
+            Undo.CreateAction("Rotate", UndoRedo.MergeMode.Disable, root);
+            Undo.AddDoProperty(l.Key, Node3D.PropertyName.Transform, turned);
+            Undo.AddUndoProperty(l.Key, Node3D.PropertyName.Transform, l.Key.Transform);
+            Undo.CommitAction();
+        });
+        // the inspector's edits of a facet (as Godot's inspector makes them)
+        fail ??= OneStep(root, "exposure", () =>
+        {
+            Undo.CreateAction("Set ToneExposure", UndoRedo.MergeMode.Disable, root);
+            Undo.AddDoProperty(l.Environment, "ToneExposure", 1.3f);
+            Undo.AddUndoProperty(l.Environment, "ToneExposure", 1f);
+            Undo.CommitAction();
+        });
+        fail ??= OneStep(root, "fog", () =>
+        {
+            Undo.CreateAction("Set FogMode", UndoRedo.MergeMode.Disable, root);
+            Undo.AddDoProperty(l.Fog, "FogMode", (int)LightSource.Custom);
+            Undo.AddUndoProperty(l.Fog, "FogMode", (int)LightSource.Game);
+            Undo.CommitAction();
+        });
+        var vol = l.NewVolume("WholeBeach");
+        (vol.Size, vol.Blend, vol.SetExposure, vol.Exposure) = (new Vector3(8000, 3000, 8000), 10f, true, 0.6f);
+        fail ??= OneStep(root, "add a volume", () => _plugin.AddVolume(root, vol, Transform3D.Identity));
+        if (fail != null)
+            return fail;
+        if (PartIds.Of(vol) != MapLighting.VolumeId(Key, "WholeBeach") || vol.Owner != root)
+            return "the volume is not tagged or not in the scene";
+        var h = SceneHistory(root);
+        for (int i = 0; i < 4; i++)
+            h.Undo();
+        if (vol.IsInsideTree() || l.Res.FogMode != LightSource.Game || l.Res.ToneExposure != 1f || (-l.Key.GlobalBasis.Z).AngleTo(LookKey) > 0.002f)
+            return "undo did not take the lighting edits back";
+        for (int i = 0; i < 4; i++)
+            h.Redo();
+        if (!vol.IsInsideTree() || l.Res.FogMode != LightSource.Custom || l.Res.ToneExposure != 1.3f || (-l.Key.GlobalBasis.Z).AngleTo(TurnedKey) > 0.002f)
+            return "redo did not do the lighting edits again";
+        // the preview: the view remastered, the rig on with the edited lighting
+        _plugin.SetEditorLook(true);
+        if (_plugin.SaveMap(root) is not { Ok: true })
+            return "the save failed";
+        var path = LightingEdit.PathOf(Key);
+        if (!FileAccess.FileExists(path))
+            return $"no {path}";
+        var a = FileAccess.GetFileAsString(path);
+        _plugin.SaveMap(root);
+        if (FileAccess.GetFileAsString(path) != a)
+        {
+            System.IO.File.WriteAllText(GameSettings.Globalize($"{MapStore.Dir}/first-lighting.tres"), a);
+            return $"a second save changed {path.GetFile()} (the first save's: {MapStore.Dir}/first-lighting.tres)";
+        }
+        var home = System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile);
+        if (a.Contains("x:/ffx_data") || home.Length > 1 && a.Contains(home, System.StringComparison.Ordinal))
+            return "the lighting file holds absolute IDs or a path of this machine";
+        if (ResourceLoader.Load(path, "", ResourceLoader.CacheMode.Ignore) is not MapLighting m)
+            return "the lighting does not read back";
+        if (m.KeyMode != LightSource.Custom || m.KeyDirection.AngleTo(TurnedKey) > 0.002f || m.ToneExposure != 1.3f || m.FogMode != LightSource.Custom
+            || m.Volumes.Count != 1 || m.Volumes[0] is not { Name: "WholeBeach", SetExposure: true } v || !Mathf.IsEqualApprox(v.Exposure, 0.6f)
+            || m.KeyColourMode != LightSource.Game)
+            return $"read back: key {m.KeyMode} {m.KeyDirection} (colour {m.KeyColourMode}), exposure {m.ToneExposure}, fog {m.FogMode}, {m.Volumes.Count} volume(s)";
+        _lightingText = a;
+        var expect = new Dictionary<string, object>
+        {
+            ["key"] = new[] { TurnedKey.X, TurnedKey.Y, TurnedKey.Z },
+            ["exposure"] = 1.3f,
+            ["volume"] = "WholeBeach",
+            ["volumeExposure"] = 0.6f,
+            ["fogMode"] = nameof(LightSource.Custom),
+        };
+        System.IO.File.WriteAllText(GameSettings.Globalize($"{MapStore.Dir}/lighting-expect.json"), JsonSerializer.Serialize(expect, new JsonSerializerOptions { WriteIndented = true }));
+        _seen.Add($"lighting: the key light (from the game's look), ambient, fog and environment as nodes by ID; turned the key light, "
+            + $"exposure 1.3, fog custom, a volume added (one undo step each; undo and redo); {path.GetFile()} ({a.Length} bytes) the same twice");
+        return null;
+    }
+
+    private string? LightingReopened(MapEditRoot root)
+    {
+        var l = root.Lighting!;
+        if ((-l.Key.GlobalBasis.Z).AngleTo(TurnedKey) > 0.002f)
+            return $"the key light travels {-l.Key.GlobalBasis.Z} after opening again, was turned to {TurnedKey}";
+        if (l.Environment.Get("ToneExposure").AsSingle() != 1.3f || l.Fog.Get("FogMode").AsInt32() != (int)LightSource.Custom)
+            return "the facets lost their edits on opening again";
+        if (l.Volumes.GetChildren().OfType<VolumeNode>().ToList() is not [{ Name: var vn, Exposure: var ve }] || vn != "WholeBeach" || !Mathf.IsEqualApprox(ve, 0.6f))
+            return "the volume is not back";
+        // the preview: remastered, the rig with the edited lighting and the camera in the volume
+        if (!_plugin.EditorRemastered || !l.Rig.Active || l.Rig.Lighting.Layer != "editor" || !l.Rig.Now.Volumes.StartsWith("WholeBeach", System.StringComparison.Ordinal))
+            return $"the preview is not on: remastered {_plugin.EditorRemastered}, rig {l.Rig.Active} ({l.Rig.Lighting.Layer}), volumes '{l.Rig.Now.Volumes}'";
+        // opened and saved without an edit: the same bytes
+        _plugin.SaveMap(root);
+        if (FileAccess.GetFileAsString(LightingEdit.PathOf(Key)) != _lightingText)
+        {
+            System.IO.File.WriteAllText(GameSettings.Globalize($"{MapStore.Dir}/reopened-lighting.tres"), FileAccess.GetFileAsString(LightingEdit.PathOf(Key)));
+            return "saved after opening again, the lighting file changed";
+        }
+        _seen.Add("lighting opened again: the turned key light, the facets' edits, the volume; the preview remastered with the camera in the volume; saved again the same");
         return null;
     }
 

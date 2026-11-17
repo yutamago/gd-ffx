@@ -23,6 +23,13 @@ public sealed class SavedOverridesTest : ITest
 
     private sealed record Added(string Anchor, float[] World);
 
+    /// <summary>The editor's lighting (R3): its key light's direction, the exposure, the volume around the map and its exposure.</summary>
+    private sealed record LightingExpect(float[] Key, float Exposure, string Volume, float VolumeExposure, string FogMode);
+
+    private readonly LightingExpect? _lighting;
+    private bool _checked, _remastered;
+    private double _since;
+
     private readonly double _timeout;
     private readonly Expect? _expect;
     private readonly string _why = "";
@@ -57,6 +64,13 @@ public sealed class SavedOverridesTest : ITest
         }
         RemasterOverrides.Register(_expect.Level, file, "editor");
         GD.Print($"ffx selftest: the editor's overrides {file} registered for {_expect.Level}");
+        // R3: the editor's lighting, checked with the map drawn remastered
+        if (GameSettings.Arg("lighting-file") is { Length: > 0 } lf && GameSettings.Arg("lighting-expect") is { Length: > 0 } le)
+        {
+            _lighting = JsonSerializer.Deserialize<LightingExpect>(System.IO.File.ReadAllText(le), new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            LightingLayers.Register(_expect.Level, lf, "editor");
+            GD.Print($"ffx selftest: the editor's lighting {lf} registered");
+        }
     }
 
     private string Full(string id) => PartIds.Full(id, PartIds.ModelIdOf(_expect!.Level));
@@ -76,10 +90,26 @@ public sealed class SavedOverridesTest : ITest
         _onMap += delta;
         if (_onMap < 1.0)
             return null;
-        if (Check(view) is { } fail)
-            return Done(false, fail);
-        if (CheckCatalogue(game) is { } bad)
-            return Done(false, bad);
+        if (!_checked)
+        {
+            if (Check(view) is { } fail)
+                return Done(false, fail);
+            if (CheckCatalogue(game) is { } bad)
+                return Done(false, bad);
+            _checked = true;
+            if (_lighting == null)
+                return Done(true, Note);
+            RenderPaths.Set("remastered");
+            _remastered = true;
+            _since = 0;
+            return null;
+        }
+        _since += delta;
+        if (!_remastered || _since < 1.0)
+            return null;
+        if (CheckLighting(view) is { } lightFail)
+            return Done(false, lightFail);
+        RenderPaths.Set(null);
         return Done(true, Note);
     }
 
@@ -129,6 +159,28 @@ public sealed class SavedOverridesTest : ITest
         }
         Note = $"the editor's overrides on {e.Level}: removed {string.Join(", ", e.Removed)}, hid {string.Join(", ", e.Hidden)}, "
             + $"moved {string.Join(", ", e.Moved.Keys)} by the saved offset, replaced {string.Join(", ", e.Replaced)}, added {string.Join(", ", placed)}";
+        return null;
+    }
+
+    private string? CheckLighting(StateView3D view)
+    {
+        var x = _lighting!;
+        var rig = view.Rig;
+        if (!rig.Active)
+            return "the rig is not on with the map drawn remastered";
+        if (rig.Lighting.Layer != "editor")
+            return $"the editor's lighting is not in force (layer '{rig.Lighting.Layer}')";
+        var want = new Vector3(x.Key[0], x.Key[1], x.Key[2]).Normalized();
+        if (rig.Now.KeyDirection.AngleTo(want) > 0.002f || (-rig.Sun.GlobalBasis.Z).AngleTo(want) > 0.002f)
+            return $"the key light travels {rig.Now.KeyDirection}, the editor turned it to {want}";
+        float scale = UserSettings.ForwardPlus() ? 1f : RemasterLighting.CompatExposure;
+        if (!Mathf.IsEqualApprox(rig.Base.Exposure, x.Exposure * scale))
+            return $"the exposure {rig.Base.Exposure}, the editor set {x.Exposure}";
+        if (!rig.Now.Volumes.StartsWith(x.Volume, System.StringComparison.Ordinal) || Mathf.Abs(rig.Now.Exposure - x.VolumeExposure * scale) > 0.01f)
+            return $"the volume {x.Volume} (exposure {x.VolumeExposure}) is not in force: {rig.Now.Volumes}, exposure {rig.Now.Exposure}";
+        if (rig.Lighting.Lighting.FogMode.ToString() != x.FogMode)
+            return $"fog {rig.Lighting.Lighting.FogMode}, the editor set {x.FogMode}";
+        Note += $"; the editor's lighting remastered: key light as turned, exposure {rig.Base.Exposure:0.00}, volume {rig.Now.Volumes} (exposure {rig.Now.Exposure:0.00}), fog {x.FogMode}";
         return null;
     }
 

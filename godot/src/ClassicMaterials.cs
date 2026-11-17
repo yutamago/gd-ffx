@@ -130,7 +130,14 @@ void fragment() {
 #ifdef FOG
 	c.rgb = ffx_fog_apply(c.rgb, -VERTEX.z);
 #endif
+#ifdef PREMUL
+	// premultiplied by the game (ONE, INV_SRC_ALPHA): decoded unpremultiplied (linear out)
+	vec3 g = ffx_curve(c.rgb * ffx_colour_scale);
+	float pa = clamp(c.a, 1e-4, 1.0);
+	ALBEDO = ffx_linear_out < 0.5 ? g : ffx_out(g / pa) * pa;
+#else
 	ALBEDO = ffx_out(ffx_curve(c.rgb * ffx_colour_scale));
+#endif
 #ifdef BLEND
 	ALPHA = clamp(c.a, 0.0, 1.0);
 #endif
@@ -229,11 +236,13 @@ void fragment() {
 	vec2 off = clamp(vec2(-0.0125 * nv.x, 0.00625 * -dot(Nw, V) * nv.y) / max(-VERTEX.z, 10.0), -0.05, 0.05);
 	off.y *= clamp((abs(PROJECTION_MATRIX[1][1]) * VERTEX.y + 0.9) * 10.0, 0.0, 1.0);
 	vec3 d = texture(ffx_screen, SCREEN_UV + vec2(off.x, -off.y)).rgb - texture(ffx_screen, SCREEN_UV).rgb;
+	// premultiplied: the water's colour decoded on its own (linear out), the screen's shift as it
+	// is (the buffer it reads holds what the scene wrote: game values, or linear ones remastered)
 #ifdef REFRACTION_SUB
-	ALBEDO = ffx_out((1.0 - c.a) * max(-d, vec3(0.0)));
+	ALBEDO = (1.0 - c.a) * max(-d, vec3(0.0));
 	ALPHA = 1.0;
 #else
-	ALBEDO = ffx_out(c.a * o + (1.0 - c.a) * max(d, vec3(0.0)));
+	ALBEDO = c.a * ffx_out(o) + (1.0 - c.a) * max(d, vec3(0.0));
 	ALPHA = c.a;
 #endif
 #else
@@ -397,6 +406,7 @@ void fragment() {
         // the remastered path (RemasterLighting, RemasterLook)
         Add("ffx_linear_out", RenderingServer.GlobalShaderParameterType.Float, 0f);
         Add("ffx_vertex_light", RenderingServer.GlobalShaderParameterType.Float, 0.5f);
+        Add("ffx_lit_gamma", RenderingServer.GlobalShaderParameterType.Float, 0f);
         // the characters' cloth (ClothView sets the texture)
         Add("ffx_cloth", RenderingServer.GlobalShaderParameterType.Sampler2D, default);
         Add("ffx_cloth_alpha", RenderingServer.GlobalShaderParameterType.Float, 0f);
@@ -466,6 +476,8 @@ void fragment() {
 
     private static Shader MapShader(string modes, string body, IEnumerable<string> defines)
     {
+        if (body == MapBody && modes.Contains("blend_premul_alpha"))
+            defines = [.. defines, "PREMUL"];
         var d = string.Concat(defines.Select(x => $"#define {x}\n"));
         var key = (body == WaterBody ? "water|" : "map|") + modes + "|" + d;
         // any thread: the classic content imports on workers

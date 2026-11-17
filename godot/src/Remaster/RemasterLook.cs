@@ -27,6 +27,8 @@ public static class RemasterLook
 global uniform float ffx_time;
 // how much of the game's baked vertex light stays under the real lights (0: none, 1: all)
 global uniform float ffx_vertex_light;
+// 1 where the renderer lights in gamma (Compatibility): the game's colours taken as they are
+global uniform float ffx_lit_gamma;
 #if defined(UV_MORPH) || defined(COLOR_MORPH)
 instance uniform float ffx_morph = 0.0;
 #endif
@@ -105,8 +107,9 @@ void fragment() {
 	if (t.a < alpha_threshold) { discard; }
 #endif
 	// the game's vertex colour: light and tint, 128 neutral (in gamma), as linear light
-	vec3 vl = pow(clamp(2.0 * COLOR.rgb, vec3(0.0), vec3(2.0)), vec3(2.2));
-	ALBEDO = t.rgb * albedo_colour.rgb * ffx_to_linear(material_colour.rgb) * mix(vec3(1.0), vl, ffx_vertex_light);
+	vec3 vl = pow(clamp(2.0 * COLOR.rgb, vec3(0.0), vec3(2.0)), vec3(mix(2.2, 1.0, ffx_lit_gamma)));
+	vec3 mc = mix(ffx_to_linear(material_colour.rgb), clamp(material_colour.rgb, 0.0, 1.0), ffx_lit_gamma);
+	ALBEDO = t.rgb * albedo_colour.rgb * mc * mix(vec3(1.0), vl, ffx_vertex_light);
 	ROUGHNESS = roughness;
 	METALLIC = metallic;
 	SPECULAR = specular;
@@ -233,6 +236,11 @@ void fragment() {
         return m;
     }
 
+    /// <summary>Whether <paramref name="classic"/> is a blended map material (the game's painted layers: wet sand, shallow water, shading).</summary>
+    public static bool IsBlended(Material? classic) =>
+        classic is ShaderMaterial sm && PartIds.GetString(sm, ClassicMaterials.MapShaderMeta) is { } spec
+        && spec[(spec.IndexOf('|') + 1)..].Split(',').Contains("BLEND");
+
     /// <summary>Metadata on a lit material: the texture ID it draws (for tests and the editor).</summary>
     public const string LitTextureMeta = "ffx_lit_texture";
 }
@@ -286,6 +294,12 @@ public sealed class MapLook
     /// <summary>The meshes taken for the sky (<see cref="FindSky"/>), by name: they keep the classic look.</summary>
     public readonly List<string> Sky = new();
 
+    /// <summary>The sky meshes themselves (the lighting may hide them: <see cref="MapLighting.SkyHideClassic"/>).</summary>
+    public readonly HashSet<MeshInstance3D> SkyMeshes = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>Every mesh of the map (the VoxelGI's box and bake).</summary>
+    public readonly List<MeshInstance3D> Meshes = new();
+
     private void Collect(Node map, Transform3D world)
     {
         var meshes = new List<(MeshInstance3D Mesh, Aabb Box)>();
@@ -301,9 +315,11 @@ public sealed class MapLook
         var sky = FindSky(meshes);
         foreach (var (mi, _) in meshes)
         {
+            Meshes.Add(mi);
             if (sky.Contains(mi))
             {
                 Sky.Add(mi.Name);
+                SkyMeshes.Add(mi);
                 continue;
             }
             for (int s = 0; s < mi.Mesh.GetSurfaceCount(); s++)
@@ -362,19 +378,27 @@ public sealed class MapLook
         return sky;
     }
 
-    /// <summary>Draws the map remastered or classic (main thread); returns the surfaces it changed.</summary>
-    public int Set(bool remastered)
+    /// <summary>Whether its blended parts draw lit too (<see cref="MapLighting.BlendedParts"/>).</summary>
+    public bool LitBlended { get; private set; }
+
+    /// <summary>
+    /// Draws the map remastered or classic (main thread); remastered, its blended parts (the game's
+    /// painted layers) lit only with <paramref name="litBlended"/>, else in their classic shaders as
+    /// the water is. Returns the surfaces it changed.
+    /// </summary>
+    public int Set(bool remastered, bool litBlended = false)
     {
-        if (remastered == Remastered && (!remastered || _version == RemasterTextures.Version))
+        if (remastered == Remastered && (!remastered || _version == RemasterTextures.Version && litBlended == LitBlended))
             return 0;
         Remastered = remastered;
+        LitBlended = litBlended;
         _version = RemasterTextures.Version;
         int n = 0;
         foreach (var (mi, s, classic) in _surfaces)
         {
             if (!GodotObject.IsInstanceValid(mi) || s >= mi.GetSurfaceOverrideMaterialCount())
                 continue;
-            var want = remastered ? RemasterLook.Lit(classic) ?? classic : classic;
+            var want = remastered && (litBlended || !RemasterLook.IsBlended(classic)) ? RemasterLook.Lit(classic) ?? classic : classic;
             if (mi.GetSurfaceOverrideMaterial(s) != want)
             {
                 mi.SetSurfaceOverrideMaterial(s, want);
