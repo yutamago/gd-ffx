@@ -119,7 +119,8 @@ public static class RemasterTextures
             var set = given;
             if (set == null)
             {
-                if (!ResourceLoader.Exists(path) && !FileAccess.FileExists(path))
+                // a text index is a file (in the project or a pack): Godot's file cache may still name a removed one
+                if (!FileAccess.FileExists(path))
                     continue;
                 set = ResourceLoader.Load(path, "", ResourceLoader.CacheMode.Replace) as RemasterTextureSet;
                 if (set == null)
@@ -186,9 +187,11 @@ public static class RemasterTextures
             if (Images.TryGetValue(path, out var known))
                 return known;
         Texture2D? t = null;
-        if (ResourceLoader.Exists(path))
+        if (ResourceLoader.Exists(path) && !Unimported(path))
             t = ResourceLoader.Load(path) as Texture2D;
-        else if (FileAccess.FileExists(path) && Image.LoadFromFile(ProjectSettings.GlobalizePath(path)) is { } img && !img.IsEmpty())
+        // not imported (yet): the file itself
+        if (t == null && FileAccess.FileExists(path) && path.GetExtension().ToLowerInvariant() is "png" or "webp" or "jpg" or "jpeg"
+            && Image.LoadFromFile(ProjectSettings.GlobalizePath(path)) is { } img && !img.IsEmpty())
         {
             if (img.IsCompressed())
                 img.Decompress();
@@ -207,12 +210,35 @@ public static class RemasterTextures
         return t;
     }
 
+    /// <summary>
+    /// Whether <paramref name="path"/> has an <c>.import</c> without an import result yet (the
+    /// editor wrote it, Godot has not imported the file): loaded from the file itself meanwhile.
+    /// </summary>
+    public static bool Unimported(string path)
+    {
+        var import = path + ".import";
+        if (!FileAccess.FileExists(import))
+            return false;
+        var text = FileAccess.GetFileAsString(import);
+        return !text.Contains("\npath=", System.StringComparison.Ordinal) && !text.Contains("\npath.", System.StringComparison.Ordinal);
+    }
+
     private static Material? LoadMaterial(string path)
     {
         lock (Materials)
             if (Materials.TryGetValue(path, out var known))
                 return known;
-        var m = ResourceLoader.Exists(path) || FileAccess.FileExists(path) ? ResourceLoader.Load(path) as Material : null;
+        // its maps being imported still (the editor wrote them just now): not yet, not remembered
+        if (FileAccess.FileExists(path))
+            foreach (var dep in ResourceLoader.GetDependencies(path))
+            {
+                var p = dep[(dep.LastIndexOf("::", System.StringComparison.Ordinal) + 2)..];
+                if (p.Length > 0 && Unimported(p))
+                    return null;
+            }
+        // its maps loaded again too (Godot's cache may hold a copy loaded before they were imported)
+        var m = ResourceLoader.Exists(path) || FileAccess.FileExists(path)
+            ? ResourceLoader.Load(path, "", ResourceLoader.CacheMode.ReplaceDeep) as Material : null;
         if (m == null && Logged.Add(path))
             GD.PrintErr($"ffx: textures: cannot load the material {path}");
         lock (Materials)

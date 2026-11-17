@@ -39,6 +39,10 @@ public sealed class MaterialsTest : ITest
     private Phase _phase = Phase.Setup;
     private double _phaseTime, _total;
     private string _first = "", _second = "";
+    /// <summary>The texture whose material is checked remastered (the first one, or the editor's).</summary>
+    private string _pbr = "";
+    /// <summary><c>--textures-file=</c>: the editor's saved index instead of the test's own textures (<c>--textures-expect=</c> names them).</summary>
+    private readonly string? _file = GameSettings.Arg("textures-file");
     private readonly RemasterTextureSet _set = new();
     private readonly List<string> _seen = new();
     /// <summary>The phase's one action (a key press, a registration) is done.</summary>
@@ -189,10 +193,25 @@ public sealed class MaterialsTest : ITest
         ranked.Sort((a, b) => b.Parts != a.Parts ? b.Parts.CompareTo(a.Parts) : string.CompareOrdinal(a.Id, b.Id));
         if (ranked.Count < 2)
             return $"Besaid beach samples {ranked.Count} colour texture(s)";
+        DirAccess.MakeDirRecursiveAbsolute(_dir);
+        if (_file != null)
+        {
+            // the editor's saved textures: its replaced one and its material
+            if (GameSettings.Arg("textures-expect") is not { } expectFile || !FileAccess.FileExists(expectFile))
+                return "--textures-file needs --textures-expect=FILE (the editor check's textures-expect.json)";
+            using var expect = JsonDocument.Parse(FileAccess.GetFileAsString(expectFile));
+            _first = expect.RootElement.GetProperty("replaced").GetString()!;
+            _pbr = expect.RootElement.GetProperty("material").GetString()!;
+            _second = ranked.First(r => r.Id != _first && r.Id != _pbr).Id;
+            RemasterTextures.Register(_file, "editor");
+            RenderPaths.Set("classic");
+            _seen.Add($"the editor's textures ({_file}): {RemasterTextures.ShortName(_first)} replaced, {RemasterTextures.ShortName(_pbr)} with a material");
+            return null;
+        }
         (_first, _second) = (ranked[0].Id, ranked[1].Id);
+        _pbr = _first;
         _seen.Add($"where-used: {ranked.Count} colour textures, {RemasterTextures.ShortName(_first)} on {ranked[0].Parts} parts, "
             + $"{RemasterTextures.ShortName(_second)} on {ranked[1].Parts}");
-        DirAccess.MakeDirRecursiveAbsolute(_dir);
         var albedo = AddReplacement(_first, "first", new Color(0.85f, 0.75f, 0.35f), new Color(0.25f, 0.45f, 0.75f));
         // the material from the replacement, by the ported generators
         var recipe = new PbrRecipe { Upscale = 2, HeightScale = 0.03f, Wrap = true };
@@ -244,7 +263,7 @@ public sealed class MaterialsTest : ITest
         var area = new Dictionary<string, float>();
         foreach (var (mi, _, m, id) in Surfaces(view.MapNode!))
         {
-            if (id == null || id == _first || id == _second || !m.HasMeta(Variants.Name(ClassicMaterials.MapShaderMeta))
+            if (id == null || id == _first || id == _second || id == _pbr || !m.HasMeta(Variants.Name(ClassicMaterials.MapShaderMeta))
                 || MapLook.Find(view.MapNode!)?.Sky.Contains(mi.Name) == true)
                 continue;
             var b = mi.GlobalTransform * mi.GetAabb();
@@ -360,9 +379,9 @@ public sealed class MaterialsTest : ITest
         var env = view.GetWorld3D()?.Environment;
         if (env == null || env.BackgroundMode != Godot.Environment.BGMode.Sky)
             return "the environment shows no sky";
-        var pbr = RemasterTextures.MaterialFor(_first) as BaseMaterial3D;
+        var pbr = RemasterTextures.MaterialFor(_pbr) as BaseMaterial3D;
         if (pbr == null)
-            return $"{_first}: no material loaded";
+            return $"{_pbr}: no material loaded";
         int lit = 0, plain = 0, classic = 0;
         foreach (var (mi, s, m, sid) in Surfaces(view.MapNode!))
         {
@@ -381,10 +400,10 @@ public sealed class MaterialsTest : ITest
             var code = sm.Shader.Code;
             if (code.Contains("unshaded"))
                 return $"{mi.Name}/{s}: the lit material is unshaded";
-            if (sid == _first)
+            if (sid == _pbr)
             {
                 if (!code.Contains("#define HAS_ORM") || !code.Contains("#define HAS_NORMAL") || !code.Contains("#define HAS_HEIGHT"))
-                    return $"{mi.Name}/{s}: {_first}'s lit material lacks its maps";
+                    return $"{mi.Name}/{s}: {_pbr}'s lit material lacks its maps";
                 if (Param(sm, "albedo_tex") != pbr.AlbedoTexture || Param(sm, "orm_tex") != pbr.OrmTexture)
                     return $"{mi.Name}/{s}: the lit material does not sample the PBR material's maps";
                 lit++;
