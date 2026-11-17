@@ -692,6 +692,7 @@ public sealed class BattleTest : ITest
     private string _first = "";
     private string _target = "", _btLine = "";
     private bool _targetClosed;
+    private int _targetShot;
     /// <summary>The effect this battle starts first (seen in the deck's battle 3,0,0), remade by the example.</summary>
     public const string RemadeId = "50001800";
     private double _tap;
@@ -778,16 +779,19 @@ public sealed class BattleTest : ITest
         }
         if (_target.Length > 0 && !bt.Open)
             _targetClosed = true;
-        if (_target.Length > 0 || menu.TargetShown.Length == 0 || !bt.Open || menu.HandsShown == 0)
-            return;
-        _target = $"the target selection: {menu.TargetShown} (character 0x{bt.Character:x}, mask 0x{bt.Mask:x}, side {bt.Side}); menu [{string.Join(" | ", menu.Shown)}]";
-        GD.Print($"ffx selftest: {_target}");
-        if (shot != null && DisplayServer.GetName() != "headless")
+        // the picture a few frames after the selection is first seen (the frame read is the last one drawn)
+        if (_targetShot > 0 && --_targetShot == 0 && shot != null)
         {
             var file = shot[..^4] + "-target.png";
             root!.GetViewport().GetTexture().GetImage().SavePng(file);
             GD.Print($"ffx selftest: picture {file}");
         }
+        if (_target.Length > 0 || menu.TargetShown.Length == 0 || !bt.Open || menu.HandsShown == 0)
+            return;
+        _target = $"the target selection: {menu.TargetShown} (character 0x{bt.Character:x}, mask 0x{bt.Mask:x}, side {bt.Side}); menu [{string.Join(" | ", menu.Shown)}]";
+        GD.Print($"ffx selftest: {_target}");
+        if (shot != null && DisplayServer.GetName() != "headless")
+            _targetShot = 4;
     }
 
     private string _attacked = "";

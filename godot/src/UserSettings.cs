@@ -23,6 +23,9 @@ public sealed class UserSettings
 
     private static UserSettings? _current;
 
+    /// <summary>Whether <see cref="Apply"/> ran before (the start's leaves Godot's own defaults).</summary>
+    private static bool _applied;
+
     /// <summary>Raised after a setting changed and was applied (the views that read one refresh).</summary>
     public static event Action? Changed;
 
@@ -187,6 +190,10 @@ public sealed class UserSettings
     /// </summary>
     public void Apply(Viewport? viewport = null)
     {
+        // the first time (the start) a default leaves Godot's own (its command line's
+        // --fullscreen, --max-fps and the like, the project's vsync) as it is
+        bool first = !_applied;
+        _applied = true;
         viewport ??= (Engine.GetMainLoop() as SceneTree)?.Root;
         bool fwd = ForwardPlus();
         if (viewport != null)
@@ -224,9 +231,10 @@ public sealed class UserSettings
             var now = DisplayServer.WindowGetMode();
             // a maximised or minimised window counts as windowed
             bool windowed = now is DisplayServer.WindowMode.Windowed or DisplayServer.WindowMode.Maximized or DisplayServer.WindowMode.Minimized;
-            if (mode == DisplayServer.WindowMode.Windowed ? !windowed : now != mode)
+            if (!(first && WindowMode == "windowed") && (mode == DisplayServer.WindowMode.Windowed ? !windowed : now != mode))
                 DisplayServer.WindowSetMode(mode);
-            DisplayServer.WindowSetVsyncMode(VSync switch
+            if (!(first && VSync == "on"))
+                DisplayServer.WindowSetVsyncMode(VSync switch
             {
                 "off" => DisplayServer.VSyncMode.Disabled,
                 "adaptive" => DisplayServer.VSyncMode.Adaptive,
@@ -234,7 +242,8 @@ public sealed class UserSettings
                 _ => DisplayServer.VSyncMode.Enabled,
             });
         }
-        Engine.MaxFps = MaxFps;
+        if (!(first && MaxFps == 0))
+            Engine.MaxFps = MaxFps;
         GameSettings.SetFlag("no-glow", !Glow);
         int master = AudioServer.GetBusIndex("Master");
         if (master >= 0)

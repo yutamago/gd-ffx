@@ -257,24 +257,11 @@ public static class GameSettings
         int.TryParse(Arg(name), out var v) ? v : fallback;
 
     /// <summary>
-    /// The quality preset the run starts with: <c>--quality=high|deck</c>, else the one saved
-    /// in the user settings (the options overlay's), else <c>deck</c> on a Steam Deck (Steam sets
-    /// <c>SteamDeck=1</c> there), else the project setting <c>ffx/render/quality</c> (default
-    /// <c>high</c>). <c>deck</c> is the plan's lighter preset (<see cref="ApplyQuality"/>).
+    /// The quality preset in use (<see cref="UserSettings.Quality"/>: <c>--quality=high|deck</c>,
+    /// else the one saved by the options, else <c>deck</c> on a Steam Deck, where Steam sets
+    /// <c>SteamDeck=1</c>, or with the project setting <c>ffx/render/quality</c>, else <c>high</c>).
     /// </summary>
-    public static string Quality()
-    {
-        var q = Arg("quality");
-        if (q is "high" or "deck")
-            return q;
-        var saved = LoadSettings().GetValue("video", "quality", "").AsString();
-        if (saved is "high" or "deck")
-            return saved;
-        if (System.Environment.GetEnvironmentVariable("SteamDeck") == "1")
-            return "deck";
-        var p = ProjectSettings.GetSetting("ffx/render/quality", "high").AsString();
-        return p == "deck" ? "deck" : "high";
-    }
+    public static string Quality() => UserSettings.Current.Quality;
 
     /// <summary>
     /// Applies the graphics settings to <paramref name="viewport"/> (<see cref="UserSettings"/>:

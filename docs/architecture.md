@@ -177,7 +177,7 @@ remake registry and, from `GameHost.Start`, mounts the mod packs
 `Start`), its input and the view;
 `StateView3D` draws the camera, the classic map and the characters'
 classic models posed by the game (docs/importer.md), markers until they
-are imported; `DebugView` is the overlay (F1).
+are imported; `DebugView` is the overlay (F12).
 
 ## Map materials
 
@@ -604,6 +604,52 @@ with its node's name (`sphere_grid.cursor`, `+0x112fc`; the name from the
 kernel's `panel.bin`, `g_AbmapNodeKinds`: `FfxGame.grid_node_name`, kind 0
 "Lv. 3 Lock", 2 "Strength +1", 0x60 "Dispel"; at Besaid the cursor starts
 on Tidus's Cheer).
+
+## Cursors, boosters, the ESC menu and the options (G5, playtest round 2)
+
+- **Choices.** API 11's `Message.choice` is the option the game's cursor is
+  on while the choice is open (before, the confirmed pick, so the cursor
+  seemed to move only on Circle); `picked` is the confirmed one.
+  `MessageView.Layout` splits a window's text into the lines above the
+  options and the last `flags >> 8` lines, drawn as a `MenuList`: a lit
+  bar and a cursor drawn as a shape (`CursorMark`), not the `▶` glyph that
+  some fonts lack.
+- **Battle targets.** While the command window's level chooses a target
+  (`Menus.battle_target.open`, its record's kind 1; that level has no
+  command ids), `BattleMenuView` names the target (the battler the cursor
+  is on, its index in its side's list, the side) and `TargetHands` draws a
+  hand over each selected battler (`mask`, as `TOBtlDrawTargetCursor`), at
+  its body through the game's camera; none while the auto-battle runs. The
+  game's own hand cursors (`hands`) belong to its command list's place on
+  the PS2 screen, which the native menu does not share: not drawn.
+- **Boosters.** F1 to F4 go to the game (the debug overlay moved to F12).
+  `BoosterView` follows `Snapshot.boosters` and on a change shows the
+  game's tip: the localisation kit's lines that the game hands its Flash
+  pages and `TipSystem` are UTF-8, not the game's encoding
+  (`FfxGame.loc_text_utf8`; `loc_text` decodes the config's PC row, which
+  is in the game's encoding): 0x2fd..0x2ff the speed, 0x2f6/0x2f7 the
+  power-up, 0x2fa/0x2f9/0x2fb the encounters, 0x37f/0x380 the auto-battle.
+- **The ESC menu.** `Menus.esc_menu` (`g_FFEscMenu`) is up while the game's
+  `escmenu.swf` page is; meanwhile `animate` skips `updateFFX` (ffx-rust's
+  docs/formats/frame-timing.md), but the snapshots keep coming and the
+  game's clock goes on (measured under Xvfb: 35 snapshots and 1.17 s of
+  game time in 1 s). gd-ffx draws its home page
+  natively (localisation lines 0x217 Resume, 0x219 System setting, 0x21b
+  Special features, 0x21d Change parameters, 0x21f Quit: `FFEscMenu_initializeMainSettingPage`'s
+  `setHomePage`) and takes the input (`GameHost.Capture`), so the Flash
+  page's own cursor never moves; Resume taps the game's Esc
+  (`GameHost.Tap`: held 0.1 s, as the game reads its keyboard once an
+  update), which closes the menu from any page. A booster picked on the
+  Special features page is tapped once the menu has closed (the game
+  clears the booster bits while paused). Change parameters needs the Flash
+  page's own buttons: not offered.
+- **The options.** `UserSettings` (saved, applied live: docs/running.md,
+  "Options"); the glow switch is the run-time flag `no-glow`
+  (`GameSettings.SetFlag`), which the 3D view already reads. The game's
+  speed is ffx-host's clock (`Clock::set_speed`, ffx-rust's docs/host.md
+  "Game speed"): `FfxGame.set_speed` before the boot goes into
+  `Options::speed`, afterwards to the running clock; measured at Besaid,
+  x2 gives 59.9 updates a second headless.
 
 ## The battle results (G4)
 

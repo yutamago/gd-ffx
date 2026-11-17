@@ -12,7 +12,7 @@ namespace GdFfx;
 /// game keeps the input (Start resumes); F10 opens the options over it.</para>
 ///
 /// <para><b>The ESC menu</b> (<c>Menus.esc_menu</c>, the game's <c>g_FFEscMenu</c>: Esc opens
-/// it and the game stands still, as its <c>escmenu.swf</c> page is up). The game's page is a
+/// it and play halts, the game skipping its field update while its <c>escmenu.swf</c> page is up). The game's page is a
 /// Flash screen gd-ffx does not draw, so while it is open gd-ffx shows its home page's entries
 /// (the game's own texts, localisation lines 0x217..0x21f) and keeps the keyboard and mouse
 /// (<see cref="GameHost.Capture"/>), never moving the game's invisible cursor: Resume (Esc taps
@@ -22,8 +22,8 @@ namespace GdFfx;
 /// its key, F1..F4), Change parameters (not offered: the game's page only), Quit (asks, then
 /// ends gd-ffx). Up/Down choose, Enter (C, Space) confirms, Esc (Backspace, X) goes back.</para>
 ///
-/// <para>F10 opens the options from play too: gd-ffx taps the game's Esc first, so the game
-/// stands still under them, and the options open over the ESC menu (at once when the game's
+/// <para>F10 opens the options from play too: gd-ffx taps the game's Esc first, so play halts
+/// under them, and the options open over the ESC menu (at once when the game's
 /// menu does not open within 0.7 s, e.g. during a load).</para>
 /// </summary>
 public partial class PauseView : Control

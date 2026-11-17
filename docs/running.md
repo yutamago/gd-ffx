@@ -52,10 +52,34 @@ own documents folder, so the original's settings and saves are untouched.
   and choices as native Godot panels at the game's places, the text decoded
   from your archive in the game's language (Japanese, Korean and Chinese
   need a system font with those glyphs);
-- **the debug overlay** (F1 shows or hides it): updates (the game runs 30 a
-  second), game time, the map, the story progress, the keys held, and the
-  newest snapshot: the event, the pad, the camera and the characters shown
-  with their motion, frame and bones.
+- **the choices and menus** (G5): a choice's options as a list with a lit
+  bar and a cursor on the option the game's cursor is on (API 11's live
+  `Message.choice`, so it moves with the keys, before the confirm); the
+  battle's command rows the same, and while a target is chosen its name
+  under the commands and a hand over each selected battler;
+- **the boosters** (F1 to F4, the PC version's, kept by the game): a badge
+  in the top right for each one on (F1 Turbo x2/x4, dimmed where the game
+  does not speed up, e.g. in an event; F2 Supercharge; F3 no or frequent
+  encounters; F4 auto battle) and, on each change, a short toast with the
+  game's own tip text in its language;
+- **the pause and the ESC menu** (`PauseView`): Start (B) pauses where the
+  game allows it: the picture dimmed, "PAUSE" and the keys. Esc opens the
+  game's PC menu, which halts play (the game skips its field update); its page is a Flash screen gd-ffx
+  does not draw, so gd-ffx shows its entries natively (the game's texts)
+  and takes the keys and mouse while it is open: Resume, System setting
+  (gd-ffx's options, below), Special features (the four boosters with their
+  state; one picked returns to the game and presses its key), Change
+  parameters (not offered yet), Quit (asks first). Up/Down choose, Enter (C,
+  Space) confirms, Esc (Backspace, X) goes back or resumes;
+- **the options** (F10, or the ESC menu's System setting; "Options" below);
+- **the FPS overlay** (F9): frames a second, the frame time and the worst of
+  the last second, a graph of the last 240 frame times (lines at 16.7 and
+  33.3 ms), and the game's updates a second with its speed;
+- **the debug overlay** (F12 shows or hides it; it was F1, which is the
+  game's now): updates (the game runs 30 a second), game time, the map, the
+  story progress, the keys held, and the newest snapshot: the event, the
+  pad, the camera and the characters shown with their motion, frame and
+  bones.
 
 Input goes to the game as on the original:
 
@@ -69,7 +93,53 @@ Input goes to the game as on the original:
 | B | Start |
 | N | Select |
 | S / D, PgUp / PgDn | L1 / R1, L2 / R2 |
-| Esc | the PC menu |
+| Esc | the PC menu (gd-ffx's ESC menu over it) |
+| F1 | Turbo: normal, x2, x4 (the game's speed-up) |
+| F2 | Supercharge on/off (the power-up) |
+| F3 | enemy encounters: normal, frequent, none |
+| F4 | auto battle on/off |
+
+gd-ffx's own keys never reach the game:
+
+| Keys | gd-ffx |
+|---|---|
+| F9 | the FPS overlay (saved) |
+| F10 | the options (over the ESC menu: gd-ffx presses the game's Esc first, so play halts; alone when the game's menu does not open within 0.7 s) |
+| F11 | windowed / fullscreen (saved) |
+| F12 | the debug overlay |
+
+While gd-ffx's ESC menu or the options are open the game gets no keys or
+mouse, and the keys it held are let go.
+
+## Options
+
+gd-ffx's settings, in game (F10) and in the launcher, applied at once and
+saved in the user settings file (`user://settings.cfg`, `--settings=PATH`;
+sections `[video]`, `[audio]`, `[debug]` beside the launcher's `[game]`):
+
+| Setting | Choices | Key |
+|---|---|---|
+| quality preset | High (the project's own settings), Deck (3D at 75 %, no MSAA, 60 fps at most) | `video/quality` |
+| window | windowed, fullscreen (borderless), exclusive fullscreen | `video/window_mode` |
+| 3D resolution | 50 % to 200 % of the window (`Viewport.Scaling3DScale`) | `video/scale_3d` |
+| upscaler | bilinear; FSR 1.0 and 2.2 under Forward+ | `video/upscaler` |
+| MSAA (3D) | off, 2x, 4x, 8x | `video/msaa` |
+| screen-space AA | off, FXAA, SMAA | `video/screen_aa` |
+| TAA | on/off (Forward+) | `video/taa` |
+| vsync | on, off, adaptive, mailbox | `video/vsync` |
+| frame rate cap | none, 30, 60, 120, 144, 240 | `video/max_fps` |
+| glow | on/off (as `--no-glow`) | `video/glow` |
+| sound volume | 0 to 100 % (Godot's Master bus, the game's mix) | `audio/volume` |
+| game speed | x0.25 to x8, for debugging (ffx-host's clock: game time and the updates run that much faster; a pink badge shows it while not x1) | `debug/speed` |
+| FPS overlay | on/off (F9) | `debug/fps_overlay` |
+
+The command line wins for its run and is not saved: `--quality=high|deck`,
+`--no-vsync`, `--no-glow`, `--speed=X` (0.25 to 8). The self-checks and the
+benchmark start from the defaults and never read the saved file (unless
+`--settings=PATH` names one), so a player's settings do not change their
+pictures. `--language=CODE` (jp en fr de it es kr ch) writes the game's
+`Language=` into the sandbox's `GameSetting.ini` before the boot, as the
+launcher does.
 
 Pads are the game's XInput pads (the first four Godot joypads connected at the
 start). The keyboard and mouse reach the game only while its window has the
@@ -501,6 +571,25 @@ next map (`0x14`); `--no-walk` checks that the map stays without input,
 `--headless`: under Xvfb, `xvfb-run -a godot --display-driver x11
 --rendering-driver opengl3 ...`, nothing shows on screen).
 
+`--selftest-ux --devsave=7` (G5, the playtest's UX requests): at the save
+sphere, confirm opens its two-way choice and the native box's cursor follows
+the game's (Down, Up, Down before the confirm; the confirm picks 1); Esc
+opens the game's PC menu and the native ESC menu with its five entries,
+System setting opens the options, which set the frame cap (applied and
+saved), the glow and the game's speed (x2: about 60 updates a second, which
+the FPS overlay, F9, shows); Esc closes them and Esc again resumes; F3 and
+F1 reach the game (the encounter mode and Turbo step, with badge and tip)
+and are pressed back; Start shows the pause screen; a treasure's message
+keeps its item's name through the text cleaning. The settings go to a
+temporary file. `--shot-dir=DIR` under Xvfb writes a picture of each
+screen; `tools/ux-shots.sh OUT_DIR` takes them all (with the battle's
+command menu and target selection) offscreen, as `tools/compare-shot.sh`
+renders.
+
+The battle check (`--selftest-battle`) also waits for the target selection
+(Attack's first confirm): the native menu names the target and a hand
+points at it (`--shot`: `NAME-target.png` too).
+
 `--selftest-remake --devsave=7` and `--selftest-mods --no-game` (G6):
 remade content and mod packs (docs/remake.md); `--selftest-launcher --no-game`:
 the launcher (docs/launcher.md).
@@ -543,7 +632,8 @@ program in `build/windows/` (docs/exporting.md).
    `Godot_v4.7.2-stable_mono_win64_console.exe --path godot -- --devsave=7`.
 
 The first visit of a map or character imports it (a second or two); after
-that it comes from the cache. Arrows walk, F1 hides the overlay.
+that it comes from the cache. Arrows walk, F12 hides the overlay, F10 opens
+the options.
 
 Headless from a terminal:
 

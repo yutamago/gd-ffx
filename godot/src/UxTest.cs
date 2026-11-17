@@ -16,7 +16,7 @@ namespace GdFfx;
 /// <item>the ESC menu: Esc opens the game's PC menu (<c>Menus.esc_menu</c>) and the native
 /// ESC menu shows its entries; System setting opens the options overlay, which changes the
 /// frame cap (applied and saved), the glow and the game's speed (x2: the updates come about
-/// twice as often); Esc closes it, Esc again resumes the game;</item>
+/// twice as often, which F9's FPS overlay shows); Esc closes it, Esc again resumes the game;</item>
 /// <item>the boosters: F3 steps the encounter mode (the badge and the game's tip shown), F1
 /// the speed-up, each pressed back to the start;</item>
 /// <item>the pause: Start (B) where the game pauses shows the pause screen (reported, not
@@ -59,6 +59,8 @@ public sealed class UxTest : ITest
     private double _speedAt;
     private uint _escUpdate;
     private double _escTime;
+    private double _x1At = -1, _x1Rate;
+    private uint _x1Update;
 
     public string Note { get; private set; } = "";
 
@@ -155,7 +157,11 @@ public sealed class UxTest : ITest
             case Phase.Boot when s.World.Map == BesaidTest.MapBeach && s.World.PlayerControl && view.Posed.Models > 0:
                 Next(Phase.Settle);
                 break;
+            case Phase.Settle when _x1At < 0:
+                (_x1At, _x1Update) = (_t, s.Update);
+                break;
             case Phase.Settle when _phaseT > 2:
+                _x1Rate = (s.Update - _x1Update) / (_t - _x1At);
                 Ok(s.Boosters is { SpeedLevel: 0, Powerup: false, Encounters: 1, AutoBattle: false },
                     $"a new game's boosters (speed {s.Boosters.SpeedLevel}, power-up {s.Boosters.Powerup}, encounters {s.Boosters.Encounters}, auto {s.Boosters.AutoBattle})");
                 Press(Key.Enter);
@@ -177,7 +183,7 @@ public sealed class UxTest : ITest
                 var m = ChoiceWindow(s);
                 var row = mv.Choices.FirstOrDefault() ?? "";
                 Ok(m?.Choice == 1 && m.Picked == -1 && Marked(row) == 1, $"Down moves the live cursor before any confirm: {row}");
-                ShotSoon("choice-1");
+                Shot("choice-1");
                 Press(Key.Up);
                 Next(Phase.ChoiceUp);
                 break;
@@ -274,6 +280,7 @@ public sealed class UxTest : ITest
                     Ok(GameHost.Instance?.Captured == false, "Esc resumes: the game's menu closed, the input the game's again");
                     _updatesAt = s.Update;
                     _speedAt = _t;
+                    Press(GameHost.FpsKey);
                     Next(Phase.Speed);
                 }
                 else if (_phaseT > 6)
@@ -282,7 +289,13 @@ public sealed class UxTest : ITest
             case Phase.Speed when _phaseT > 3:
             {
                 double rate = (s.Update - _updatesAt) / (_t - _speedAt);
-                Ok(rate > 45, $"at x2 the game ran {rate:F1} updates a second (its pace is 30)");
+                // against x1 in this run (a busy machine slows both): about twice, or above the game's 30
+                Ok(rate > 40 || rate > 1.5 * _x1Rate, $"at x2 the game ran {rate:F1} updates a second (x1 here: {_x1Rate:F1}; its pace is 30)");
+                var fps = Find<FpsView>("FpsView");
+                Ok(fps is { Visible: true } && fps.Shown.Contains("updates/s") && fps.UpdatesPerSecond > 0 && UserSettings.Current.FpsOverlay,
+                    $"F9 shows the FPS overlay: \"{fps?.Shown.Replace('\n', ' ')}\"");
+                Shot("fps");
+                Press(GameHost.FpsKey);
                 UserSettings.Current.Speed = 1;
                 UserSettings.Current.Apply();
                 Ok(System.Math.Abs(game.Speed - 1) < 1e-9, "the speed back to x1");

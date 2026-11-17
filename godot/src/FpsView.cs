@@ -36,8 +36,12 @@ public partial class FpsView : Control
         _text.AddThemeConstantOverride("outline_size", 4);
         AddChild(_text);
         Visible = UserSettings.Current.FpsOverlay;
-        UserSettings.Changed += () => Visible = UserSettings.Current.FpsOverlay;
+        UserSettings.Changed += OnSettings;
     }
+
+    public override void _ExitTree() => UserSettings.Changed -= OnSettings;
+
+    private void OnSettings() => Visible = UserSettings.Current.FpsOverlay;
 
     public override void _UnhandledInput(InputEvent e)
     {
