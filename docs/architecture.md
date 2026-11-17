@@ -449,6 +449,11 @@ weights[k])`; so does gd-ffx.
   segments: skinned only). A segment is matched by (actor, model, piece,
   vertex count); a segment of a shown character that matches no surface is
   logged once. A vertex the previous frame lacks gets the current one twice.
+  The frame of update `n` is captured in the render after update `n`; were it
+  not there yet when snapshot `n` shows, the previous update's cloth is drawn
+  at alpha 1 until it comes (where the bones are at the interval's start).
+  Measured, it always is: 0 of 128 updates late in the battle below (the
+  checks' notes: `0 of N frame(s) after their snapshot`).
 - **The shader** mixes the skinned position (Godot's `VERTEX` after skinning,
   taken to world space by `MODEL_MATRIX`) with the texel pair's position,
   interpolated by `ffx_cloth_alpha` (the view's alpha, set each frame: the

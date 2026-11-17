@@ -226,6 +226,11 @@ public sealed class ClothView
 
     private Frame _a = new(), _b = new();
     private Frame? _cur, _prev;
+    private uint _seen = uint.MaxValue;
+
+    /// <summary>Snapshot updates seen while a character had cloth, and those whose cloth frame was not there yet on the first frame showing them.</summary>
+    public int Updates { get; private set; }
+    public int Late { get; private set; }
 
     /// <summary>Whether the texture is rebuilt this frame (new frames, or a model came).</summary>
     private bool _dirty;
@@ -252,7 +257,18 @@ public sealed class ClothView
         var prev = view.Previous is { } p && !ReferenceEquals(p, cur) ? p : null;
         _cur = Ensure(game, cur.Update, prev?.Update);
         _prev = prev != null ? Ensure(game, prev.Update, cur.Update) : null;
-        RenderingServer.GlobalShaderParameterSet(G_alpha, view.Alpha);
+        // the frame of update n is captured in the render after update n, so it can come a little
+        // after snapshot n: until it does, the previous update's cloth at alpha 1, where the bones
+        // are at the start of the interval (the texture holds it as its pair's newer frame, or
+        // twice when rebuilt meanwhile: Place)
+        if (cur.Update != _seen)
+        {
+            _seen = cur.Update;
+            Updates++;
+            if (_cur == null)
+                Late++;
+        }
+        RenderingServer.GlobalShaderParameterSet(G_alpha, _cur == null ? 1f : view.Alpha);
         bool d = _dirty;
         _dirty = false;
         return d;
@@ -337,7 +353,9 @@ public sealed class ClothView
     /// </summary>
     public void Place(ushort slot, string name, Model model, Transform3D root, Transform3D? prevRoot)
     {
-        var cur = _cur;
+        // the current update's frame not there yet: the previous one alone (Refresh)
+        var cur = _cur ?? _prev;
+        var prevFrame = _cur != null ? _prev : null;
         bool any = false;
         foreach (var m in model.Meshes)
         {
@@ -358,8 +376,8 @@ public sealed class ClothView
                         Texels.Slice(8 * start, 8 * m.Vertices).Clear();
                         _next = start + m.Vertices;
                     }
-                    int pi = _prev?.Find(slot, s.Model, s.Piece, s.Count) ?? -1;
-                    Write(cur, cur.Segs[ci], pi >= 0 ? _prev : null, pi >= 0 ? _prev!.Segs[pi] : default, start + s.First, root, prevRoot);
+                    int pi = prevFrame?.Find(slot, s.Model, s.Piece, s.Count) ?? -1;
+                    Write(cur, cur.Segs[ci], pi >= 0 ? prevFrame : null, pi >= 0 ? prevFrame!.Segs[pi] : default, start + s.First, root, prevRoot);
                     _segs++;
                 }
                 if (placed)

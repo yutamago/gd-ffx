@@ -467,7 +467,7 @@ public sealed class BesaidTest(double timeout, string? shot) : ITest
                 if (ClothView.Enabled)
                 {
                     var cl = view.Cloth.Shown;
-                    _seen += $", cloth: {cl} ({view.Cloth.MovingUpdates} update(s) with moving cloth)";
+                    _seen += $", cloth: {cl} ({view.Cloth.MovingUpdates} update(s) with moving cloth, {view.Cloth.Late} of {view.Cloth.Updates} frame(s) after their snapshot)";
                     if (cl.Weighted == 0 || cl.Unmatched > 0)
                         return Done(false, $"the game's cloth not drawn: {cl}");
                     if (view.Cloth.MovingUpdates == 0)
@@ -804,7 +804,8 @@ public sealed class BattleTest : ITest
         if (!ClothView.Enabled)
             return ", cloth off";
         var view = (Engine.GetMainLoop() as SceneTree)?.Root.FindChild("StateView3D", true, false) as StateView3D;
-        return view == null ? "" : $", cloth: {view.Cloth.Shown} ({view.Cloth.MovingUpdates} update(s) with moving cloth)";
+        return view == null ? "" : $", cloth: {view.Cloth.Shown} ({view.Cloth.MovingUpdates} update(s) with moving cloth, "
+            + $"{view.Cloth.Late} of {view.Cloth.Updates} frame(s) after their snapshot)";
     }
 
     private readonly double timeout;
