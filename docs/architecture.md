@@ -568,7 +568,17 @@ the game gets from `ViewProjection2` (traced only as the main camera's).
   v.rgb, v.a)`, the other untextured ones `(2 v.a v.rgb, 2 v.a)`. Before,
   any flags but the decoded families' fell to the straight form, and with
   a `(one, one)` blend and no texture that was a flat quad of the vertex
-  colour at full strength: the white rectangle of the sun's glare. An
+  colour at full strength: the white rectangle of the sun's glare. Seen
+  over the 110 developer saves (`FFX_EFFECT_LOG=1` in the sweep): lens
+  flares `0x80a` in saves 13, 30, 62, 65, 88, 97, 98 (none is in Besaid
+  village's outdoor maps), `0x808` (`VfxNoZTestShader`) in 61, and `0x40`,
+  `0x240`, `0x249`. Under `Transparent` these are premultiplied; the old
+  straight form ignored the alpha that holds the HD glow textures'
+  brightness (their colour is white): in Luca (save 30) the sun's glare was
+  a white wedge over a third of the picture (61.5 / 255 against the new
+  picture), in Macalania (save 61) the no-depth-test mist covered the
+  whole screen in white (139.6 / 255); now the glare is faint and the woods
+  misty with the pyreflies as small lights. An
   untextured shader samples nothing, whatever name the segment holds; the
   shader's `VSP_ZTEST_DISABLE` (0x800) draws without the depth test,
   `VSP_ZWRITE_ENABLE` (0x40) writes depth. A textured shader's texture
