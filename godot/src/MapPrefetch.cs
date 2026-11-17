@@ -40,7 +40,7 @@ public sealed class MapPrefetch
 
     private readonly List<string> _battle = new();
     private readonly List<string> _battleLoads = new();
-    private int _battleOf = -2;
+    private int _battleOf = -2, _battleFor = -2;
     private double _battleAsked = -10;
 
     /// <summary>The battle maps the current map's random encounters use (for tests and the log).</summary>
@@ -150,6 +150,19 @@ public sealed class MapPrefetch
         if (w.Battle || w.MapChange || !w.Level.StartsWith("/map/"))
             return;
         double now = Time.GetTicksMsec() / 1000.0;
+        // another map: the last one's battle maps are no longer candidates (a held scene is dropped)
+        if (w.Map != _battleFor)
+        {
+            _battleFor = w.Map;
+            _battleOf = -2;
+            _battle.Clear();
+            foreach (var level in _battleLoads)
+            {
+                ContentResolver.Forget("map", level);
+                GD.Print($"ffx: prefetch: battle map {level} dropped");
+            }
+            _battleLoads.Clear();
+        }
         if (w.Map != _battleOf && now - _battleAsked > 2)
         {
             _battleAsked = now;
