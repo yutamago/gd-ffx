@@ -2758,13 +2758,14 @@ public sealed partial class HandCursor
 }
 
 /// <summary>
-/// One piece of gear won (its 22-byte record; docs/formats/kernel.md
+/// One piece of gear: won in battle (`BattleEnd.gear_spoils`) or worn
+/// (`PartyMember.weapon_gear`); its 22-byte record (docs/formats/kernel.md
 /// "Equipment").
 /// </summary>
 public sealed partial class GearSpoil
 {
     /// <summary>
-    /// Its id (`gear`'s).
+    /// Its id (the spoil's `gear`, or the worn weapon's).
     /// </summary>
     public ushort Id;
     /// <summary>
@@ -2990,7 +2991,9 @@ public sealed partial class NumberFrame
 {
     /// <summary>
     /// The x and y offsets (`i8` `+0`, `+1`; PS2 pixels; a loss bounces
-    /// by them).
+    /// by them): `MsNumberDrawProcess` adds `x` and subtracts `y`
+    /// (`y += oy - rise`), so a positive `y` moves the number up; every
+    /// colour takes its alpha from the row.
     /// </summary>
     public short X;
     /// <summary>
