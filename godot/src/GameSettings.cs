@@ -46,13 +46,39 @@ public static class GameSettings
     public static string[] Args(string name) =>
         CmdLine.Where(a => IsOption(a, name, '=')).Select(a => a[(name.Length + 3)..]).Distinct().ToArray();
 
-    /// <summary>Whether the command line has the flag <c>--name</c>.</summary>
+    /// <summary>
+    /// Whether the command line has the flag <c>--name</c>, or it is set at run time
+    /// (<see cref="SetFlag"/>: the options overlay's switches that the views read as flags,
+    /// e.g. <c>no-glow</c>).
+    /// </summary>
     public static bool Flag(string name)
+    {
+        if (RunFlags.Count > 0 && RunFlags.Contains(name))
+            return true;
+        foreach (var a in CmdLine)
+            if (IsOption(a, name, null))
+                return true;
+        return false;
+    }
+
+    private static readonly System.Collections.Generic.HashSet<string> RunFlags = new();
+
+    /// <summary>Whether <c>--name</c> is on the command line itself (not set at run time).</summary>
+    public static bool CommandLineFlag(string name)
     {
         foreach (var a in CmdLine)
             if (IsOption(a, name, null))
                 return true;
         return false;
+    }
+
+    /// <summary>Sets or clears the run-time flag <c>name</c> (<see cref="Flag"/>); a command-line flag stays set.</summary>
+    public static void SetFlag(string name, bool on)
+    {
+        if (on)
+            RunFlags.Add(name);
+        else
+            RunFlags.Remove(name);
     }
 
     /// <summary>A number from <c>--name=N</c>, else <paramref name="fallback"/>.</summary>
@@ -160,6 +186,55 @@ public static class GameSettings
         return null;
     }
 
+    /// <summary>The languages <c>GameSetting.ini</c>'s <c>Language=</c> takes (the game's key table).</summary>
+    public static readonly string[] GameLanguages = ["jp", "en", "fr", "de", "it", "es", "kr", "ch"];
+
+    /// <summary>
+    /// Sets the game's language in <c>GameSetting.ini</c> in <paramref name="documents"/> (the
+    /// sandbox; the game reads it at boot): the <c>Language=</c> line replaced, every other line
+    /// kept as it is; a missing file is made with that line only (the game fills in its
+    /// defaults for the other keys and writes them back). Null when written, else why not.
+    /// </summary>
+    public static string? SetGameLanguage(string documents, string code)
+    {
+        code = code.ToLowerInvariant();
+        if (System.Array.IndexOf(GameLanguages, code) < 0)
+            return $"not a language of the game: {code}";
+        var ini = GameSettingIni(documents);
+        try
+        {
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(ini)!);
+            if (!System.IO.File.Exists(ini))
+            {
+                System.IO.File.WriteAllText(ini, $"Language={code}\r\n");
+                return null;
+            }
+            var text = System.IO.File.ReadAllText(ini);
+            var nl = text.Contains("\r\n") ? "\r\n" : "\n";
+            var lines = text.Split('\n').Select(l => l.TrimEnd('\r')).ToList();
+            if (lines.Count > 0 && lines[^1].Length == 0)
+                lines.RemoveAt(lines.Count - 1);
+            bool found = false;
+            for (int i = 0; i < lines.Count; i++)
+            {
+                var eq = lines[i].IndexOf('=');
+                if (eq > 0 && lines[i][..eq].Trim().Equals("Language", StringComparison.OrdinalIgnoreCase))
+                {
+                    lines[i] = $"Language={code}";
+                    found = true;
+                }
+            }
+            if (!found)
+                lines.Insert(0, $"Language={code}");
+            System.IO.File.WriteAllText(ini, string.Join(nl, lines) + nl);
+            return null;
+        }
+        catch (Exception e) when (e is System.IO.IOException or UnauthorizedAccessException)
+        {
+            return e.Message;
+        }
+    }
+
     public static string DocumentsDir()
     {
         var dir = Arg("documents");
@@ -182,44 +257,33 @@ public static class GameSettings
         int.TryParse(Arg(name), out var v) ? v : fallback;
 
     /// <summary>
-    /// Whether the game's sound plays through Godot: off with <c>--mute</c> on the
-    /// command line or the project setting <c>ffx/audio/enabled</c> false.
+    /// The quality preset in use (<see cref="UserSettings.Quality"/>: <c>--quality=high|deck</c>,
+    /// else the one saved by the options, else <c>deck</c> on a Steam Deck, where Steam sets
+    /// <c>SteamDeck=1</c>, or with the project setting <c>ffx/render/quality</c>, else <c>high</c>).
     /// </summary>
-    /// <summary>
-    /// The quality preset: <c>--quality=high|deck</c>, else <c>deck</c> on a Steam Deck (Steam sets
-    /// <c>SteamDeck=1</c> there), else the project setting <c>ffx/render/quality</c> (default
-    /// <c>high</c>). <c>deck</c> is the plan's lighter preset (<see cref="ApplyQuality"/>).
-    /// </summary>
-    public static string Quality()
-    {
-        var q = Arg("quality");
-        if (q is "high" or "deck")
-            return q;
-        if (System.Environment.GetEnvironmentVariable("SteamDeck") == "1")
-            return "deck";
-        var p = ProjectSettings.GetSetting("ffx/render/quality", "high").AsString();
-        return p == "deck" ? "deck" : "high";
-    }
+    public static string Quality() => UserSettings.Current.Quality;
 
     /// <summary>
-    /// Applies <see cref="Quality"/> to <paramref name="viewport"/>: <c>deck</c> draws the 3D at
+    /// Applies the graphics settings to <paramref name="viewport"/> (<see cref="UserSettings"/>:
+    /// the player's, saved in <see cref="SettingsPath"/>, with the command line's for this run:
+    /// <c>--quality=high|deck</c>, <c>--no-vsync</c>). The <c>deck</c> preset draws the 3D at
     /// 75 % of the screen (scaled up), without MSAA, at most 60 frames a second (the Deck's
-    /// screen); <c>high</c> leaves the project's settings. <c>--no-vsync</c> turns vsync off. The Mobile renderer
-    /// (<c>--rendering-method mobile</c>) is a launch option, as Godot picks it at start.
+    /// screen). The Mobile renderer (<c>--rendering-method mobile</c>) is a launch option, as
+    /// Godot picks it at start.
     /// </summary>
-    public static void ApplyQuality(Viewport viewport)
+    public static void ApplyQuality(Viewport viewport) => UserSettings.Current.Apply(viewport);
+
+    /// <summary>The user settings file, read (empty when there is none).</summary>
+    internal static ConfigFile LoadSettingsFile() => LoadSettings();
+
+    /// <summary>Writes <paramref name="cfg"/> as the user settings file; false when it cannot be written.</summary>
+    internal static bool SaveSettingsFile(ConfigFile cfg)
     {
-        // --no-vsync: frames not held to the display's refresh (the frame rate unlocked, as the
-        // benchmark and the original's unlocked mode measure it)
-        if (Flag("no-vsync"))
-            DisplayServer.WindowSetVsyncMode(DisplayServer.VSyncMode.Disabled);
-        if (Quality() != "deck")
-            return;
-        viewport.Scaling3DScale = 0.75f;
-        viewport.Msaa3D = Viewport.Msaa.Disabled;
-        if (Engine.MaxFps == 0 || Engine.MaxFps > 60)
-            Engine.MaxFps = 60;
-        GD.Print("ffx: quality deck (3D at 75 %, no MSAA, 60 fps at most)");
+        var path = Globalize(SettingsPath);
+        var parent = System.IO.Path.GetDirectoryName(path);
+        if (!string.IsNullOrEmpty(parent))
+            System.IO.Directory.CreateDirectory(parent);
+        return cfg.Save(path) == Error.Ok;
     }
 
     public static bool AudioEnabled() =>

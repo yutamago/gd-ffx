@@ -11,7 +11,8 @@ namespace GdFfx.Launcher;
 /// the game folder (checked, chosen with a folder dialog, remembered in
 /// <see cref="GameSettings.SettingsPath"/>), the mod packs of each mod folder (enabled or not,
 /// in order; written to the folder's <c>load_order.txt</c> at each change), the game's
-/// language, the classic cache with a button to clear it, and Start (or Start at a developer
+/// language (chosen: <c>Language=</c> in the sandbox's <c>GameSetting.ini</c>), gd-ffx's settings
+/// (<see cref="OptionsPanel"/>), the classic cache with a button to clear it, and Start (or Start at a developer
 /// save), which hands over to <see cref="GameHost.Start"/> and <c>scenes/main.tscn</c>.
 /// Skipped (the game starts at once) with <c>--game-dir</c>, <c>FFX_GAME_DIR</c>,
 /// <c>--devsave</c>, any <c>--selftest*</c> but <c>--selftest-launcher</c>, or
@@ -34,6 +35,8 @@ public partial class Launcher : Control
     public Button BrowseButton { get; private set; } = null!;
     public FileDialog FolderDialog { get; private set; } = null!;
     public Label LanguageLabel { get; private set; } = null!;
+    public OptionButton LanguageOption { get; private set; } = null!;
+    public OptionsPanel Settings { get; private set; } = null!;
     public VBoxContainer ModList { get; private set; } = null!;
     public Label CacheLabel { get; private set; } = null!;
     public Button ClearCacheButton { get; private set; } = null!;
@@ -150,8 +153,17 @@ public partial class Launcher : Control
         };
         AddChild(FolderDialog);
 
-        LanguageLabel = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart };
-        col.AddChild(LanguageLabel);
+        // the game's language: Language= in the sandbox's GameSetting.ini, read by the game at boot
+        col.AddChild(Heading("Game language"));
+        var langRow = new HBoxContainer();
+        LanguageOption = new OptionButton { CustomMinimumSize = new Vector2(220, 0) };
+        foreach (var code in GameSettings.GameLanguages)
+            LanguageOption.AddItem($"{LanguageName(code)} ({code})");
+        LanguageOption.ItemSelected += i => SetLanguage(GameSettings.GameLanguages[i]);
+        langRow.AddChild(LanguageOption);
+        LanguageLabel = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart, SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        langRow.AddChild(LanguageLabel);
+        col.AddChild(langRow);
 
         // the mod packs
         col.AddChild(Heading("Mod packs (first to last: later packs win)"));
@@ -178,6 +190,11 @@ public partial class Launcher : Control
         };
         ClearCacheConfirm.Confirmed += () => ClearCache();
         AddChild(ClearCacheConfirm);
+
+        // gd-ffx's own settings (also in game: F10)
+        col.AddChild(Heading("gd-ffx settings (also in game: F10, or Esc, System setting)"));
+        Settings = new OptionsPanel();
+        col.AddChild(Settings);
 
         // start
         col.AddChild(new HSeparator());
@@ -227,9 +244,27 @@ public partial class Launcher : Control
     private void ShowLanguage()
     {
         var lang = GameSettings.GameLanguage(DocumentsDir);
+        int i = System.Array.IndexOf(GameSettings.GameLanguages, (lang ?? "jp").ToLowerInvariant());
+        LanguageOption.Select(i < 0 ? 0 : i);
         LanguageLabel.Text = lang == null
-            ? "Language: not set yet (the game starts in Japanese and writes its settings; change it in the game's PC menu, Esc)."
-            : $"Language: {LanguageName(lang)} ({lang}), from the game's settings (the game's PC menu, Esc, changes it).";
+            ? "Not set yet: the game starts in Japanese. Choose one to write it into the game's settings."
+            : $"From the game's settings ({System.IO.Path.GetFileName(GameSettings.GameSettingIni(DocumentsDir))} in gd-ffx's documents folder); used at the next start.";
+    }
+
+    /// <summary>
+    /// Writes <paramref name="code"/> as the game's language (<see cref="GameSettings.SetGameLanguage"/>:
+    /// <c>Language=</c> in the sandbox's <c>GameSetting.ini</c>, the other lines kept); the game
+    /// reads it when it boots.
+    /// </summary>
+    public void SetLanguage(string code)
+    {
+        if (GameSettings.GameLanguage(DocumentsDir)?.ToLowerInvariant() == code)
+            return;
+        if (GameSettings.SetGameLanguage(DocumentsDir, code) is { } why)
+            GD.PrintErr($"ffx: launcher: the language not written: {why}");
+        else
+            GD.Print($"ffx: launcher: the game's language set to {code}");
+        ShowLanguage();
     }
 
     /// <summary>The name of a <c>GameSetting.ini</c> language.</summary>

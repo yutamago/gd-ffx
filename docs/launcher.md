@@ -12,10 +12,21 @@ hands over to the game (`scenes/main.tscn`).
   is checked for those two files (only their presence; nothing is read),
   and Start stays off until it passes. A folder that passes is remembered
   in the user settings file (below), so the next start has it filled in.
-- **The language**: the game's `Language` from its `GameSetting.ini` in
-  gd-ffx's documents folder (docs/running.md). Shown only: the game's PC
-  menu (Esc) changes it. Before the first start there is no file yet and
-  the game starts in Japanese.
+- **The game language**: a list of the game's languages (Japanese,
+  English, French, German, Italian, Spanish, Korean, Chinese) showing the
+  `Language` of its `GameSetting.ini` in gd-ffx's documents folder
+  (docs/running.md). Choosing one writes `Language=<code>` (jp en fr de it
+  es kr ch) there, every other line kept as it is; the game reads it at its
+  next boot. Before the first start there is no file: the list shows
+  Japanese (the game's default), and choosing a language makes the file
+  with that line only (the game fills in the rest and writes it back;
+  measured: English from the first boot). `--language=CODE` on the command
+  line does the same before a boot without the launcher.
+- **gd-ffx settings**: the options of the in-game overlay (F10;
+  docs/running.md, "Options"): the quality preset, window mode, 3D
+  resolution and upscaler, MSAA, screen-space AA, TAA, vsync, frame cap,
+  glow, volume, the game's speed and the FPS overlay, applied at once and
+  saved in the user settings file.
 - **The mod packs** of `user://mods/` and of each `--mods=DIR`, one list a
   folder, first to last (later packs win, docs/remake.md): a check box
   enables or disables a pack, Up and Down move it. Each change edits that
@@ -41,7 +52,15 @@ after `--` for another file), a Godot `ConfigFile`:
 ```ini
 [game]
 dir="/path/to/the/game"
+
+[video]
+quality="high"
+max_fps=0
+...
 ```
+
+(`[video]`, `[audio]` and `[debug]`: gd-ffx's settings, docs/running.md,
+"Options".)
 
 The game folder is the first found of:
 
@@ -127,7 +146,11 @@ controls: the folder without the archive is refused and not remembered,
 the fake one is accepted and remembered in the settings file, and wins
 over the project setting; no `load_order.txt` is written before a change;
 a pack is switched off and another moved up, and `load_order.txt` says so
-(and reads back the same); the language shows German; clearing is refused
+(and reads back the same); the language shows German, choosing English
+writes `Language=en` with the other line kept, a missing file is made with
+the language only and an unknown code is refused; the frame cap set to 60
+is applied and saved beside the game folder, the Deck preset sets its
+values and the controls show them; clearing is refused
 for an empty or relative path, `/`, the home folder, the user data folder
 itself, and the test's cache (outside `user://`) until it has the marker,
 then the cache is cleared (a file beside `map/`, `map2d/` and `chr/` is kept); Start

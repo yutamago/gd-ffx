@@ -139,8 +139,37 @@ public partial class LauncherSelfTest : Node
             l.ScanMods();
             Check(l.Folders[0].Entries.SequenceEqual(entries), "read back from the folder, the same");
 
-            // the language and the cache
-            Check(l.LanguageLabel.Text.Contains("German (de)"), $"the language: \"{l.LanguageLabel.Text}\"");
+            // the language: shown from the game's settings, chosen in the launcher (Language= written, the rest kept)
+            var ini = GameSettings.GameSettingIni(Tmp("docs"));
+            Check(l.LanguageOption.GetItemText(l.LanguageOption.Selected).Contains("German (de)"),
+                $"the language shown: \"{l.LanguageOption.GetItemText(l.LanguageOption.Selected)}\"");
+            l.LanguageOption.Select(System.Array.IndexOf(GameSettings.GameLanguages, "en"));
+            l.LanguageOption.EmitSignal(OptionButton.SignalName.ItemSelected, System.Array.IndexOf(GameSettings.GameLanguages, "en"));
+            var iniText = System.IO.File.ReadAllText(ini);
+            Check(iniText == "Language=en\r\nResolution=1280*720\r\n" && GameSettings.GameLanguage(Tmp("docs")) == "en",
+                $"English chosen: GameSetting.ini says {iniText.Replace("\r\n", "|")}");
+            var fresh = Tmp("docs-new");
+            Check(GameSettings.SetGameLanguage(fresh, "fr") == null && GameSettings.GameLanguage(fresh) == "fr"
+                && GameSettings.SetGameLanguage(fresh, "xx") != null,
+                "a missing GameSetting.ini is made with the language only; an unknown language is refused");
+            // gd-ffx's settings: a change is applied and saved in the settings file
+            var fps = (OptionButton)l.Settings.Controls["fps"];
+            int sixty = System.Array.IndexOf(UserSettings.FpsCaps, 60);
+            fps.Select(sixty);
+            fps.EmitSignal(OptionButton.SignalName.ItemSelected, sixty);
+            var saved = new ConfigFile();
+            Check(saved.Load(Tmp("settings.cfg")) == Error.Ok && saved.GetValue("video", "max_fps", -1).AsInt32() == 60
+                && Engine.MaxFps == 60 && saved.GetValue("game", "dir", "").AsString() == Tmp("game"),
+                $"the frame cap set to 60 in the launcher: applied ({Engine.MaxFps}) and saved beside the game folder");
+            var deck = (OptionButton)l.Settings.Controls["preset"];
+            deck.Select(1);
+            deck.EmitSignal(OptionButton.SignalName.ItemSelected, 1);
+            Check(UserSettings.Current is { Quality: "deck", Scale3D: 0.75f, MaxFps: 60 } && ((OptionButton)l.Settings.Controls["scale"]).GetItemText(((OptionButton)l.Settings.Controls["scale"]).Selected) == "75 %",
+                $"the Deck preset sets its values and the controls show them ({UserSettings.Current})");
+            ((Button)l.Settings.Controls["defaults"]).EmitSignal(BaseButton.SignalName.Pressed);
+            Engine.MaxFps = 0;
+
+            // the cache
             Check(l.CacheBytes() == 3000 && l.CacheLabel.Text.Contains("2.9 KB"), $"the cache: \"{l.CacheLabel.Text}\"");
             // only a safe folder is cleared
             var home = System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile);
@@ -192,7 +221,7 @@ public partial class LauncherSelfTest : Node
         }
         var pass = _fails.Count == 0;
         GD.Print(pass
-            ? "ffx selftest: PASS (launcher: game folder checked and remembered, packs disabled and reordered in load_order.txt, language, cache cleared, handed over to main.tscn with the packs mounted)"
+            ? "ffx selftest: PASS (launcher: game folder checked and remembered, packs disabled and reordered in load_order.txt, language shown and written, settings applied and saved, cache cleared, handed over to main.tscn with the packs mounted)"
             : $"ffx selftest: FAIL ({string.Join("; ", _fails)})");
         GameHost.Instance?.Game?.Stop();
         GetTree().Quit(pass ? 0 : 1);

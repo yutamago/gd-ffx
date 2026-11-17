@@ -15,7 +15,7 @@ a remade character on a classic map, or the other way round.
 | `ui` | later | | |
 
 A map's level and its last part are the same id (`bsil00`). The overlay
-(F1) shows the level and each character's model name; `ffx-import devsaves`
+(F12) shows the level and each character's model name; `ffx-import devsaves`
 lists the developers' saves with their maps.
 
 ## Registering

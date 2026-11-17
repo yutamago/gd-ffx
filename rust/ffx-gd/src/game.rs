@@ -95,6 +95,9 @@ impl Run {
 struct Boot {
     exe: PathBuf,
     documents: PathBuf,
+    /// The game's speed on the real clock at the boot (`set_speed` before
+    /// `start`), 1 for the game's own pace.
+    speed: f64,
 }
 
 fn run_game(
@@ -113,6 +116,8 @@ fn run_game(
         // Godot shows its own picture; the start-up logos are Iggy's
         // (without Ruffle they would never end)
         skip_opening: true,
+        // the debugging speed (`set_speed`, `--speed=`): only when not 1
+        speed: ((boot.speed - 1.0).abs() > f64::EPSILON).then_some(boot.speed),
         ..ffx_host::Options::default()
     };
     let mut exec = match ffx_host::boot_opts(&boot.exe, ffx_host::ports::table(), &opts) {
@@ -158,6 +163,9 @@ pub struct FfxGame {
     /// The snapshot pair `snapshots_held` handed out last, kept (and with
     /// it the addresses it gave) until the next call.
     snaps_held: Option<crate::snapshots::Encoded>,
+    /// The game's speed (`set_speed`): given to the boot, then to the
+    /// running game's clock.
+    speed: f64,
 }
 
 #[godot_api]
@@ -171,6 +179,7 @@ impl INode for FfxGame {
             results: Arc::default(),
             fx_held: Vec::new(),
             snaps_held: None,
+            speed: 1.0,
         }
     }
 
@@ -320,7 +329,11 @@ impl FfxGame {
         }
         let shared = Arc::new(Mutex::new(None));
         let outcome = Arc::new(Mutex::new(None));
-        let boot = Boot { exe, documents };
+        let boot = Boot {
+            exe,
+            documents,
+            speed: self.speed,
+        };
         let thread = {
             let (shared, outcome) = (Arc::clone(&shared), Arc::clone(&outcome));
             let bridge = Arc::clone(&bridge);
@@ -779,6 +792,17 @@ impl FfxGame {
             .map_or_else(GString::new, |s| GString::from(s.as_str()))
     }
 
+    /// Line `index` of the localisation kit in `language` as UTF-8 (the
+    /// Flash pages' and tips' lines: the Esc menu's entries, the boosters'
+    /// tips); empty without the archive.
+    #[func]
+    fn loc_text_utf8(&self, index: i64, language: GString) -> GString {
+        u32::try_from(index)
+            .ok()
+            .and_then(|i| classic().loc_text_utf8(&language.to_string(), i))
+            .map_or_else(GString::new, |s| GString::from(s.as_str()))
+    }
+
     /// Asks the game to start a battle (`field` the battle field's record,
     /// its `group` and `formation`) as a random encounter would; refused
     /// while one runs. `request_results` reports it.
@@ -856,6 +880,37 @@ impl FfxGame {
         };
         run.bridge.key(scan, event.is_pressed());
         true
+    }
+
+    /// Sets the game's speed on the real clock, for debugging (ffx-host's
+    /// `Clock::set_speed`, docs/host.md "Game speed" in ffx-rust): game
+    /// time and the updates run `speed` times as fast (clamped to 0.25 ..
+    /// 8; not a number: 1). Before `start` it is passed to the boot
+    /// (`Options::speed`); while the game runs it changes at once, game
+    /// time going on from where it is. Returns the speed now in use.
+    #[func]
+    fn set_speed(&mut self, speed: f64) -> f64 {
+        let range = ffx_host::clock::SPEEDS;
+        self.speed = if speed.is_nan() {
+            1.0
+        } else {
+            speed.clamp(*range.start(), *range.end())
+        };
+        if let Some(shared) = self.run.as_ref().and_then(Run::shared) {
+            shared.clock.set_speed(self.speed);
+            return shared.clock.speed();
+        }
+        self.speed
+    }
+
+    /// The game's speed (`set_speed`; 1 unless set): the running game's
+    /// clock's, else the one the next `start` boots with.
+    #[func]
+    fn speed(&self) -> f64 {
+        self.run
+            .as_ref()
+            .and_then(Run::shared)
+            .map_or(self.speed, |s| s.clock.speed())
     }
 
     /// A key by its `DirectInput` scan code (tests, on-screen buttons).
