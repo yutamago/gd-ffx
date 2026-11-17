@@ -712,22 +712,6 @@ impl FfxGame {
             .map_or_else(GString::new, |s| GString::from(s.as_str()))
     }
 
-    /// `len` bytes of the game's memory at `address` (a developer's look at
-    /// structures the game-state API does not carry yet; at most 64 KiB, 0
-    /// where not mapped); empty while no game runs.
-    #[func]
-    fn peek(&self, address: i64, len: i64) -> PackedByteArray {
-        let (Ok(at), Ok(n)) = (u32::try_from(address), usize::try_from(len)) else {
-            return PackedByteArray::new();
-        };
-        self.run
-            .as_ref()
-            .and_then(Run::shared)
-            .map_or_else(PackedByteArray::new, |s| {
-                PackedByteArray::from(crate::state::peek(&s, at, n).as_slice())
-            })
-    }
-
     /// A material texture (its path as the model stores it, e.g. from the
     /// glTF's `extras.ffx_textures`), face `face` (0, or 0..6 for a cube
     /// map), as PNG bytes; empty without the archive or such a face.
@@ -901,25 +885,10 @@ impl FfxGame {
             .map_or_else(GString::new, |s| GString::from(s.as_str()))
     }
 
-    /// What names gear `id` (a battle spoil's or an inventory slot's id,
-    /// `MsGetSaveWeapon`'s), read from the game now: its `w_name` record,
-    /// plus its character `<< 16`, plus `1 << 24` with the config's
-    /// hiragana; -1 without a game, for id `0xff` or a record not in use.
-    /// `weapon_name` names it.
-    #[func]
-    fn gear_record(&self, id: i64) -> i64 {
-        let (Some(shared), Ok(id)) = (self.run.as_ref().and_then(Run::shared), u16::try_from(id))
-        else {
-            return -1;
-        };
-        crate::state::gear(&shared, id).map_or(-1, |(name, chr, kana)| {
-            i64::from(name) | i64::from(chr) << 16 | i64::from(kana) << 24
-        })
-    }
-
-    /// The name of a piece of gear (`gear_record`'s value) in `language`
-    /// (`MsWeaponName`: the kernel's `w_name`); empty without the archive
-    /// or such a record.
+    /// The name of a piece of gear (a `w_name` record, its character `<<
+    /// 16` and the config's hiragana `<< 24`: the state API's `GearSpoil`)
+    /// in `language` (`MsWeaponName`: the kernel's `w_name`); empty without
+    /// the archive or such a record.
     #[func]
     fn weapon_name(&self, record: i64, language: GString) -> GString {
         let (Ok(name), Ok(chr)) = (

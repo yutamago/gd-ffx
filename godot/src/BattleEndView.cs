@@ -81,15 +81,6 @@ public partial class BattleEndView : Control
     public static uint Ap(GdFfx.Api.BattleEnd e, int c) =>
         c >= 0 && 4 * c + 4 <= e.Ap.Length ? System.BitConverter.ToUInt32(e.Ap, 4 * c) : 0;
 
-    /// <summary>The gear ids won (<c>BattleEnd.gear</c>: u16 little-endian each).</summary>
-    public static List<ushort> Gear(GdFfx.Api.BattleEnd e)
-    {
-        var ids = new List<ushort>();
-        for (int i = 0; i + 2 <= e.Gear.Length; i += 2)
-            ids.Add(System.BitConverter.ToUInt16(e.Gear, i));
-        return ids;
-    }
-
     public override void _Process(double delta)
     {
         var t0 = Perf.Start();
@@ -163,16 +154,16 @@ public partial class BattleEndView : Control
             }
             spoils.Add($"{n} x{it.Count}");
         }
-        foreach (var g in Gear(e))
+        foreach (var g in e.GearSpoils)
         {
-            var record = host.Game.GearRecord(g);
+            var record = FfxGame.GearRecord(g);
             if (record < 0)
                 continue;
             if (!_gear.TryGetValue((record, lang), out var n))
             {
                 n = MessageView.Clean(host.Game.WeaponName(record, lang));
                 if (n.Length == 0)
-                    n = $"gear 0x{g:x}";
+                    n = $"gear 0x{g.Id:x}";
                 _gear[(record, lang)] = n;
             }
             spoils.Add(n);

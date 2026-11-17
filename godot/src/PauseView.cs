@@ -173,19 +173,18 @@ public partial class PauseView : Control
         (0x2c4, "MAX gil", 0x2c5, "Get max gil."),
     ];
 
-    /// <summary><c>FFEscMenu_onParameterButtonClicked</c>'s refusal (<c>0x00b4c52c</c>, English in every language), read from the game.</summary>
-    private string NotAvailable(FfxGame? game)
+    /// <summary>
+    /// <c>FFEscMenu_onParameterButtonClicked</c>'s refusal as the game shows it (English in every
+    /// language): its <c>showPopUpStd(text)</c> on <c>escmenu.swf</c>, taken from the movie's calls
+    /// (<see cref="FlashScreens.EscMessage"/>; the calls the game made before its update's count
+    /// reached are taken first).
+    /// </summary>
+    private static string NotAvailable(FfxGame? game)
     {
-        if (_notAvailable == null && game != null)
-        {
-            var b = game.Peek(0x00b4c52c, 40);
-            int n = System.Array.IndexOf(b, (byte)0);
-            _notAvailable = n > 0 ? System.Text.Encoding.ASCII.GetString(b, 0, n) : "";
-        }
-        return _notAvailable is { Length: > 0 } t ? t : "Not available now.";
+        if (game != null)
+            FlashScreens.TakeCalls(game);
+        return FlashScreens.EscMessage is { Length: > 0 } t ? t : "Not available now.";
     }
-
-    private string? _notAvailable;
 
     /// <summary>The rows of a page with whether each can be chosen.</summary>
     private (List<string> Rows, List<bool> Enabled, string Help) Rows(FfxGame? game, Snapshot? s)

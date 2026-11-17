@@ -35,7 +35,6 @@ public partial class FfxGame : RefCounted
         public static readonly StringName esc_button = "esc_button";
         public static readonly StringName esc_popup_answer = "esc_popup_answer";
         public static readonly StringName esc_state = "esc_state";
-        public static readonly StringName gear_record = "gear_record";
         public static readonly StringName grid_node_name = "grid_node_name";
         public static readonly StringName is_running = "is_running";
         public static readonly StringName kernel_name = "kernel_name";
@@ -46,7 +45,6 @@ public partial class FfxGame : RefCounted
         public static readonly StringName map_exits = "map_exits";
         public static readonly StringName mouse_exited = "mouse_exited";
         public static readonly StringName mouse_input = "mouse_input";
-        public static readonly StringName peek = "peek";
         public static readonly StringName set_native_opening = "set_native_opening";
         public static readonly StringName opening_state = "opening_state";
         public static readonly StringName opening_finish = "opening_finish";
@@ -140,11 +138,12 @@ public partial class FfxGame : RefCounted
     public string KernelName(int id, string language) => Node.Call(M.kernel_name, id, language).AsString();
 
     /// <summary>
-    /// What names gear <paramref name="id"/> (a battle spoil's or inventory slot's id,
-    /// <c>MsGetSaveWeapon</c>'s), read from the game now: its <c>w_name</c> record, its character
-    /// <c>&lt;&lt; 16</c> and the config's hiragana <c>&lt;&lt; 24</c>; -1 for none or a record not in use.
+    /// What names a piece of gear (API 13's <c>PartyMember.weapon_gear</c>, the results'
+    /// <c>BattleEnd.gear_spoils</c>): its <c>w_name</c> record, its character <c>&lt;&lt; 16</c> and the
+    /// config's hiragana <c>&lt;&lt; 24</c>, as <see cref="WeaponName"/> takes it; -1 for a record not in use.
     /// </summary>
-    public long GearRecord(int id) => Node.Call(M.gear_record, id).AsInt64();
+    public static long GearRecord(GdFfx.Api.GearSpoil g) =>
+        g.Used ? g.NameId | (long)g.Character << 16 | (g.Kana ? 1L : 0L) << 24 : -1;
 
     /// <summary>A piece of gear's name (<see cref="GearRecord"/>'s value) in <paramref name="language"/>; empty without the archive.</summary>
     public string WeaponName(long record, string language) => Node.Call(M.weapon_name, record, language).AsString();
@@ -226,9 +225,6 @@ public partial class FfxGame : RefCounted
         }
         return (map.AsInt32(), out_);
     }
-
-    /// <summary>A developer's look at <paramref name="len"/> bytes of game memory (read only; empty while no game runs).</summary>
-    public byte[] Peek(long address, int len) => Node.Call(M.peek, address, len).AsByteArray();
 
     // ---- the Flash screens (docs/architecture.md, "The Flash screens") ----------------------
 
