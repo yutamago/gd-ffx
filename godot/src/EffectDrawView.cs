@@ -565,9 +565,10 @@ void fragment() {
     /// Whether a captured vertex colour is one the game never writes: not finite, below 0 or above
     /// 8 (the PS2's colours are 0..0xff, 0..2 here). Some draws index vertices whose colour array
     /// slot holds the allocator's fill (<c>0xcdcdcdcd</c>, -4.3e8 as a float) or stale numbers
-    /// (Besaid village's lens flare, bsvr00 key lo 0xd); under the premultiplied form (colour x
-    /// alpha, both hugely negative) such a triangle came out as a flat white quad: the playtester's
-    /// "white rectangle" of the sun's glare.
+    /// (Besaid village's lens flare, bsvr00 key lo 0xd). ffx-rust (PR 58) found them in the
+    /// arrays the game itself draws, only in collapsed triangles (a repeated index), which are
+    /// dropped first; the only others are the <c>0x40000000</c> full-screen quads, drawn with
+    /// write mask 0 (skipped). This check stays as a guard.
     /// </summary>
     public static bool Unset(Color c) =>
         !(c.R >= -1e-3f && c.R <= 8f && c.G >= -1e-3f && c.G <= 8f && c.B >= -1e-3f && c.B <= 8f && c.A >= -1e-3f && c.A <= 8f);
@@ -719,13 +720,16 @@ void fragment() {
                 geo.Colours.AsSpan(d.First, d.Vertices).CopyTo(surf.Colours.AsSpan(b));
                 geo.Uvs.AsSpan(d.First, d.Vertices).CopyTo(surf.Uvs.AsSpan(b));
                 surf.VertexCount += d.Vertices;
-                // triangle by triangle: one with a vertex out of the draw's range, or (unless
-                // --keep-unset-colours) with a colour no vertex has (Unset), is not drawn
+                // triangle by triangle: one with a vertex out of the draw's range or a repeated
+                // index is not drawn (the fills leave reserved quads collapsed, all indices 0,
+                // over vertices they never colour: ffx-rust's effects-draw.md, "Which arrays the
+                // draw reads"; they draw nothing in the game either); then, as a guard (unless
+                // --keep-unset-colours), one with a colour no vertex has (Unset)
                 bool unset = false;
                 for (int k = 0; k + 2 < d.IndexCount; k += 3)
                 {
                     int i0 = geo.Indices[d.IndexFirst + k], i1 = geo.Indices[d.IndexFirst + k + 1], i2 = geo.Indices[d.IndexFirst + k + 2];
-                    if (i0 >= d.Vertices || i1 >= d.Vertices || i2 >= d.Vertices)
+                    if (i0 >= d.Vertices || i1 >= d.Vertices || i2 >= d.Vertices || i0 == i1 || i1 == i2 || i0 == i2)
                         continue;
                     if (!KeepUnset && (Unset(geo.Colours[d.First + i0]) || Unset(geo.Colours[d.First + i1]) || Unset(geo.Colours[d.First + i2])))
                     {
