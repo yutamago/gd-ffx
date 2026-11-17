@@ -18,6 +18,8 @@ public partial class FfxGame : RefCounted
     /// </summary>
     private static class M
     {
+        public static readonly StringName cloth_address = "cloth_address";
+        public static readonly StringName cloth_held = "cloth_held";
         public static readonly StringName classic_effect_switches = "classic_effect_switches";
         public static readonly StringName classic_finished = "classic_finished";
         public static readonly StringName classic_open = "classic_open";
@@ -163,6 +165,21 @@ public partial class FfxGame : RefCounted
         if (len <= 0)
             return 0;
         var at = Node.Call(M.effect_draws_address).AsInt64();
+        return at == 0 ? 0 : Held.CopyInto(at, len, ref buffer);
+    }
+
+    /// <summary>
+    /// The characters' cloth of the frame that drew <paramref name="update"/> (that update's only),
+    /// encoded (<c>CLTH</c>, ffx-rust's docs/state-api.md "Cloth"), copied into
+    /// <paramref name="buffer"/> as <see cref="EffectDrawsInto"/> does; returns the length, 0 without
+    /// such a frame (not captured yet, or the capture is off: <c>FFX_NO_CLOTH</c>).
+    /// </summary>
+    public int ClothInto(uint update, ref byte[] buffer)
+    {
+        var len = Node.Call(M.cloth_held, update).AsInt64();
+        if (len <= 0)
+            return 0;
+        var at = Node.Call(M.cloth_address).AsInt64();
         return at == 0 ? 0 : Held.CopyInto(at, len, ref buffer);
     }
 

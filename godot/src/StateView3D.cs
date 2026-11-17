@@ -48,6 +48,14 @@ public partial class StateView3D : Node3D
     /// <summary>The map's 2D layers.</summary>
     public MapLayers Layers => _layers;
 
+    private readonly ClothView _cloth = new();
+
+    /// <summary>The characters' simulated hair and cloth.</summary>
+    public ClothView Cloth => _cloth;
+
+    /// <summary>Whether the cloth texture is rebuilt this frame (<see cref="ClothView.Refresh"/>).</summary>
+    private bool _clothRebuild;
+
     /// <summary>Characters drawn with their classic model, and how many of their bones are posed.</summary>
     public (int Models, int PosedBones) Posed { get; private set; }
 
@@ -82,6 +90,8 @@ public partial class StateView3D : Node3D
         /// model (inverted).
         /// </summary>
         public (Node3D Part, int ModelId, Transform3D ParentInv)[] Rigid = [];
+        /// <summary>The model's cloth meshes (null: none; <see cref="ClothView"/>).</summary>
+        public ClothView.Model? Cloth;
     }
 
     public override void _Ready()
@@ -209,6 +219,9 @@ public partial class StateView3D : Node3D
         UpdateObjects(view);
         LookAtObject();
         Perf.End(Perf.Section.Objects, t0);
+        t0 = Perf.Start();
+        _clothRebuild = _cloth.Refresh(host.Game, view);
+        Perf.End(Perf.Section.Cloth, t0);
         t0 = Perf.Start();
         UpdateActors(host.Classic, view);
         UpdateTransition(host.Classic, view.Current);
@@ -797,6 +810,9 @@ public partial class StateView3D : Node3D
         seen.Clear();
         int models = 0, posed = 0, attached = 0, pending = 0, standIns = 0;
         bool showStandIns = StandIns;
+        bool cloth = false, rebuild = _clothRebuild;
+        if (rebuild)
+            _cloth.Begin();
         foreach (var f in view.Actors())
         {
             var a = f.Actor;
@@ -824,6 +840,9 @@ public partial class StateView3D : Node3D
                     AttachModel(n, a.Model, content.Node);
                     attached++;
                 }
+                // its cloth placed in the texture from the next frame on
+                if (n.Cloth != null)
+                    _cloth.Touch();
             }
             n.Root.GlobalTransform = f.Root;
             var hasModel = n.Model != null;
@@ -845,6 +864,17 @@ public partial class StateView3D : Node3D
             {
                 models++;
                 posed += Pose(n, f, view);
+                if (n.Cloth != null)
+                {
+                    cloth = true;
+                    if (rebuild)
+                    {
+                        var tc = Perf.Start();
+                        _cloth.Place(a.Slot, n.ModelName, n.Cloth, GameStateView.FieldTransform(a.World),
+                            f.Previous is { } fp ? GameStateView.FieldTransform(fp.World) : null);
+                        Perf.End(Perf.Section.Cloth, tc);
+                    }
+                }
             }
             else if (standIn)
             {
@@ -866,6 +896,13 @@ public partial class StateView3D : Node3D
                     _actors.Remove(slot);
                 }
         }
+        if (rebuild)
+        {
+            var tc = Perf.Start();
+            _cloth.Upload();
+            Perf.End(Perf.Section.Cloth, tc);
+        }
+        _cloth.Wanted = cloth;
         Posed = (models, posed);
         ModelsPending = pending;
         StandInsDrawn = standIns;
@@ -914,6 +951,8 @@ public partial class StateView3D : Node3D
         n.SkeletonInModelInv = t.AffineInverse();
         n.AllBones = AllBones(skel);
         n.Globals = new Transform3D[skel.GetBoneCount()];
+        // the game's cloth moves its hair and clothes (ClothView)
+        n.Cloth = ClothView.Of(model);
     }
 
     /// <summary>

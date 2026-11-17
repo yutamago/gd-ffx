@@ -167,6 +167,8 @@ public sealed class ClassicLibrary
         {
             MarkMeshes(state, extras);
             ClassicMaterials.Apply(state, extras, scene, texDir);
+            // a character's cloth surfaces: their own materials, moved by the game's cloth (ClothView)
+            ClothView.Prepare(state, extras, scene);
         }
         return scene;
     }
