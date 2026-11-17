@@ -37,13 +37,20 @@ public partial class MessageView : Control
     /// <summary>The texts shown now (for tests).</summary>
     public List<string> Shown { get; } = new();
 
+    /// <summary>
+    /// The text's size on the 1280 x 720 canvas (project.godot's stretch mode scales the canvas
+    /// with the window's height, the 16:9 picture kept with bars): 24, the game's ~36 px glyph at
+    /// 1080 lines.
+    /// </summary>
+    public const int FontSize = 24;
+
     public override void _Ready()
     {
         SetAnchorsPreset(LayoutPreset.FullRect);
         MouseFilter = MouseFilterEnum.Ignore;
         // the system font found and loaded now, with the scene, not at the first message (a
         // 20 to 45 ms frame)
-        Font.GetStringSize("Ag", HorizontalAlignment.Left, -1, 22);
+        Font.GetStringSize("Ag", HorizontalAlignment.Left, -1, FontSize);
     }
 
     /// <summary>The ffx-text code of the API's language number (<c>TOGetFFXLang</c>).</summary>
@@ -120,7 +127,7 @@ public partial class MessageView : Control
             });
             var label = new Label();
             label.AddThemeFontOverride("font", Font);
-            label.AddThemeFontSizeOverride("font_size", 22);
+            label.AddThemeFontSizeOverride("font_size", FontSize);
             label.AddThemeColorOverride("font_shadow_color", new Color(0, 0, 0, 0.8f));
             panel.AddChild(label);
             AddChild(panel);
