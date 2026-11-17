@@ -205,9 +205,11 @@ docs/remaster-editor.md, "Lighting" to "The colour check"):
   yellow sand, half the baked vertex light dropped, AgX, and the refraction
   sea losing its colour under the linear output. Now (Besaid, the defaults):
   Forward+ on lavapipe lightness +0.007, chroma x0.88, hue 2.0° (PBR
-  materials: +0.003, x0.87, 2.1°); Compatibility +0.040, x0.93, 3.5°. On the
-  GPU (D3D12, Intel Arc 140T) the remastered view lost the device in both
-  runs (classic scores 8.9 as on main): no GPU numbers yet (open below).
+  materials: +0.003, x0.87, 2.1°); Compatibility +0.040, x0.93, 3.5°; the
+  GPU (D3D12, Intel Arc 140T) +0.006, x0.89, 2.0° (PBR: +0.000, x0.87,
+  2.1°), classic scoring 8.9 as on main. SSAO lost the D3D12 device there
+  (Vulkan draws it): off under D3D12 (docs/remaster-editor.md, "SSAO and
+  D3D12").
 - **The game's lighting as editable objects**: `MapLighting`
   (`lighting.tres` beside the overrides; text, stable, layered per file):
   the key light, the ambient, the fog as the game's look gives them (or
@@ -242,10 +244,8 @@ docs/remaster-editor.md, "Lighting" to "The colour check"):
 
 Open after R3:
 
-- **the GPU**: the remastered view lost the D3D12 device (Intel Arc 140T)
-  a few frames after the switch, with soft shadows and SSAO, then with SSAO
-  alone; both are off by default now, unverified on the GPU; the colour
-  check's GPU numbers are still to be taken;
+- SSAO under D3D12 (it lost the device on the Intel Arc 140T; off there,
+  Vulkan draws it): check again after a Godot upgrade, and on other GPUs;
 - LightmapGI (lightmap UVs for the maps: an importer step);
 - the shore: the game's painted layers blend in gamma; they stay classic by
   default, and Besaid's lagoon is still paler than the classic one;

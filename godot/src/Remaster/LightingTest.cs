@@ -402,7 +402,8 @@ public sealed class LightingTest : ITest
             bool fwd = UserSettings.ForwardPlus();
             var gi = view.Rig.Now.Gi;
             // the file asks for VoxelGI: kept at medium and high
-            if ((gi != GiMode.None) != (fwd && q != "low") || env.VolumetricFogEnabled != (fwd && q != "low") || env.SsaoEnabled != (fwd && q != "low"))
+            if ((gi != GiMode.None) != (fwd && q != "low") || env.VolumetricFogEnabled != (fwd && q != "low")
+                || env.SsaoEnabled != (fwd && q != "low" && !RemasterLighting.SsaoUnsafe))
                 return $"lighting {q}: GI {gi}, volumetric fog {env.VolumetricFogEnabled}, SSAO {env.SsaoEnabled}";
             _seen.Add($"lighting {q}: GI {gi}, volumetric fog {(env.VolumetricFogEnabled ? "on" : "off")}, SSAO {(env.SsaoEnabled ? "on" : "off")}, "
                 + $"shadows {view.Rig.Sun.DirectionalShadowMode} to {view.Rig.Sun.DirectionalShadowMaxDistance:0}");

@@ -476,8 +476,13 @@ public sealed partial class RemasterLighting : Node3D
         e.FogMode = Environment.FogModeEnum.Depth;
         e.FogSkyAffect = 0f;
         e.FogAerialPerspective = 0f;
-        // Forward+ only (Compatibility draws none: left off there)
-        e.SsaoEnabled = fwd && m.ScreenSsao && q != "low";
+        // Forward+ only (Compatibility draws none: left off there); never on D3D12 (SsaoUnsafe)
+        if (fwd && m.ScreenSsao && q != "low" && SsaoUnsafe && !_ssaoSaid)
+        {
+            _ssaoSaid = true;
+            GD.Print("ffx: remaster lighting: SSAO off on D3D12 (it loses the device there; Vulkan draws it: --rendering-driver vulkan)");
+        }
+        e.SsaoEnabled = fwd && m.ScreenSsao && q != "low" && !SsaoUnsafe;
         e.SsaoRadius = m.ScreenSsaoRadius;
         e.SsaoIntensity = m.ScreenSsaoIntensity;
         e.SsilEnabled = fwd && m.ScreenSsil && q == "high";
@@ -515,6 +520,17 @@ public sealed partial class RemasterLighting : Node3D
             SetClassicSky(_map, !m.SkyHideClassic);
         RenderingServer.GlobalShaderParameterSet(Variants.Name("ffx_vertex_light"), Mathf.Clamp(m.VertexLight, 0, 1));
     }
+
+    /// <summary>
+    /// Whether SSAO must stay off: under D3D12 Godot 4.7's SSAO lost the device (<c>0x887a0005</c>)
+    /// on the Windows export (Intel Arc 140T, 2026-11-18) a second after it was turned on, unless
+    /// VoxelGI and volumetric fog were on too; the same GPU under Vulkan draws it in every case.
+    /// So no SSAO on D3D12 (any GPU: a lost device ends the game) until a Godot upgrade is checked.
+    /// </summary>
+    public static bool SsaoUnsafe => _ssaoUnsafe ??= RenderingServer.GetCurrentRenderingDriverName() == "d3d12";
+
+    private static bool? _ssaoUnsafe;
+    private static bool _ssaoSaid;
 
     private ResolvedLighting? _applied;
 

@@ -500,18 +500,24 @@ Measured on Besaid beach (developer save 7, the defaults, 2026-11-17):
 |---|---|---|
 | Forward+, Vulkan on lavapipe (Xvfb) | lightness +0.007, chroma x0.88, hue 2.0°; cells 0.022, 1.7° | +0.003, x0.87, 2.1°; cells 0.034, 2.9° |
 | Compatibility (Xvfb) | +0.040, x0.93, 3.5°; cells 0.040, 2.1° | within the limits |
-| Forward+, D3D12 (Intel Arc 140T, the Windows export) | not measured: the device was lost | |
+| Forward+, D3D12 (Intel Arc 140T, the Windows export) | +0.006, x0.89, 2.0°; cells 0.022, 1.7° | +0.000, x0.87, 2.1°; cells 0.034, 3.0° |
 
-The GPU check (`tools/compare-shot-win.sh`, two runs): the classic picture
-scores 8.9 against the original's, as on main; the remastered view did not
-draw. A few frames after the map switched to remastered the D3D12 device was
-lost (`0x887a0005`, device removed), in both runs: the first with the sun's
-soft shadows (PCSS at 1.5°) and the shadow atlas set at run time, the second
-without them, SSAO still on. A remastered picture identical to the classic
-one (a frame not drawn) now fails the colour check (it passed the second
-run's script once, falsely). SSAO is off by default since; whether that
-was the cause is not verified on the GPU (R8: the remastered features one at
-a time on the GPU).
+The GPU check (`tools/compare-shot-win.sh` with `--selftest-lighting`): the
+classic picture scores 8.9 against the original's, as on main; the whole check
+passes on D3D12 and on Vulkan (the defaults, PBR materials, the lighting file
+with volumetric fog, VoxelGI and a volume, the three qualities, F7).
+
+**SSAO and D3D12.** Under D3D12, Godot 4.7's SSAO lost the device
+(`0x887a0005`, device removed) about a second after it was turned on, on the
+Windows export with an Intel Arc 140T (2026-11-18): the defaults plus SSAO
+alone lose it; with VoxelGI and volumetric fog on as well they do not. The
+same GPU under Vulkan draws SSAO in every case. So the rig never turns SSAO
+on under D3D12 (`RemasterLighting.SsaoUnsafe`, any GPU, said once in the
+log); start with `--rendering-driver vulkan` to have it. Check again after a
+Godot upgrade (`--lighting-variants` with `{"ScreenSsao": true}` on the GPU).
+The same goes for a `WorldEnvironment` with SSAO in a map's additions: the
+rig does not guard those. A remastered picture identical to the classic one (a
+frame not drawn, as a lost device leaves) fails the colour check.
 
 ## Your work and git
 
