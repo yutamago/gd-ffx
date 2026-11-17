@@ -563,6 +563,32 @@ impl FfxGame {
             .collect()
     }
 
+    /// Map number `map`'s likely level and its exits, for loading the next
+    /// map ahead (docs/architecture.md, "Map transitions"): `ready` (false
+    /// while they are read in the background: ask again), `level` (the
+    /// level its event most likely shows, empty when not known), `maps`
+    /// and `levels` (the maps its event script jumps to with constant
+    /// arguments, and theirs).
+    #[func]
+    fn map_exits(&self, map: i64) -> VarDictionary {
+        let x = u16::try_from(map).ok().and_then(|m| classic().map_exits(m));
+        let Some(x) = x else {
+            return vdict! { "ready" => false };
+        };
+        let maps: PackedInt32Array = x.exits.iter().map(|&(m, _)| i32::from(m)).collect();
+        let levels: PackedStringArray = x
+            .exits
+            .iter()
+            .map(|(_, l)| GString::from(l.as_str()))
+            .collect();
+        vdict! {
+            "ready" => true,
+            "level" => x.level.as_str(),
+            "maps" => &maps,
+            "levels" => &levels,
+        }
+    }
+
     /// The game's encoded text (a message window's) as text, in
     /// `language`'s character set (`us`, `jp`, `de`...). Empty without the
     /// archive (`classic_open`).

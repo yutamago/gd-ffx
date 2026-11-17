@@ -36,6 +36,7 @@ public partial class FfxGame : RefCounted
         public static readonly StringName last_error = "last_error";
         public static readonly StringName loc_text = "loc_text";
         public static readonly StringName loc_text_utf8 = "loc_text_utf8";
+        public static readonly StringName map_exits = "map_exits";
         public static readonly StringName mouse_exited = "mouse_exited";
         public static readonly StringName mouse_input = "mouse_input";
         public static readonly StringName peek = "peek";
@@ -173,6 +174,24 @@ public partial class FfxGame : RefCounted
     /// </summary>
     /// <remarks>Its variant is disposed here; the caller disposes the dictionary (each is finalizable otherwise: <see cref="Variants"/>).</remarks>
     public Dictionary SnapshotsHeld() => Variants.CallDictionary(Node, M.snapshots_held);
+
+    /// <summary>
+    /// Map number <paramref name="map"/>'s likely level and its exits (the extension's
+    /// <c>map_exits</c>: its event from <c>eventid.bin</c>, the maps its event script jumps to
+    /// with constant arguments; docs/architecture.md, "Map transitions"): null while they are
+    /// read in the background (ask again) and without the archive.
+    /// </summary>
+    public (string Level, int[] Maps, string[] Levels)? MapExits(int map)
+    {
+        using var v = Node.Call(M.map_exits, map);
+        using var d = v.AsGodotDictionary();
+        if (!Variants.Get(d, "ready").AsBool())
+            return null;
+        using var maps = Variants.Get(d, "maps");
+        using var levels = Variants.Get(d, "levels");
+        using var level = Variants.Get(d, "level");
+        return (level.AsString(), maps.AsInt32Array(), levels.AsStringArray());
+    }
 
     /// <summary>A texture by the name the game holds at run time (an effect draw's) as PNG bytes; empty when not in the archive.</summary>
     public byte[] RuntimeTexture(string name) => Node.Call(M.runtime_texture, name).AsByteArray();

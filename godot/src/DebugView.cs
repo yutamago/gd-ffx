@@ -348,8 +348,13 @@ public sealed class SelfTest(double timeout) : ITest
 /// of its level and the player's classic model come up, posed by the game's
 /// skeleton (with <c>--shot=FILE.png</c> and a renderer, a picture of it);
 /// then the player walks down and left, as the original's replay does, off
-/// the beach to the next map (0x14, <c>bsil0200</c>). With <c>--check-autosave</c>, then
-/// the autosave the game writes there, read back as the load list's first row.
+/// the beach to the next map (0x14, <c>bsil0200</c>). The map change is held until the new
+/// map and its characters are ready (docs/architecture.md, "Map transitions"): no frame shows
+/// characters over another map than theirs or a stand-in, the hold ends with the next map
+/// shown, and its timing is reported (<c>--transition-shots=DIR</c> under a renderer: a picture
+/// every 50 ms from the map change request to half a second after). With
+/// <c>--check-autosave</c>, then the autosave the game writes there, read back as the load
+/// list's first row.
 /// </summary>
 public sealed class BesaidTest(double timeout, string? shot) : ITest
 {
@@ -381,6 +386,29 @@ public sealed class BesaidTest(double timeout, string? shot) : ITest
     private double _total;
     private string _seen = "";
     private Vector3 _start;
+    // the map change's frames: (leaked, stand-ins, held) at the walk's start; pictures taken
+    private (int Leaked, int StandIns, int Held) _framesAtWalk;
+    private int _transitionShots;
+    private double _transitionShotAt = -1, _releasedAt = -1;
+
+    /// <summary><c>--transition-shots=DIR</c>: a picture every 50 ms from the map change request until half a second after the hold.</summary>
+    private void TransitionShots(StateView3D? view, GameStateView v)
+    {
+        if (GameSettings.Arg("transition-shots") is not { Length: > 0 } dir || DisplayServer.GetName() == "headless" || view == null)
+            return;
+        if (_transitionShotAt < 0 && v.Current?.World.MapChange != true && !view.InTransition)
+            return;
+        if (!view.InTransition && v.Current?.World.MapChange != true && _transitionShotAt >= 0 && _releasedAt < 0)
+            _releasedAt = _total;
+        if (_releasedAt >= 0 && _total - _releasedAt > 0.5 || _transitionShots >= 200)
+            return;
+        if (_transitionShotAt >= 0 && _total - _transitionShotAt < 0.05)
+            return;
+        _transitionShotAt = _total;
+        System.IO.Directory.CreateDirectory(dir);
+        var file = System.IO.Path.Combine(dir, $"transition-{_transitionShots++:000}{(view.Holding ? "-held" : view.InTransition ? "-changing" : "")}.png");
+        (Engine.GetMainLoop() as SceneTree)!.Root.GetViewport().GetTexture().GetImage().SavePng(file);
+    }
     // an autosave counts only when written by this run (the sandbox keeps earlier runs' files)
     private readonly System.DateTime _began = System.DateTime.UtcNow;
     private Vector3 _last;
@@ -453,6 +481,7 @@ public sealed class BesaidTest(double timeout, string? shot) : ITest
             }
             case Phase.Classic:
                 _start = Player(v);
+                _framesAtWalk = view?.Frames ?? default;
                 if (!GameSettings.Flag("no-walk"))
                     Keys(true);
                 Next(Phase.Walk);
@@ -468,11 +497,27 @@ public sealed class BesaidTest(double timeout, string? shot) : ITest
                 Next(Phase.Fade);
                 break;
             }
-            // the screen filters for 4 s more (the map change's fades)
+            // the screen filters for 4 s more (the map change's fades), and until the map change is shown
             case Phase.Fade:
+            {
                 WatchFilters();
-                if (_phaseTime < 4)
+                TransitionShots(view, v);
+                int at = view?.Transitions.FindIndex(t => t.From == "/map/bsil/bsil00/" && t.To != t.From) ?? -1;
+                if (_phaseTime < 4 || (at < 0 && _phaseTime < 20))
                     break;
+                if (at < 0)
+                    return Done(false, $"no map change shown 20 s after map {MapNext:x} ({_seen})");
+                var tr = view!.Transitions[at];
+                var f = view.Frames;
+                var (leaked, standIns, held) = (f.Leaked - _framesAtWalk.Leaked, f.StandIns - _framesAtWalk.StandIns, f.Held - _framesAtWalk.Held);
+                _seen += $"; the map change {tr}; frames held {held}, with characters over another map {leaked}, with stand-ins {standIns}"
+                    + $"; loaded ahead: {string.Join(" ", view.Prefetch.Candidates)}";
+                if (leaked > 0 || standIns > 0)
+                    return Done(false, $"{leaked} frame(s) showed characters over another map than theirs, {standIns} stand-ins ({_seen})");
+                if (held == 0 && !GameSettings.Flag("no-hold"))
+                    return Done(false, $"the map change was not held ({_seen})");
+                if (tr.TimedOut)
+                    return Done(false, $"the map change's hold gave up waiting ({_seen})");
                 _seen += $"; the filters: modes {string.Join(",", _fadeModes.Order())}, highest alpha {_fadeMost:F3}, "
                     + $"{_fadeBlack} frames fully black; {EffectDrawView.FadeFrames - _fadeEvents} frames with a screen fade event";
                 // a fade to black is fully black once it holds (Sg_DrawFilter's mode 3)
@@ -482,6 +527,7 @@ public sealed class BesaidTest(double timeout, string? shot) : ITest
                     return Done(true, _seen);
                 Next(Phase.AutoSave);
                 break;
+            }
             // --check-autosave: the game writes ffx_000 on entering the map; the load list
             // reads it back as its first row, the header as the game's own state
             case Phase.AutoSave:
@@ -505,6 +551,7 @@ public sealed class BesaidTest(double timeout, string? shot) : ITest
                 if (v.Current?.World.Map == MapBeach)
                     _last = Player(v);
                 WatchFilters();
+                TransitionShots(view, v);
                 if (_phaseTime > 60)
                 {
                     Keys(false);
@@ -719,6 +766,9 @@ public sealed class MessageTest(double timeout, string? shot) : ITest
 /// targets, effect 50001800 by the example remade effect (registered at the start)
 /// (with <c>--shot=FILE.png</c> under a renderer, a picture). With <c>--to-results</c> it
 /// attacks on until the battle is won and reports the results screen (<see cref="BattleEndView"/>).
+/// Every hit pops a number: the check counts the hits from the snapshots itself (an HP change,
+/// a monster leaving the list with HP left: its killing blow) and fails when the HUD popped
+/// another count, or (with <c>--to-results</c>) no kill popped.
 /// </summary>
 public sealed class BattleTest : ITest
 {
@@ -749,11 +799,52 @@ public sealed class BattleTest : ITest
 
     public string Note { get; private set; } = "";
 
+    // the hits seen in the snapshots (each should pop a number), the monsters' among them, the kills
+    private readonly System.Collections.Generic.Dictionary<int, int> _hp = new();
+    private int _hits, _monsterHits, _kills;
+    private uint _hitsOf;
+
+    private void CountHits(GdFfx.Api.Snapshot? c)
+    {
+        if (c == null || !c.World.Battle || c.Update == _hitsOf)
+            return;
+        _hitsOf = c.Update;
+        var present = new System.Collections.Generic.HashSet<int>();
+        foreach (var b in c.Battlers)
+        {
+            present.Add(b.Index);
+            if (_hp.TryGetValue(b.Index, out var was) && was != b.Hp && BattleHudView.ActorOf(c, b.Index) != null)
+            {
+                _hits++;
+                if (b.Index >= BattleHudView.FirstMonster)
+                    _monsterHits++;
+            }
+            _hp[b.Index] = b.Hp;
+        }
+        foreach (var index in _hp.Keys.ToList())
+            if (!present.Contains(index))
+            {
+                if (_hp[index] > 0 && BattleHudView.ActorOf(c, index) != null)
+                {
+                    _hits++;
+                    _kills++;
+                    if (index >= BattleHudView.FirstMonster)
+                        _monsterHits++;
+                }
+                _hp.Remove(index);
+            }
+    }
+
+    /// <summary>The pops against the hits (null when they agree).</summary>
+    private string? PopsMismatch(BattleHudView? hud) =>
+        hud == null || hud.Popped != _hits ? $"{hud?.Popped} damage numbers popped for {_hits} hits ({_kills} kills)" : null;
+
     public bool? Step(FfxGame game, GameState s, GameStateView v, double delta)
     {
         _total += delta;
         if (!s.Running && s.Seconds > 1)
             return Done(false, $"the game ended: {s.Outcome}");
+        CountHits(v.Current);
         var root = (Engine.GetMainLoop() as SceneTree)?.Root;
         var menu = root?.FindChild("BattleMenuView", true, false) as BattleMenuView;
         var view3d = root?.FindChild("StateView3D", true, false) as StateView3D;
@@ -763,7 +854,11 @@ public sealed class BattleTest : ITest
             return Done(false, $"timed out: battle {c?.World.Battle}, level {c?.World.Level}, map shown {view3d?.MapLevel}, "
                 + $"models {view3d?.Posed.Models}, menu [{string.Join(", ", menu?.Shown ?? [])}]");
         if (_attacked.Length > 0 && c != null)
+        {
+            if (PopsMismatch(hud) is { } off)
+                return Done(false, $"{off}; {_attacked}");
             return Results(c, root, delta);
+        }
         if (_first.Length > 0 && c != null && menu != null)
             Target(c, menu, root);
         if (c == null || menu == null || view3d == null || hud == null || !c.World.Battle || (menu.Shown.Count < 2 && _first.Length == 0)
@@ -786,10 +881,13 @@ public sealed class BattleTest : ITest
         }
         var effects = root?.FindChild("EffectView", true, false) as EffectView;
         // Attack: confirm (Enter) tapped until a damage number pops
-        // the target chosen (the selection seen, then closed by the confirm), and a damage number
-        if (_target.Length > 0 && _targetClosed && hud.Popped > 0)
+        if (PopsMismatch(hud) is { } wrong)
+            return Done(false, $"{wrong}; {_first}");
+        // the target chosen (the selection seen, then closed by the confirm), and the attack's
+        // damage number (a monster's HP or its kill)
+        if (_target.Length > 0 && _targetClosed && _monsterHits > 0)
         {
-            var attacked = $"{_first}; {_target}; {hud.Popped} damage number(s) popped; {effects?.Started ?? 0} effect(s) started "
+            var attacked = $"{_first}; {_target}; {hud.Popped} damage number(s) popped for {_hits} hits; {effects?.Started ?? 0} effect(s) started "
                 + $"({effects?.RemadeStarted ?? 0} remade as {RemadeId}); effect draws by pass [{string.Join(", ", EffectDrawView.PassDraws)}], "
                 + $"{EffectDrawView.FadeFrames} frame(s) with a screen fade";
             if (!GameSettings.Flag("to-results"))
@@ -927,8 +1025,10 @@ public sealed class BattleTest : ITest
         if (_down)
             Tap(false);
         uint ap = TotalAp(e);
-        bool pass = _apView.Length > 0 && _gilAt >= 0 && _stateChanged;
-        return Done(pass, $"{_attacked}; the results screen: {_resultsFirst}; the AP counted: {_apView}; the gil paid: {_gilView} "
+        var hud = root?.FindChild("BattleHudView", true, false) as BattleHudView;
+        bool pass = _apView.Length > 0 && _gilAt >= 0 && _stateChanged && _kills > 0 && PopsMismatch(hud) == null;
+        return Done(pass, $"{_attacked}; the battle's damage numbers: {hud?.Popped} popped for {_hits} hits, "
+            + $"{hud?.PoppedKills} of them killing blows ({_kills} kills); the results screen: {_resultsFirst}; the AP counted: {_apView}; the gil paid: {_gilView} "
             + $"(states {string.Join(" ", _states.Select(x => $"0x{x:x}"))}; AP left {_firstAp} -> {ap}, gil left {_firstGilLeft} -> 0, party gil {_firstGil} -> {c.Save.Gil}, "
             + $"most AP shown {view?.MostAp}, level-up flash frames {view?.Flashes}, state changed {_stateChanged})");
     }

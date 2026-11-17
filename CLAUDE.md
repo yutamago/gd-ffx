@@ -40,11 +40,11 @@ tools/build-extension.sh [linux|windows] [build|clippy|test]
 FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/selftest.sh    # headless check (opening, snapshots, Start)
 FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/bench.sh [besaid besaid-walk lchb battle]  # G5: frame times, views' CPU, GC, hitches (docs/running.md "Benchmark")
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-besaid --check-autosave --devsave=7)  # G4: a real autosave read back by the save list
-(cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-besaid --devsave=7)   # G2 check
+(cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-besaid --devsave=7)   # G2 check; G5: the walk's map change held, no stand-ins (--transition-shots=DIR under Xvfb)
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-remake --devsave=7)  # G6: a remade c001 posed by the game
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-remake-map --devsave=7)  # G6: the remade Besaid beach example
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-menu --devsave=7)        # G4: the field menu panel (party, gil, time), then Items (--menu-screen=status|abilities|overdrive|sphere-grid|config)
-(cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-battle --devsave=7 --battle=3,0,0)  # G3/G4: battle, HUD, attack, effects (--to-results: on to the results screen)
+(cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-battle --devsave=7 --battle=3,0,0)  # G3/G4: battle, HUD, attack, effects, a damage number per hit (--to-results: on to the results screen)
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-ux --devsave=7)   # G5: choice cursor, ESC menu + options, game speed, F1/F3 boosters, pause
 FFX_GAME_DIR=... tools/ux-shots.sh OUT_DIR                 # G5: offscreen pictures of the native screens (Xvfb)
 (cd godot && godot --headless --path . -- --selftest-saves --no-game)  # G4: the save list reader (no game)

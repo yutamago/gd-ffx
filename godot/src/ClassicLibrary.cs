@@ -18,6 +18,7 @@ public sealed class ClassicLibrary
     private readonly FfxGame _game;
     private readonly Dictionary<(string Kind, string Name), string> _paths = new();
     private readonly Dictionary<(string Kind, string Name), string> _errors = new();
+    private readonly HashSet<(string, string)> _quiet = new();
     private readonly HashSet<(string Kind, string Name)> _asked = new();
     /// <summary>The imports asked for and not finished yet: <see cref="Poll"/> asks the extension only while there are some.</summary>
     private readonly HashSet<(string Kind, string Name)> _pending = new();
@@ -104,18 +105,27 @@ public sealed class ClassicLibrary
             {
                 _errors[key] = d["error"].AsString();
                 // "none: ..." is no fault: a map of 2D layers only has no 3D model, most maps no 2D layers
-                if (!_errors[key].StartsWith("none: ", System.StringComparison.Ordinal))
+                if (!_errors[key].StartsWith("none: ", System.StringComparison.Ordinal) && !_quiet.Contains(key))
                     GD.PrintErr($"ffx: classic {key.Item1} {key.Item2}: {_errors[key]}");
             }
         }
     }
 
-    /// <summary>The .glb of <paramref name="name"/> when it is imported; asks for it otherwise.</summary>
-    public string? Path(string kind, string name)
+    /// <summary>
+    /// The .glb of <paramref name="name"/> when it is imported; asks for it otherwise.
+    /// <paramref name="quiet"/>: a guess (the next map loaded ahead, MapPrefetch), whose failure
+    /// is no fault and is not logged (exits to the developers' test maps the retail archive
+    /// lacks); asked for again without it, a failure is logged then.
+    /// </summary>
+    public string? Path(string kind, string name, bool quiet = false)
     {
         var key = (kind, name);
         if (_paths.TryGetValue(key, out var p))
             return p;
+        if (quiet)
+            _quiet.Add(key);
+        else if (_quiet.Remove(key) && _errors.TryGetValue(key, out var why) && !why.StartsWith("none: ", System.StringComparison.Ordinal))
+            GD.PrintErr($"ffx: classic {kind} {name}: {why}");
         if (Open && !_errors.ContainsKey(key) && _asked.Add(key) && _game.ClassicRequest(kind, name))
             _pending.Add(key);
         return null;

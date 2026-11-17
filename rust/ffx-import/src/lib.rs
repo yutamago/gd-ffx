@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 
 pub mod effect;
+pub mod exits;
 pub mod morph;
 
 /// The version of what the importer writes into a `.glb`
@@ -140,6 +141,8 @@ pub struct Importer {
     lockit: std::sync::Mutex<HashMap<String, Option<std::sync::Arc<Vec<u8>>>>>,
     /// Effect variants read so far ([`effect::variant_extras`]), by import id.
     effects: std::sync::Mutex<HashMap<String, Option<Value>>>,
+    /// The event names by map number ([`exits::event_names`]), read once.
+    events: std::sync::OnceLock<Vec<String>>,
 }
 
 impl std::fmt::Debug for Importer {
@@ -164,6 +167,7 @@ impl Importer {
             kernel: std::sync::Mutex::default(),
             lockit: std::sync::Mutex::default(),
             effects: std::sync::Mutex::default(),
+            events: std::sync::OnceLock::new(),
         })
     }
 
@@ -706,6 +710,43 @@ impl Importer {
         }
         let name = file_stem(&path);
         self.import(&path, &cache.join("map").join(format!("{name}.glb")))
+    }
+
+    /// Map number `map`'s event name (`bsil0200` for map `0x14`): entry
+    /// `map` of `event/header/eventid.bin` ([`exits::event_names`]); `None`
+    /// past the table or without it.
+    #[must_use]
+    pub fn event_name(&self, map: u16) -> Option<String> {
+        let names = self.events.get_or_init(|| {
+            self.list("/event/header/eventid.bin")
+                .first()
+                .and_then(|p| self.read(p).ok())
+                .map(|f| exits::event_names(&f))
+                .unwrap_or_default()
+        });
+        names
+            .get(usize::from(map))
+            .filter(|n| !n.is_empty())
+            .cloned()
+    }
+
+    /// The maps (and entrances) map `map`'s event script jumps to with
+    /// constant arguments ([`exits::exits`]): where the player most likely
+    /// goes next. Empty without the event or its script.
+    #[must_use]
+    pub fn map_exits(&self, map: u16) -> Vec<(u16, u8)> {
+        let Some(name) = self.event_name(map) else {
+            return Vec::new();
+        };
+        let file = format!("/{name}.ebp");
+        let Some(path) = self.list(&file).into_iter().find(|p| p.ends_with(&file)) else {
+            return Vec::new();
+        };
+        self.read(&path)
+            .ok()
+            .and_then(|b| ffx_script::Container::parse(b).ok())
+            .map(|c| exits::exits(&c.script))
+            .unwrap_or_default()
     }
 
     /// The archive path of `level`'s map model ([`map_model_path`]) when
@@ -1400,6 +1441,22 @@ mod tests {
             &out[out.len() - 12..],
             &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
         );
+    }
+
+    /// On the player's game (skips without `FFX_GAME_DIR`): the beach's
+    /// event (map `0x46`, `bsil0000`) walks off to map `0x14` (`bsil0200`,
+    /// `Native_MapChange(20)` on its exit line; ffx-rust's docs/harness.md).
+    #[test]
+    fn the_beach_exits_to_the_next_map() {
+        let Some(dir) = std::env::var_os("FFX_GAME_DIR") else {
+            eprintln!("FFX_GAME_DIR is not set; skipping");
+            return;
+        };
+        let imp = Importer::open(Path::new(&dir)).unwrap();
+        assert_eq!(imp.event_name(0x46).as_deref(), Some("bsil0000"));
+        assert_eq!(imp.event_name(0x14).as_deref(), Some("bsil0200"));
+        let exits = imp.map_exits(0x46);
+        assert!(exits.iter().any(|&(m, _)| m == 0x14), "{exits:x?}");
     }
 
     /// On the player's game (skips without `FFX_GAME_DIR`): Besaid's birds

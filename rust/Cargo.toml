@@ -23,6 +23,8 @@ ffx-kernel = { git = "https://github.com/yutamago/ffx-rust", branch = "main" }
 # effect variants (a material's passes and switches) and their bytecode
 ffx-scene = { git = "https://github.com/yutamago/ffx-rust", branch = "main" }
 ffx-dxbc = { git = "https://github.com/yutamago/ffx-rust", branch = "main" }
+# event scripts (a map's exits: ffx-import's exits)
+ffx-script = { git = "https://github.com/yutamago/ffx-rust", branch = "main" }
 serde_json = "1.0.154"
 # godot-rust (gdext), MPL-2.0
 godot = { version = "0.5.5", features = ["api-4-7"] }

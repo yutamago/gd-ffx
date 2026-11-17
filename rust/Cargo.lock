@@ -905,6 +905,7 @@ dependencies = [
  "ffx-kernel",
  "ffx-phyre",
  "ffx-scene",
+ "ffx-script",
  "ffx-text",
  "ffx-vbf",
  "serde_json",

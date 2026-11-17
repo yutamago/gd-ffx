@@ -4,7 +4,7 @@
 //! one ([`Classic::request`]) and picks the finished ones up each frame
 //! ([`Classic::finished`]), then loads the `.glb`.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -84,6 +84,20 @@ pub struct Classic {
     done: Arc<Mutex<Vec<Done>>>,
     /// Textures read in the background, by the caller's id.
     textures: Arc<Mutex<Vec<TextureDone>>>,
+    /// Maps' levels and exits ([`Classic::map_exits`]) by map number; `None`
+    /// while being read.
+    exits: Arc<Mutex<HashMap<u16, Option<Arc<MapExits>>>>>,
+}
+
+/// A map's level and where its script jumps to ([`Classic::map_exits`]).
+#[derive(Debug, Clone, Default)]
+pub struct MapExits {
+    /// The level the map's event most likely shows (`/map/bsil/bsil02/`;
+    /// empty when not known).
+    pub level: String,
+    /// The maps its event script jumps to with constant arguments, each
+    /// with its level (`ffx_import::Importer::map_exits`).
+    pub exits: Vec<(u16, String)>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -286,6 +300,48 @@ impl Classic {
                 });
             });
         spawned.is_ok()
+    }
+
+    /// Map number `map`'s level and exits (its event from `eventid.bin`, the
+    /// maps its script jumps to: `ffx_import::Importer::map_exits`), read on
+    /// a thread of its own on the first ask; `None` until then and without
+    /// the archive.
+    #[must_use]
+    pub fn map_exits(&self, map: u16) -> Option<Arc<MapExits>> {
+        let open = lock(&self.open).clone()?;
+        let mut all = lock(&self.exits);
+        if let Some(x) = all.get(&map) {
+            return x.clone();
+        }
+        all.insert(map, None);
+        drop(all);
+        let exits = Arc::clone(&self.exits);
+        let spawned = std::thread::Builder::new()
+            .name("ffx-import exits".into())
+            .spawn(move || {
+                let imp = &open.importer;
+                let level = |m: u16| {
+                    imp.event_name(m)
+                        .and_then(|e| ffx_import::exits::event_level(&e))
+                        .unwrap_or_default()
+                };
+                // each map once (a map is often entered at several entrances)
+                let mut to: Vec<(u16, String)> = Vec::new();
+                for (m, _) in imp.map_exits(map) {
+                    if !to.iter().any(|&(x, _)| x == m) {
+                        to.push((m, level(m)));
+                    }
+                }
+                let x = MapExits {
+                    level: level(map),
+                    exits: to,
+                };
+                lock(&exits).insert(map, Some(Arc::new(x)));
+            });
+        if spawned.is_err() {
+            lock(&self.exits).insert(map, Some(Arc::new(MapExits::default())));
+        }
+        None
     }
 
     /// The imports finished since the last call.
