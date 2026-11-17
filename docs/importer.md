@@ -74,9 +74,32 @@ fields (below), and its segments' model id (`ffx_model_id`, also on each
 primitive: `PMeshSegment +0x18`, by which the game places a character's
 unskinned meshes). Materials also get `ffx_colors`, which `COLOR_n` each
 `COLOR` input reads (as `ffx_texcoords`). The `.glb` carries the importer's format
-(`asset.extras.ffx_import`, `ffx_import::FORMAT`); a cached import of
-another format is made again. docs/architecture.md, "Map materials", says how
+(`asset.extras.ffx_import`, `ffx_import::FORMAT`, 5 since the cloth); a
+cached import of another format is made again (two checkouts of different
+formats sharing one cache import each other's models again and again: give
+one its own, `--classic=PATH`). docs/architecture.md, "Map materials", says how
 gd-ffx draws them.
+
+## Cloth
+
+The game moves a character's hair and clothes with a vertex simulation of
+its own (docs/architecture.md, "Cloth"). A `PMeshSegment` it moves has its
+PS2 model and piece (`+0x20`, `+0x24`, the low words) other than `0xffff`
+(ffx-rust's `ffx_host::cloth` reads them the same way); for a character
+(`/chr/` models only) each such primitive gets:
+
+- `extras.ffx_cloth`: `[model, piece, first, count, texcoord]`;
+- a vertex number attribute: the mesh's cloth vertices numbered in
+  primitive order, vertex `k` of the primitive `first + k`, as
+  `TEXCOORD_<texcoord>` (`[first + k, 0]`), the first `TEXCOORD_n` from 2
+  the primitive lacks. Godot's glTF loader reads `TEXCOORD_2` and up into
+  `CUSTOM0..3`, two to a channel and in order (it stops at the first pair
+  with neither), so `TEXCOORD_2` is `CUSTOM0.x`, `_3` `CUSTOM0.z`.
+
+The mesh gets `extras.ffx_cloth_vertices` (its cloth vertices in all). The
+export keeps a segment's vertex order, which is the capture's. Tidus (`c001`):
+model 0 pieces 0, 1, 2 (68, 28, 22 vertices) and model 1 pieces 1, 2 (16,
+64), all in his one mesh (a test on the player's game).
 
 ## Morphing meshes
 

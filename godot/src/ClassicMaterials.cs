@@ -258,8 +258,69 @@ void fragment() {
 	vec4 c = t * vertex_colour * material_colour;
 	vec3 o = min(c.rgb * lit, vec3(1.0));
 	ALBEDO = ffx_fog_apply(o, -VERTEX.z);
+#ifdef CLOTH_NUMBER
+	float far = smoothstep(0.25, 2.0, cloth_shown.y);
+	ALBEDO = mix(ALBEDO, vec3(far, 1.0 - far, 0.0), cloth_shown.x * ffx_cloth_debug);
+#endif
 }
 ";
+
+    // The characters' cloth (ClothView; docs/architecture.md, "Cloth"): a cloth surface's vertex
+    // number (the import's TEXCOORD_n, CLOTH_NUMBER here) names two texels of ffx_cloth, the
+    // previous and the current update's render-space position (Godot's world) and weight, from
+    // ffx-rust's cloth capture; the instance's ffx_cloth_base is where its mesh's numbers start
+    // (-1: no cloth this update). The skinned position is mixed with the cloth one by the weight
+    // (as the game's character shaders do: mix(s, c, min(|v|^2 x 10000, 1))), both between the
+    // two updates by ffx_cloth_alpha, as the bones are.
+    private const string ClothVertex = @"
+global uniform sampler2D ffx_cloth;
+global uniform float ffx_cloth_alpha;
+// FFX_CLOTH_DEBUG=1: the cloth's vertices tinted by how far the cloth moves them from the
+// skinned position (green: under 0.25 units, red: 2 and more), by their weight
+global uniform float ffx_cloth_debug;
+instance uniform float ffx_cloth_base = -1.0;
+varying vec2 cloth_shown;
+void vertex() {
+	cloth_shown = vec2(0.0);
+	if (ffx_cloth_base >= 0.0) {
+		int i = 2 * (int(ffx_cloth_base) + int(CLOTH_NUMBER + 0.5));
+		int w = textureSize(ffx_cloth, 0).x;
+		vec4 a = texelFetch(ffx_cloth, ivec2(i % w, i / w), 0);
+		vec4 b = texelFetch(ffx_cloth, ivec2((i + 1) % w, (i + 1) / w), 0);
+		vec4 c = mix(a, b, ffx_cloth_alpha);
+		if (c.w > 0.0) {
+			vec3 p = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+			vec3 q = mix(p, c.xyz, min(c.w, 1.0));
+			VERTEX = (inverse(MODEL_MATRIX) * vec4(q, 1.0)).xyz;
+			cloth_shown = vec2(min(c.w, 1.0), distance(p, q));
+		}
+	}
+}
+";
+
+    /// <summary>The character shader with the cloth (<see cref="ClothVertex"/>), by the vertex number's <c>TEXCOORD_n</c> (2..7).</summary>
+    private static readonly Shader?[] ClothShaders = new Shader?[8];
+
+    private static Shader ClothShader(int texcoord)
+    {
+        // Godot's glTF loader: TEXCOORD_2 and _3 are CUSTOM0's (x, y) and (z, w), _4 and _5 CUSTOM1's, ...
+        lock (ClothShaders)
+            return ClothShaders[texcoord] ??= MakeShader("unshaded, cull_back", ClothVertex + CharBody,
+                $"#define CLOTH_NUMBER CUSTOM{(texcoord - 2) / 2}.{((texcoord - 2) % 2 == 0 ? "x" : "z")}\n");
+    }
+
+    /// <summary>
+    /// A cloth surface's material: <paramref name="m"/>'s parameters with the character shader that
+    /// takes the game's cloth (<see cref="ClothVertex"/>); null when <paramref name="m"/> is not a
+    /// classic character material.
+    /// </summary>
+    public static ShaderMaterial? Cloth(Material? m, int texcoord)
+    {
+        if (m is not ShaderMaterial sm || sm.Shader != Char || texcoord is < 2 or > 7 || sm.Duplicate() is not ShaderMaterial c)
+            return null;
+        c.Shader = ClothShader(texcoord);
+        return c;
+    }
 
     // The 2D layers (phyreprerenderedshader; ffx-rust's docs/formats/scene-maps.md, "How the
     // game draws the 2D layers"). A layer's vertices are its PS2 screen pixels (x, y on the
@@ -324,6 +385,11 @@ void fragment() {
         Add("ffx_layer_window", RenderingServer.GlobalShaderParameterType.Vec4, new Vector4(1f / 3f - 2f * 0.035f, 4f / 3f, 0, 0));
         Add("ffx_layer_far", RenderingServer.GlobalShaderParameterType.Float, 19000f);
         Add("ffx_time", RenderingServer.GlobalShaderParameterType.Float, 0f);
+        // the characters' cloth (ClothView sets the texture)
+        Add("ffx_cloth", RenderingServer.GlobalShaderParameterType.Sampler2D, default);
+        Add("ffx_cloth_alpha", RenderingServer.GlobalShaderParameterType.Float, 0f);
+        Add("ffx_cloth_debug", RenderingServer.GlobalShaderParameterType.Float,
+            System.Environment.GetEnvironmentVariable("FFX_CLOTH_DEBUG") == "1" ? 1f : 0f);
         return true;
     }
 

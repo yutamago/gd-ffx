@@ -22,6 +22,8 @@ public static class Perf
         Objects,
         /// <summary><see cref="StateView3D"/>'s characters (interpolation and bone posing).</summary>
         Actors,
+        /// <summary><see cref="StateView3D"/>'s cloth (<see cref="ClothView"/>): the frames fetched, the texture rebuilt.</summary>
+        Cloth,
         /// <summary><see cref="EffectDrawView"/>: the FXDR frame fetched and decoded.</summary>
         EffectDecode,
         /// <summary><see cref="EffectDrawView"/>: the frame's mesh built.</summary>

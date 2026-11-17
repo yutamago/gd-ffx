@@ -25,6 +25,9 @@ public sealed class GltfExtras
     /// <summary>glTF mesh i's extras (as many as the file has).</summary>
     public required MeshExtras[] Meshes { get; init; }
 
+    /// <summary>glTF mesh i's cloth surfaces (the import's primitive extras <c>ffx_cloth</c>; empty: none).</summary>
+    public required ClothSurface[][] Cloth { get; init; }
+
     /// <summary>The JSON of the .glb (or .gltf) at <paramref name="path"/> (an OS path); null when it cannot be read.</summary>
     public static GltfExtras? Read(string path)
     {
@@ -69,11 +72,15 @@ public sealed class GltfExtras
             foreach (var m in mv.EnumerateArray())
                 mats.Add(MaterialExtras.From(m));
         var meshes = new List<MeshExtras>();
+        var cloth = new List<ClothSurface[]>();
         if (root.TryGetProperty("meshes", out var ms) && ms.ValueKind == JsonValueKind.Array)
             foreach (var m in ms.EnumerateArray())
+            {
                 meshes.Add(m.ValueKind == JsonValueKind.Object && m.TryGetProperty("extras", out var x)
                     ? MeshExtras.From(x) : MeshExtras.None);
-        return new GltfExtras { Materials = [.. mats], Meshes = [.. meshes] };
+                cloth.Add(ClothSurface.Of(m));
+            }
+        return new GltfExtras { Materials = [.. mats], Meshes = [.. meshes], Cloth = [.. cloth] };
     }
 
     /// <summary>A JSON number as Godot's JSON reads it (a double), else null.</summary>
@@ -309,5 +316,38 @@ public readonly record struct MeshExtras(long? ObjId, long? Instance, long? Anim
                 using (x)
                     v[i] = x.AsInt64();
         return FromValues(v);
+    }
+}
+
+/// <summary>
+/// A character's cloth surface (the import's primitive extras <c>ffx_cloth</c>, docs/importer.md
+/// "Cloth"): Godot surface <see cref="Surface"/> (glTF primitive) of its mesh is the segment the
+/// game's cloth binds to PS2 model <see cref="Model"/>, piece <see cref="Piece"/>; its vertex
+/// <c>k</c> of the segment (as the game's cloth lists them) carries the number
+/// <see cref="First"/> + k in <c>TEXCOORD_</c><see cref="Texcoord"/> (Godot's
+/// <c>CUSTOM0..3</c>); <see cref="Count"/> vertices.
+/// </summary>
+public readonly record struct ClothSurface(int Surface, int Model, int Piece, int First, int Count, int Texcoord)
+{
+    /// <summary>A glTF mesh's cloth surfaces (empty for none).</summary>
+    internal static ClothSurface[] Of(JsonElement mesh)
+    {
+        if (mesh.ValueKind != JsonValueKind.Object || !mesh.TryGetProperty("primitives", out var prims)
+            || prims.ValueKind != JsonValueKind.Array)
+            return [];
+        List<ClothSurface>? list = null;
+        int i = 0;
+        foreach (var p in prims.EnumerateArray())
+        {
+            if (p.ValueKind == JsonValueKind.Object && p.TryGetProperty("extras", out var x) && x.ValueKind == JsonValueKind.Object
+                && x.TryGetProperty("ffx_cloth", out var c) && c.ValueKind == JsonValueKind.Array && c.GetArrayLength() >= 5)
+            {
+                int At(int k) => (int)(GltfExtras.Number(c[k]) ?? -1);
+                if (At(0) >= 0 && At(3) > 0 && At(4) is >= 2 and < 8)
+                    (list ??= new()).Add(new ClothSurface(i, At(0), At(1), At(2), At(3), At(4)));
+            }
+            i++;
+        }
+        return list?.ToArray() ?? [];
     }
 }

@@ -441,8 +441,9 @@ public sealed class BesaidTest(double timeout, string? shot) : ITest
             case Phase.Boot when v.Current is { World.Map: MapBeach, World.PlayerControl: true }:
                 Next(Phase.Beach);
                 break;
+            // (and Tidus's cloth placed and moving for a few updates, or 5 s)
             case Phase.Beach when view != null && view.MapLevel == v.Current!.World.Level && view.Posed.Models > 0
-                && view.Posed.PosedBones > 40:
+                && view.Posed.PosedBones > 40 && (!ClothView.Enabled || view.Cloth.MovingUpdates >= 3 || _phaseTime > 5):
                 _seen = $"{v.Current.World.Level} shown, {view.Posed.Models} character model(s) posed ({view.Posed.PosedBones} bones), "
                     + $"{view.ObjectsPlaced} object mesh(es) placed by the game ({view.ObjectsUnmatched} without a mesh)";
                 if (view.ObjectsPlaced == 0)
@@ -460,6 +461,17 @@ public sealed class BesaidTest(double timeout, string? shot) : ITest
                     _seen += $", {fx.Shown.Draws} effect draws ({fx.Shown.Textured} textured, {fx.Textures.Count} textures)";
                     var dv = view.GetTree().Root.FindChild("DistortionView", true, false) as DistortionView;
                     _seen += dv?.Shown.On == true ? $", the screen distortion on ({dv.Shown.Vertices} vertices, copy alpha {dv.Shown.Alpha:F2})" : ", no screen distortion";
+                }
+                // the game's cloth (Tidus's hair and clothes: 104 simulated vertices on 5 segments),
+                // unless FFX_NO_CLOTH: placed on his model, every surface matched, moving relative to him
+                if (ClothView.Enabled)
+                {
+                    var cl = view.Cloth.Shown;
+                    _seen += $", cloth: {cl} ({view.Cloth.MovingUpdates} update(s) with moving cloth, {view.Cloth.Late} of {view.Cloth.Updates} frame(s) after their snapshot)";
+                    if (cl.Weighted == 0 || cl.Unmatched > 0)
+                        return Done(false, $"the game's cloth not drawn: {cl}");
+                    if (view.Cloth.MovingUpdates == 0)
+                        return Done(false, $"the game's cloth does not move: {cl}");
                 }
                 GD.Print($"ffx selftest: beach {_seen}");
                 GD.Print($"ffx selftest: look {SelfTest.LookLine(v.Current.Look)}");
@@ -629,6 +641,19 @@ public sealed class MapTest(double timeout, string? shot) : ITest
             return null;
         var fx = view.GetNodeOrNull<EffectDrawView>("EffectDrawView");
         var dv = view.GetTree().Root.FindChild("DistortionView", true, false) as DistortionView;
+        // --shots=N without a walk: N - 1 pictures 0.1 s apart first (NAME-1.png, ...), then NAME.png
+        if (shot != null && DisplayServer.GetName() != "headless" && GameSettings.Arg("walk") == null
+            && int.TryParse(GameSettings.Arg("shots"), out var shots) && _stillShots < shots - 1)
+        {
+            if (_total - _stillShotAt >= 0.1)
+            {
+                _stillShotAt = _total;
+                var file = shot[..^4] + $"-{++_stillShots}.png";
+                view.GetTree().Root.GetViewport().GetTexture().GetImage().SavePng(file);
+                GD.Print($"ffx selftest: picture {file}");
+            }
+            return null;
+        }
         if (shot != null && DisplayServer.GetName() != "headless")
         {
             view.GetTree().Root.GetViewport().GetTexture().GetImage().SavePng(shot);
@@ -637,7 +662,7 @@ public sealed class MapTest(double timeout, string? shot) : ITest
         return Done(true, $"{(c.World.Battle ? "battle" : "field")} {c.World.Level} (map {c.World.Map:x}): {view.Posed.Models} models "
             + $"({view.Posed.PosedBones} bones), {view.ObjectsPlaced} objects ({view.ObjectsUnmatched} without a mesh), {view.Morphed.Meshes} morphing ({view.Morphed.Moved} with a weight), {fx?.Shown.Draws ?? 0} effect draws "
             + $"({fx?.Shown.Textured ?? 0} textured, {fx?.MissingDraws ?? 0} without their texture), distortion {(dv?.Shown.On == true ? "on" : "off")}{Layers(view)}, {Characters(c)}, "
-            + $"global time {view.GlobalTime:F2} s, at {_total:F0} s");
+            + $"global time {view.GlobalTime:F2} s{BattleTest.ClothNote()}, at {_total:F0} s");
     }
 
     /// <summary>
@@ -653,7 +678,8 @@ public sealed class MapTest(double timeout, string? shot) : ITest
     }
 
     private bool _held;
-    private int _walkShots;
+    private int _walkShots, _stillShots;
+    private double _stillShotAt = -1;
 
     /// <summary>
     /// <c>--walk=KEYS:SECONDS</c>: the keys (arrow names, joined by <c>+</c>) held for that long
@@ -772,6 +798,16 @@ public sealed class MessageTest(double timeout, string? shot) : ITest
 /// </summary>
 public sealed class BattleTest : ITest
 {
+    /// <summary>The characters' cloth as the last rebuild placed it (<see cref="ClothView"/>), for the checks' notes.</summary>
+    public static string ClothNote()
+    {
+        if (!ClothView.Enabled)
+            return ", cloth off";
+        var view = (Engine.GetMainLoop() as SceneTree)?.Root.FindChild("StateView3D", true, false) as StateView3D;
+        return view == null ? "" : $", cloth: {view.Cloth.Shown} ({view.Cloth.MovingUpdates} update(s) with moving cloth, "
+            + $"{view.Cloth.Late} of {view.Cloth.Updates} frame(s) after their snapshot)";
+    }
+
     private readonly double timeout;
     private readonly string? shot;
 
@@ -889,7 +925,7 @@ public sealed class BattleTest : ITest
         {
             var attacked = $"{_first}; {_target}; {hud.Popped} damage number(s) popped for {_hits} hits; {effects?.Started ?? 0} effect(s) started "
                 + $"({effects?.RemadeStarted ?? 0} remade as {RemadeId}); effect draws by pass [{string.Join(", ", EffectDrawView.PassDraws)}], "
-                + $"{EffectDrawView.FadeFrames} frame(s) with a screen fade";
+                + $"{EffectDrawView.FadeFrames} frame(s) with a screen fade{ClothNote()}";
             if (!GameSettings.Flag("to-results"))
             {
                 Tap(false);

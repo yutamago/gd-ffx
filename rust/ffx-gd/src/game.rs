@@ -132,6 +132,11 @@ fn run_game(
     if std::env::var_os("FFX_NO_VFX").is_none() {
         exec.shared().vfx.set_enabled(true);
     }
+    // the characters' simulated hair and cloth (ffx_host::cloth), drawn by ClothView;
+    // FFX_NO_CLOTH turns it off
+    if std::env::var_os("FFX_NO_CLOTH").is_none() {
+        exec.shared().cloth.set_enabled(true);
+    }
     if let Ok(mut s) = shared.lock() {
         *s = Some(Arc::clone(exec.shared()));
     }
@@ -163,6 +168,8 @@ pub struct FfxGame {
     /// `effect_draws_address` into a buffer of its own (no new array a
     /// game update on its side: docs/running.md, "Benchmark").
     fx_held: Vec<u8>,
+    /// The cloth frame `cloth_held` encoded last, held as `fx_held` is.
+    cloth_held: Vec<u8>,
     /// The snapshot pair `snapshots_held` handed out last, kept (and with
     /// it the addresses it gave) until the next call.
     snaps_held: Option<crate::snapshots::Encoded>,
@@ -181,6 +188,7 @@ impl INode for FfxGame {
             poll_pads: true,
             results: Arc::default(),
             fx_held: Vec::new(),
+            cloth_held: Vec::new(),
             snaps_held: None,
             speed: 1.0,
         }
@@ -830,6 +838,33 @@ impl FfxGame {
     #[func]
     fn effect_draws_address(&self) -> i64 {
         address_len(&self.fx_held).0
+    }
+
+    /// The characters' cloth of the frame that drew update `update` (the
+    /// snapshot's `update`; no other: a frame of another update would put
+    /// the cloth where the skeleton is not), encoded as `ffx_host::cloth`'s
+    /// `Frame::encode` (`CLTH`, docs/state-api.md "Cloth" in ffx-rust) into
+    /// a buffer this node holds until the next call (main thread only), as
+    /// `effect_draws_held`; returns its length (0: no such frame, or no
+    /// game). `cloth_address` gives its address.
+    #[func]
+    fn cloth_held(&mut self, update: i64) -> i64 {
+        self.cloth_held.clear();
+        if let Some(shared) = self.run.as_ref().and_then(Run::shared)
+            && let Some(f) = u32::try_from(update)
+                .ok()
+                .and_then(|u| shared.cloth.frame(u))
+        {
+            self.cloth_held = f.encode();
+        }
+        address_len(&self.cloth_held).1
+    }
+
+    /// The address of the frame `cloth_held` encoded last (valid until the
+    /// next `cloth_held`; 0 when it is empty).
+    #[func]
+    fn cloth_address(&self) -> i64 {
+        address_len(&self.cloth_held).0
     }
 
     /// Sphere grid node kind `kind`'s name in `language`; empty without the

@@ -38,8 +38,9 @@ pub mod morph;
 /// segment model ids (`ffx_model_id`). 4: a primitive whose own stream
 /// bindings put an input on another `TEXCOORD_n` than its material's
 /// `ffx_texcoords` says gets its attributes re-pointed to match
-/// ([`align_texcoords`]).
-pub const FORMAT: u64 = 4;
+/// ([`align_texcoords`]). 5: a character's cloth segments (`ffx_cloth` and
+/// a vertex number attribute, [`add_cloth`]).
+pub const FORMAT: u64 = 5;
 
 /// The game places a 3D map's instances at the file's node worlds times
 /// this (`PhyreScene_doOnFieldMapAssetLoaded`; ffx-rust's
@@ -482,6 +483,13 @@ impl Importer {
         // the morphing instances (map clusters only), the segments' model ids
         let tags = morph::tags(&bytes);
         let model_ids = segment_model_ids(&bytes);
+        // a character's cloth segments (the PS2 model and piece the game's
+        // cloth binds them to): characters only
+        let cloth = if path.contains("/chr/") {
+            segment_cloth(&bytes)
+        } else {
+            Vec::new()
+        };
         let morphs = morph::read(&bytes);
         // the segment contexts' stream bindings (which UV set a water
         // shader's TEXCOORD4/6/7 read): only a map cluster has them
@@ -491,6 +499,7 @@ impl Importer {
             add_morph_targets(&model, &morphs, doc, bin);
             add_color_morph_streams(&model, doc, bin);
             add_model_ids(&model_ids, doc);
+            add_cloth(&cloth, doc, bin);
         })
         .ok_or_else(|| Error::Model(format!("{path}: bad glTF from the export")))
     }
@@ -1198,6 +1207,91 @@ fn add_model_ids(ids: &[u32], doc: &mut Value) {
     }
 }
 
+/// Each `PMeshSegment`'s PS2 model and piece (`+0x20`, `+0x24`, the low
+/// words, as ffx-rust's `ffx_host::cloth` reads them): a segment the game's
+/// cloth moves has both other than `0xffff` (`Sg_ClothPlaceAnchors` binds
+/// its vertices to PS2 sub-mesh `piece % 100` of that model; ffx-rust's
+/// docs/state-api.md, "Cloth"). `None` for the others; empty for other
+/// layouts.
+fn segment_cloth(bytes: &[u8]) -> Vec<Option<(u16, u16)>> {
+    let Ok(c) = ffx_phyre::cluster::Cluster::parse(bytes) else {
+        return Vec::new();
+    };
+    let Some(l) = c.list("PMeshSegment").filter(|l| l.object_size() == 0x6c) else {
+        return Vec::new();
+    };
+    let word = |at: usize| Some(u16::from_le_bytes(bytes.get(at..at + 2)?.try_into().ok()?));
+    (0..l.count)
+        .map(|i| {
+            let seg = l.object(i);
+            match (word(seg + 0x20), word(seg + 0x24)) {
+                (Some(model), Some(piece)) if model != 0xffff && piece != 0xffff => {
+                    Some((model, piece))
+                }
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+/// The cloth segments ([`segment_cloth`]) of each mesh (one per instance):
+/// each such primitive gets `extras.ffx_cloth` = `[model, piece, first,
+/// count, texcoord]` and a vertex number attribute: the mesh's cloth
+/// vertices numbered in primitive order (`first` the primitive's first,
+/// `count` its vertices, its vertex `k` numbered `first + k`), written as
+/// `TEXCOORD_<texcoord>` (`[first + k, 0]`), the first `TEXCOORD_n` from 2
+/// the primitive does not have (Godot's glTF loader reads `TEXCOORD_2` and
+/// up as its `CUSTOM0..3` channels, two to a channel, in order). The
+/// frontend finds the game's cloth vertex `k` (`ffx_host::cloth`, in the
+/// segment's vertex order, which the export keeps) by that number whatever
+/// order and sharing Godot's loader gives the vertices. The mesh gets
+/// `extras.ffx_cloth_vertices`, its cloth vertices in all.
+fn add_cloth(cloth: &[Option<(u16, u16)>], doc: &mut Value, bin: &mut Vec<u8>) {
+    if cloth.iter().all(Option::is_none) {
+        return;
+    }
+    let mesh_count = doc["meshes"].as_array().map_or(0, Vec::len);
+    for mi in 0..mesh_count {
+        let prim_count = doc["meshes"][mi]["primitives"]
+            .as_array()
+            .map_or(0, Vec::len);
+        let mut first: u64 = 0;
+        for pi in 0..prim_count {
+            let p = &doc["meshes"][mi]["primitives"][pi];
+            let Some(Some((model, piece))) = p["extras"]["ffx_segment"]
+                .as_u64()
+                .and_then(|s| usize::try_from(s).ok())
+                .and_then(|s| cloth.get(s))
+                .copied()
+            else {
+                continue;
+            };
+            let Some(count) = p["attributes"]["POSITION"]
+                .as_u64()
+                .and_then(|a| doc["accessors"][usize::try_from(a).ok()?]["count"].as_u64())
+            else {
+                continue;
+            };
+            let Some(texcoord) =
+                (2..8).find(|n| p["attributes"].get(format!("TEXCOORD_{n}")).is_none())
+            else {
+                continue;
+            };
+            #[allow(clippy::cast_precision_loss)] // vertex numbers below 2^24
+            let numbers: Vec<[f32; 2]> = (first..first + count).map(|k| [k as f32, 0.0]).collect();
+            let (bytes, acc) = float_accessor(&numbers);
+            let a = push_accessor(doc, bin, &bytes, acc);
+            let p = &mut doc["meshes"][mi]["primitives"][pi];
+            p["attributes"][format!("TEXCOORD_{texcoord}")] = json!(a);
+            p["extras"]["ffx_cloth"] = json!([model, piece, first, count, texcoord]);
+            first += count;
+        }
+        if first > 0 {
+            doc["meshes"][mi]["extras"]["ffx_cloth_vertices"] = json!(first);
+        }
+    }
+}
+
 /// For materials of a vertex colour morph (`VERTEX_COLOR_MORPH`: the vertex
 /// program's colour is `COLOR0 + w (COLOR1 - COLOR0)`), the `COLOR_n` that
 /// `COLOR1` reads (the material's `ffx_colors`) as two float pairs,
@@ -1443,6 +1537,40 @@ mod tests {
         );
     }
 
+    /// The cloth segments' primitives get their PS2 model and piece, their
+    /// first vertex number among the mesh's cloth vertices and a vertex
+    /// number attribute on the first free `TEXCOORD_n` from 2; the others
+    /// are left as they are.
+    #[test]
+    fn numbers_the_cloth_vertices() {
+        let mut doc = json!({
+            "accessors": [{"count": 3}, {"count": 2}, {"count": 4}],
+            "meshes": [{"primitives": [
+                {"attributes": {"POSITION": 0, "TEXCOORD_0": 0}, "extras": {"ffx_segment": 0}},
+                {"attributes": {"POSITION": 1}, "extras": {"ffx_segment": 1}},
+                {"attributes": {"POSITION": 2, "TEXCOORD_2": 0}, "extras": {"ffx_segment": 2}},
+            ]}],
+        });
+        let mut bin = Vec::new();
+        add_cloth(&[Some((0, 1)), None, Some((1, 102))], &mut doc, &mut bin);
+        let prims = &doc["meshes"][0]["primitives"];
+        assert_eq!(prims[0]["extras"]["ffx_cloth"], json!([0, 1, 0, 3, 2]));
+        assert!(prims[1]["extras"].get("ffx_cloth").is_none());
+        assert!(prims[1]["attributes"].get("TEXCOORD_2").is_none());
+        assert_eq!(prims[2]["extras"]["ffx_cloth"], json!([1, 102, 3, 4, 3]));
+        assert_eq!(doc["meshes"][0]["extras"]["ffx_cloth_vertices"], 7);
+        // the second cloth primitive's numbers: 3..7 as (k, 0) floats
+        let acc = &doc["accessors"]
+            [usize::try_from(prims[2]["attributes"]["TEXCOORD_3"].as_u64().unwrap()).unwrap()];
+        assert_eq!(acc["count"], 4);
+        assert_eq!(acc["type"], "VEC2");
+        let view =
+            &doc["bufferViews"][usize::try_from(acc["bufferView"].as_u64().unwrap()).unwrap()];
+        let at = usize::try_from(view["byteOffset"].as_u64().unwrap()).unwrap();
+        let f = |i: usize| f32::from_le_bytes(bin[at + 4 * i..at + 4 * i + 4].try_into().unwrap());
+        assert_eq!([f(0), f(1), f(2), f(6)], [3.0, 0.0, 4.0, 6.0]);
+    }
+
     /// On the player's game (skips without `FFX_GAME_DIR`): the beach's
     /// event (map `0x46`, `bsil0000`) walks off to map `0x14` (`bsil0200`,
     /// `Native_MapChange(20)` on its exit line; ffx-rust's docs/harness.md).
@@ -1492,6 +1620,26 @@ mod tests {
         let target = &bird["primitives"][0]["targets"][0]["POSITION"];
         let acc = &doc["accessors"][usize::try_from(target.as_u64().unwrap()).unwrap()];
         assert_eq!(acc["count"], 96);
+        // Tidus's cloth (ffx-rust's docs/state-api.md, "Cloth": model 0
+        // pieces 0, 1, 2 and model 1 pieces 1, 2; 68, 28, 22, 16 and 64
+        // vertices), all in his one mesh
+        let path = character_model_path("c001").unwrap();
+        let doc = glb_json(&imp.model_glb(&path).unwrap());
+        let mut cloth: Vec<(u64, u64, u64)> = doc["meshes"][0]["primitives"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|p| {
+                let c = p["extras"]["ffx_cloth"].as_array()?;
+                Some((c[0].as_u64()?, c[1].as_u64()?, c[3].as_u64()?))
+            })
+            .collect();
+        cloth.sort_unstable();
+        assert_eq!(
+            cloth,
+            [(0, 0, 68), (0, 1, 28), (0, 2, 22), (1, 1, 16), (1, 2, 64)]
+        );
+        assert_eq!(doc["meshes"][0]["extras"]["ffx_cloth_vertices"], 198);
         // the save sphere's three unskinned parts: models 0, 1, 2 (MeshNode0..2)
         let path = character_model_path("f001").unwrap();
         let doc = glb_json(&imp.model_glb(&path).unwrap());
