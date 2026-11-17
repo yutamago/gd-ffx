@@ -1,3 +1,4 @@
+using System.Linq;
 using Godot;
 using Godot.Collections;
 
@@ -28,6 +29,10 @@ public partial class FfxGame : RefCounted
         public static readonly StringName effect_draws = "effect_draws";
         public static readonly StringName effect_draws_address = "effect_draws_address";
         public static readonly StringName effect_draws_held = "effect_draws_held";
+        public static readonly StringName encounter_maps = "encounter_maps";
+        public static readonly StringName esc_button = "esc_button";
+        public static readonly StringName esc_popup_answer = "esc_popup_answer";
+        public static readonly StringName esc_state = "esc_state";
         public static readonly StringName gear_record = "gear_record";
         public static readonly StringName grid_node_name = "grid_node_name";
         public static readonly StringName is_running = "is_running";
@@ -141,6 +146,70 @@ public partial class FfxGame : RefCounted
     /// <summary>A Flash or tip line for display (<see cref="LocTextUtf8"/>): its tags (<c>{..}</c>, <c>@el@</c> line breaks) made plain; "" without the archive.</summary>
     public string FlashText(int index, string language) =>
         MessageView.Clean(LocTextUtf8(index, language).Replace("@el@", " ").Replace("\n", " "));
+
+    /// <summary>
+    /// A Flash line with its <c>@el@</c> line breaks kept (as the game's
+    /// <c>LocText_ConvertLineBreaks</c> makes them for its pop-ups), its tags made plain.
+    /// </summary>
+    public string FlashLines(int index, string language) =>
+        string.Join("\n", LocTextUtf8(index, language).Replace("\n", "@el@").Split("@el@").Select(MessageView.Clean));
+
+    /// <summary>
+    /// The ESC menu page's button: the game's Flash callback <c>EscMenuButtonClick([page,
+    /// index])</c>, called at its next <c>FFEscMenu_update</c> (the extension's <c>esc</c>; page
+    /// 13 is Change parameters). False while no game runs.
+    /// </summary>
+    public bool EscButton(int page, int index) => Node.Call(M.esc_button, page, index).AsBool();
+
+    /// <summary>Answers the ESC menu's open pop-up (<c>EscMenuPopUpConfirmed</c>): yes or no.</summary>
+    public bool EscPopUpAnswer(bool yes) => Node.Call(M.esc_popup_answer, yes).AsBool();
+
+    /// <summary>What the extension saw at the game's last <c>FFEscMenu_update</c> (<see cref="EscMenuState"/>).</summary>
+    public EscMenuState EscState()
+    {
+        using var v = Node.Call(M.esc_state);
+        using var d = v.AsGodotDictionary();
+        bool B(string k)
+        {
+            using var x = Variants.Get(d, k);
+            return x.AsBool();
+        }
+        long L(string k)
+        {
+            using var x = Variants.Get(d, k);
+            return x.AsInt64();
+        }
+        return new EscMenuState(B("seen"), B("open"), B("parameters"), B("popup"), B("failed"), L("done"), L("row"));
+    }
+
+    /// <summary>
+    /// The random encounters of the map the game looks them up for now (the extension's
+    /// <c>encounter_maps</c>, read from the game's table): that map number and each group's
+    /// battle map word, encounter rate (0: none) and level; null before the table is read or
+    /// for a map without encounters.
+    /// </summary>
+    public (int Map, (int Map, int Rate, string Level)[] Groups)? EncounterMaps()
+    {
+        using var v = Node.Call(M.encounter_maps);
+        using var d = v.AsGodotDictionary();
+        using var ready = Variants.Get(d, "ready");
+        if (!ready.AsBool())
+            return null;
+        using var map = Variants.Get(d, "map");
+        using var groups = Variants.Get(d, "groups");
+        using var list = groups.AsGodotArray();
+        var out_ = new (int, int, string)[list.Count];
+        for (int i = 0; i < list.Count; i++)
+        {
+            using var gv = list[i];
+            using var g = gv.AsGodotDictionary();
+            using var m = Variants.Get(g, "map");
+            using var r = Variants.Get(g, "rate");
+            using var l = Variants.Get(g, "level");
+            out_[i] = (m.AsInt32(), r.AsInt32(), l.AsString());
+        }
+        return (map.AsInt32(), out_);
+    }
 
     /// <summary>A developer's look at <paramref name="len"/> bytes of game memory (read only; empty while no game runs).</summary>
     public byte[] Peek(long address, int len) => Node.Call(M.peek, address, len).AsByteArray();
@@ -327,3 +396,12 @@ public readonly struct GameState
     /// <summary>Frames handed to Godot's player so far.</summary>
     public long AudioPulled => Get("audio_pulled").AsInt64();
 }
+
+/// <summary>
+/// The game's ESC menu as the extension's wrapper of <c>FFEscMenu_update</c> saw it last: it ran
+/// (<c>Seen</c>), the menu is open, the Change parameters entry is enabled (the game's own
+/// condition: no movie fading, the scenario flag set, not an Eternal Calm scene), the page's
+/// confirmation waits for its answer (<c>PopUp</c>), a callback could not be called, the calls
+/// run so far and the row of the last button the game took.
+/// </summary>
+public readonly record struct EscMenuState(bool Seen, bool Open, bool Parameters, bool PopUp, bool Failed, long Done, long Row);

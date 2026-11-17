@@ -51,12 +51,13 @@ public partial class CursorMark : Control
 /// <summary>
 /// A list of rows with one highlighted (G5): the row's bar lit, the cursor drawn before it
 /// (<see cref="CursorMark"/>), its text bright; rows that cannot be chosen dimmed. The battle
-/// command menu, the message choices and the ESC menu draw their rows with it.
+/// command menu, the message choices and the ESC menu draw their rows with it. A row's text after
+/// a tab is a button at its right (the ESC menu's Change parameters rows: "Get").
 /// </summary>
 public partial class MenuList : VBoxContainer
 {
-    private readonly List<(PanelContainer Bar, CursorMark Mark, Label Label)> _rows = new();
-    private readonly StyleBoxFlat _lit, _unlit;
+    private readonly List<(PanelContainer Bar, CursorMark Mark, Label Label, PanelContainer Button, Label ButtonText)> _rows = new();
+    private readonly StyleBoxFlat _lit, _unlit, _button;
     private readonly int _fontSize;
     private readonly Font? _font;
 
@@ -89,6 +90,14 @@ public partial class MenuList : VBoxContainer
             BgColor = new Color(0, 0, 0, 0),
             ContentMarginLeft = 4, ContentMarginRight = 10, ContentMarginTop = 1, ContentMarginBottom = 1,
         };
+        _button = new StyleBoxFlat
+        {
+            BgColor = new Color(0.05f, 0.1f, 0.3f, 0.9f),
+            BorderColor = new Color(0.8f, 0.85f, 1f, 0.9f),
+            BorderWidthLeft = 1, BorderWidthRight = 1, BorderWidthTop = 1, BorderWidthBottom = 1,
+            CornerRadiusTopLeft = 3, CornerRadiusTopRight = 3, CornerRadiusBottomLeft = 3, CornerRadiusBottomRight = 3,
+            ContentMarginLeft = 12, ContentMarginRight = 12, ContentMarginTop = 0, ContentMarginBottom = 0,
+        };
     }
 
     /// <summary>Shows <paramref name="rows"/> with row <paramref name="cursor"/> highlighted; <paramref name="enabled"/> null: all can be chosen.</summary>
@@ -107,16 +116,25 @@ public partial class MenuList : VBoxContainer
                 label.AddThemeFontOverride("font", _font);
             label.AddThemeFontSizeOverride("font_size", _fontSize);
             label.AddThemeColorOverride("font_shadow_color", new Color(0, 0, 0, 0.8f));
+            label.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+            var button = new PanelContainer { MouseFilter = MouseFilterEnum.Ignore, Visible = false, SizeFlagsVertical = SizeFlags.ShrinkCenter };
+            button.AddThemeStyleboxOverride("panel", _button);
+            var buttonText = new Label();
+            if (_font != null)
+                buttonText.AddThemeFontOverride("font", _font);
+            buttonText.AddThemeFontSizeOverride("font_size", (int)(_fontSize * 0.8f));
+            button.AddChild(buttonText);
             box.AddChild(mark);
             box.AddChild(label);
+            box.AddChild(button);
             bar.AddChild(box);
             AddChild(bar);
-            _rows.Add((bar, mark, label));
+            _rows.Add((bar, mark, label, button, buttonText));
         }
         Shown.Clear();
         for (int i = 0; i < _rows.Count; i++)
         {
-            var (bar, mark, label) = _rows[i];
+            var (bar, mark, label, button, buttonText) = _rows[i];
             bar.Visible = i < rows.Count;
             if (i >= rows.Count)
                 continue;
@@ -130,9 +148,17 @@ public partial class MenuList : VBoxContainer
                     bar.RemoveMeta("lit");
             }
             mark.On = on;
-            Ui.SetText(label, rows[i]);
-            Ui.SetColour(label, !can ? DimColour : on ? LitColour : TextColour);
-            Shown.Add((on ? "▶ " : "   ") + rows[i]);
+            int tab = rows[i].IndexOf('\t');
+            Ui.SetText(label, tab < 0 ? rows[i] : rows[i][..tab]);
+            var colour = !can ? DimColour : on ? LitColour : TextColour;
+            Ui.SetColour(label, colour);
+            button.Visible = tab >= 0;
+            if (tab >= 0)
+            {
+                Ui.SetText(buttonText, rows[i][(tab + 1)..]);
+                Ui.SetColour(buttonText, colour);
+            }
+            Shown.Add((on ? "▶ " : "   ") + (tab < 0 ? rows[i] : $"{rows[i][..tab]} [{rows[i][(tab + 1)..]}]"));
         }
     }
 }
