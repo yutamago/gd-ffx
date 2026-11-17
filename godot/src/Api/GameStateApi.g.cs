@@ -1298,9 +1298,10 @@ public sealed partial class Battler
     /// </summary>
     public int Ctb;
     /// <summary>
-    /// The HP the last action took as calculated (`+0xd34`
-    /// `damage_hp`, `MsCalcDamage`): before the clamp at 0, negative a
-    /// heal; kept until the next action's calculation.
+    /// The HP last calculated against it (`+0xd34` `damage_hp`): the sum
+    /// of the capped per-hit damage (9999/99999) of `DmgCalc`, before
+    /// the clamp at 0, negative a heal; reset when the next
+    /// `MsCalcDamage` targets this battler (scripts can set it too).
     /// </summary>
     public int Damage;
 
@@ -2863,7 +2864,9 @@ public sealed partial class BattleNumber
     /// </summary>
     public byte Battler;
     /// <summary>
-    /// The digits' value (at most 9 digits); -1 for a word alone.
+    /// The digits' value (at most 9 digits); -1 for a word alone. A CTB
+    /// number (kind 2, `MsSubCTB`) looks the same as an HP one (kind 0):
+    /// digits and no word.
     /// </summary>
     public int Value;
     /// <summary>
@@ -2892,8 +2895,11 @@ public sealed partial class BattleNumber
     public byte Style;
     /// <summary>
     /// Updates since it was put (`+6`, `MsNumberCalcProcess` adds 1 an
-    /// update, before the update's new numbers are put): a new number
-    /// reads 0 in the snapshot after its update.
+    /// update): a new number reads 0 or 1 in the snapshot after its
+    /// update, by who put it (effect and motion damage after the step:
+    /// 0; the status step's Regen/Zombie numbers and `chr_damage`'s HP
+    /// loss before it: 1). Spot new numbers by comparing snapshots, not
+    /// by `age == 0`.
     /// </summary>
     public byte Age;
     /// <summary>
