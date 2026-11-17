@@ -27,7 +27,9 @@ ships with gd-ffx or goes into git.
   finished `.glb` files at run time (`GltfDocument`; the extras below are
   read from the file's JSON chunk with System.Text.Json by `GltfExtras`,
   not through Godot's dictionaries, and a mesh's fields set on the Godot
-  mesh as integer metadata: docs/running.md, "Garbage collections"); `StateView3D` shows
+  mesh as integer metadata: docs/running.md, "Garbage collections"; loaded
+  with Godot's mesh compression off: docs/architecture.md, "Seams between
+  map pieces"); `StateView3D` shows
   them, through `ContentResolver`, which takes a remade scene instead when
   one is registered for the id (docs/remake.md); then the classic import is
   never asked for.

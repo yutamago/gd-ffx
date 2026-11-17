@@ -229,6 +229,30 @@ up (characters keep 0), each (material, priority) its own copy of the
 material; the refraction water (drawn after the scene) gets 125, its second
 pass 126, and the game's effects, drawn after everything, 127 (below).
 
+### Seams between map pieces
+
+The game draws each map piece's float vertex positions with one world matrix
+per instance, the file's node world x 10 for nearly all of them, made at
+load (ffx-rust's docs/formats/scene.md, "Round 2: open questions", 4), so
+the pieces' shared edges meet exactly and nothing shows between them (the
+original's own picture, captured with MSAA off, has no cracks). The import
+keeps those node worlds (identity on almost every node, under the map's
+x 10 root). The cracks came from Godot's glTF loader instead. By default it
+compresses the vertex attributes of every surface with normals and no skin
+or morph targets, storing positions as 16-bit fractions of that surface's
+own bounding box. Two pieces sharing an edge then round its vertices
+differently, and single pixels of the clear colour and the sky showed along
+the seams (Besaid's sand near the save sphere; both renderers).
+`ClassicLibrary.Load` passes `IMPORT_FORCE_DISABLE_MESH_COMPRESSION` (64) to
+`GltfDocument.AppendFromFile`. Measured at developer save 7
+(Compatibility): 110 of the map's 138 surfaces were compressed, none now.
+Isolated bright pixels in the ground half of the picture went from 88 to 9,
+and the 9 are on Tidus and the save sphere's glow, where the original's
+picture has 9 too. Besaid's score is unchanged (11.6, 11.7 against 11.8).
+The cost is the full-size vertex formats (positions 12 bytes instead of 8,
+normals and tangents unpacked) on the map's static meshes; characters,
+skinned, were never compressed.
+
 ## Colours (G5)
 
 The game computes on the stored (gamma) values of its textures and vertex

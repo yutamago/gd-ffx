@@ -129,11 +129,24 @@ public sealed class ClassicLibrary
     /// is a map's texture folder as the models name it (<c>PS3Data/map/bsil/bsil00/tex/</c>),
     /// where its cube maps are.
     /// </summary>
+    /// <summary>
+    /// <c>EditorSceneFormatImporter.IMPORT_FORCE_DISABLE_MESH_COMPRESSION</c> (64; the editor's
+    /// enum is not in the game's assembly). Without it Godot's glTF loader compresses the
+    /// vertex attributes of every surface with normals and no skin or morph: positions as
+    /// 16-bit fractions of the surface's own bounding box. Two map pieces then round the
+    /// vertices of an edge they share differently, and the cracks between them let the clear
+    /// colour and the sky through (single bright pixels along the seams of Besaid's sand: 110
+    /// of the map's 138 surfaces were compressed). The game draws the pieces' float positions
+    /// with one shared world matrix (ffx-rust's docs/formats/scene.md, question 4), so its
+    /// edges meet; uncompressed, Godot's do too.
+    /// </summary>
+    public const uint ForceDisableMeshCompression = 64;
+
     public static Node3D? Load(string path, string? texDir = null)
     {
         var doc = new GltfDocument();
         var state = new GltfState();
-        if (doc.AppendFromFile(path, state) != Error.Ok)
+        if (doc.AppendFromFile(path, state, ForceDisableMeshCompression) != Error.Ok)
         {
             GD.PrintErr($"ffx: cannot load {path}");
             return null;
