@@ -80,6 +80,10 @@ public partial class DebugView : Control
             _test = new BattleTest(timeout, GameSettings.Arg("shot"));
         else if (GameSettings.Flag("selftest-message"))
             _test = new MessageTest(timeout, GameSettings.Arg("shot"));
+        else if (GameSettings.Flag("selftest-load"))
+            _test = new LoadTest(timeout, GameSettings.Arg("shot-dir"));
+        else if (GameSettings.Flag("selftest-save"))
+            _test = new SaveTest(timeout, GameSettings.Arg("shot-dir"));
         else if (GameSettings.Flag("selftest-ux"))
             _test = new UxTest(timeout, GameSettings.Arg("shot-dir"));
     }
@@ -132,9 +136,19 @@ public partial class DebugView : Control
             _lastLog = s.Seconds;
             GD.Print($"ffx: {OneLine(s, _rate)}  {SnapshotLine(host.View)}  {AudioLine(s)}");
         }
-        if (_test.Step(host.Game, s, host.View, delta) is { } pass)
+        if (_test.Step(host.Game, s, host.View, delta) is { } passed)
         {
-            GD.Print(pass ? $"ffx selftest: PASS ({_test.Note})" : $"ffx selftest: FAIL ({_test.Note})");
+            var pass = passed;
+            var note = _test.Note;
+            // --check-flash: every Flash movie the game opened has a native screen
+            if (GameSettings.Flag("check-flash"))
+            {
+                var (ok, flash) = FlashScreens.Check(host.Game);
+                GD.Print($"ffx flash: {flash}");
+                pass &= ok;
+                note += $"; {flash}";
+            }
+            GD.Print(pass ? $"ffx selftest: PASS ({note})" : $"ffx selftest: FAIL ({note})");
             GD.Print($"ffx: {OneLine(s, _rate)}  {AudioLine(s)}");
             if (host.View.Skipped.Count > 0)
                 GD.Print($"ffx: characters the game culled or skipped (not drawn here since API 10): {string.Join(" ", host.View.Skipped)}");
@@ -312,13 +326,35 @@ public sealed class SelfTest(double timeout) : ITest
             case Phase.Title when s.Map == DebugView.MapTitle && GameSettings.AudioEnabled() && s.AudioPulled == 0:
                 return Done(false, $"at the title, but Godot's player got no sound ({DebugView.AudioLine(s)})");
             case Phase.Title when s.Map == DebugView.MapTitle:
-                return Done(true,$"{_fire}; the opening went to the title after {_presses} Start press(es); "
+            {
+                // the start-up opening (openingscreen.swf) played natively and ended the game's
+                // start-up loop through its Finish (unless --skip-opening)
+                var opening = OpeningCheck(game);
+                return Done(opening.Pass, $"{opening.Note}; {_fire}; the opening went to the title after {_presses} Start press(es); "
                     + $"{s.Updates} updates in {s.Seconds:F1} s, {v.Decoded} snapshots decoded; {DebugView.AudioLine(s)}");
+            }
             case Phase.Title when _phaseTime > 5 && _presses < 5:
                 Next(Phase.Press);
                 break;
         }
         return null;
+    }
+
+    /// <summary>
+    /// The native start-up opening's check: the game waited in its start-up loop, the view
+    /// played the movie's frames (the logo, then the autosave notice), the extension called
+    /// <c>Finish</c> on the view's ask (not on its own time-out) and the loop went on.
+    /// </summary>
+    public static (bool Pass, string Note) OpeningCheck(FfxGame game)
+    {
+        if (GameHost.Instance?.NativeOpening != true)
+            return (true, "start-up opening skipped");
+        var st = game.OpeningState();
+        var view = OpeningView.Instance;
+        bool pass = st.Waiting && st.FinishSent && st.Ended && !st.TimedOut && view is { LogoShown: true, NoticeShown: true };
+        return (pass, $"start-up opening: {(view?.LogoShown == true ? "logo" : "NO logo")}, {(view?.NoticeShown == true ? "autosave notice" : "NO notice")} "
+            + $"(frame {view?.Frame}), the game {(st.Waiting ? "waited" : "did NOT wait")}, Finish {(st.FinishSent ? (st.TimedOut ? "sent on the time-out" : "sent") : "NOT sent")}, "
+            + $"{(st.Ended ? "the start-up loop went on" : "the loop did NOT end")}");
     }
 
     private static void Key(bool down)

@@ -1,4 +1,4 @@
-[gd_scene load_steps=17 format=3]
+[gd_scene load_steps=20 format=3]
 
 [ext_resource type="Script" path="res://src/StateView3D.cs" id="1_view"]
 [ext_resource type="Script" path="res://src/DebugView.cs" id="2_debug"]
@@ -16,6 +16,9 @@
 [ext_resource type="Script" path="res://src/PauseView.cs" id="14_pause"]
 [ext_resource type="Script" path="res://src/OptionsView.cs" id="15_opt"]
 [ext_resource type="Script" path="res://src/TransitionView.cs" id="16_trans"]
+[ext_resource type="Script" path="res://src/SaveLoadView.cs" id="17_save"]
+[ext_resource type="Script" path="res://src/AutosaveView.cs" id="18_auto"]
+[ext_resource type="Script" path="res://src/OpeningView.cs" id="19_open"]
 
 [node name="Main" type="Node"]
 
@@ -118,6 +121,16 @@ grow_vertical = 2
 mouse_filter = 2
 script = ExtResource("11_end")
 
+[node name="SaveLoadView" type="Control" parent="Overlay"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("17_save")
+
 [node name="BoosterView" type="Control" parent="Overlay"]
 layout_mode = 3
 anchors_preset = 15
@@ -127,6 +140,16 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 script = ExtResource("12_boost")
+
+[node name="AutosaveView" type="Control" parent="Overlay"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("18_auto")
 
 [node name="FpsView" type="Control" parent="Overlay"]
 layout_mode = 3
@@ -147,6 +170,16 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 script = ExtResource("14_pause")
+
+[node name="OpeningView" type="Control" parent="Overlay"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("19_open")
 
 [node name="OptionsView" type="Control" parent="Overlay"]
 layout_mode = 3

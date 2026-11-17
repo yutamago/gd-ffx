@@ -47,6 +47,19 @@ public partial class FfxGame : RefCounted
         public static readonly StringName mouse_exited = "mouse_exited";
         public static readonly StringName mouse_input = "mouse_input";
         public static readonly StringName peek = "peek";
+        public static readonly StringName set_native_opening = "set_native_opening";
+        public static readonly StringName opening_state = "opening_state";
+        public static readonly StringName opening_finish = "opening_finish";
+        public static readonly StringName flash_movies = "flash_movies";
+        public static readonly StringName flash_calls_pending = "flash_calls_pending";
+        public static readonly StringName flash_calls = "flash_calls";
+        public static readonly StringName flash_info = "flash_info";
+        public static readonly StringName flash_render = "flash_render";
+        public static readonly StringName flash_bounds = "flash_bounds";
+        public static readonly StringName flash_class = "flash_class";
+        public static readonly StringName flash_label = "flash_label";
+        public static readonly StringName flash_alphas = "flash_alphas";
+        public static readonly StringName flash_bitmap = "flash_bitmap";
         public static readonly StringName place_name = "place_name";
         public static readonly StringName request_battle = "request_battle";
         public static readonly StringName set_battle_party = "set_battle_party";
@@ -216,6 +229,107 @@ public partial class FfxGame : RefCounted
 
     /// <summary>A developer's look at <paramref name="len"/> bytes of game memory (read only; empty while no game runs).</summary>
     public byte[] Peek(long address, int len) => Node.Call(M.peek, address, len).AsByteArray();
+
+    // ---- the Flash screens (docs/architecture.md, "The Flash screens") ----------------------
+
+    /// <summary>Before <see cref="Start"/>: the start-up logos play natively (the game waits for their <c>Finish</c>, <see cref="OpeningFinish"/>).</summary>
+    public void SetNativeOpening(bool on) => Node.Call(M.set_native_opening, on);
+
+    /// <summary>The start-up opening: the start-up loop waited for it, its <c>Finish</c> was called, the loop went on, it ended without <see cref="OpeningFinish"/>.</summary>
+    public (bool Waiting, bool FinishSent, bool Ended, bool TimedOut) OpeningState()
+    {
+        using var v = Node.Call(M.opening_state);
+        using var d = v.AsGodotDictionary();
+        bool B(string k)
+        {
+            using var x = Variants.Get(d, k);
+            return x.AsBool();
+        }
+        return (B("waiting"), B("finish_sent"), B("ended"), B("timed_out"));
+    }
+
+    /// <summary>Ends the start-up opening (its <c>Finish</c>, at the start-up loop's next check).</summary>
+    public void OpeningFinish() => Node.Call(M.opening_finish);
+
+    /// <summary>The Flash movies the game opened, oldest first: name, open order, how often the game drew it.</summary>
+    public System.Collections.Generic.List<(string Name, int Seq, long Draws)> FlashMovies()
+    {
+        var list = new System.Collections.Generic.List<(string, int, long)>();
+        foreach (var e in Node.Call(M.flash_movies).AsStringArray())
+        {
+            var p = e.Split('\u001f');
+            if (p.Length == 3)
+                list.Add((p[0], int.Parse(p[1]), long.Parse(p[2])));
+        }
+        return list;
+    }
+
+    /// <summary>How many AS3 calls of the game on its movies wait (<see cref="FlashCalls"/>).</summary>
+    public int FlashCallsPending() => (int)Node.Call(M.flash_calls_pending).AsInt64();
+
+    /// <summary>The AS3 calls the game made on its movies since the last time, oldest first.</summary>
+    public System.Collections.Generic.List<FlashCall> FlashCalls()
+    {
+        var list = new System.Collections.Generic.List<FlashCall>();
+        foreach (var e in Node.Call(M.flash_calls).AsStringArray())
+        {
+            var p = e.Split('\u001f');
+            if (p.Length >= 3)
+                list.Add(new FlashCall(p[0], int.TryParse(p[1], out var q) ? q : 0, p[2], p[3..]));
+        }
+        return list;
+    }
+
+    /// <summary>A Flash movie's stage (pixels), frame rate and frames; null without it (the archive: <c>classic_open</c>).</summary>
+    public (float Width, float Height, float Fps, int Frames)? FlashInfo(string movie)
+    {
+        using var v = Node.Call(M.flash_info, movie);
+        using var d = v.AsGodotDictionary();
+        if (d.Count == 0)
+            return null;
+        using var w = Variants.Get(d, "width");
+        using var h = Variants.Get(d, "height");
+        using var f = Variants.Get(d, "fps");
+        using var n = Variants.Get(d, "frames");
+        return ((float)w.AsDouble(), (float)h.AsDouble(), (float)f.AsDouble(), (int)n.AsInt64());
+    }
+
+    /// <summary>
+    /// Character <paramref name="id"/> (0: the main timeline) of a Flash movie at
+    /// <paramref name="frame"/>, drawn at <paramref name="scale"/> pixels a stage pixel into a
+    /// <paramref name="width"/> x <paramref name="height"/> image whose corner is stage point
+    /// <paramref name="origin"/>; null without the movie.
+    /// </summary>
+    public Image? FlashRender(string movie, int id, int frame, Vector2 origin, int width, int height, float scale)
+    {
+        var rgba = Node.Call(M.flash_render, movie, id, frame, origin.X, origin.Y, width, height, scale).AsByteArray();
+        return rgba.Length == width * height * 4 ? Image.CreateFromData(width, height, false, Image.Format.Rgba8, rgba) : null;
+    }
+
+    /// <summary>Where a Flash movie's character draws at a frame (stage pixels); empty when nothing.</summary>
+    public Rect2 FlashBounds(string movie, int id, int frame) => Node.Call(M.flash_bounds, movie, id, frame).AsRect2();
+
+    /// <summary>The character a Flash movie exports as class <paramref name="name"/>, -1 for none.</summary>
+    public int FlashClass(string movie, string name) => (int)Node.Call(M.flash_class, movie, name).AsInt64();
+
+    /// <summary>The frame of label <paramref name="label"/> in sprite <paramref name="id"/> of a Flash movie, -1 for none.</summary>
+    public int FlashLabel(string movie, int id, string label) => (int)Node.Call(M.flash_label, movie, id, label).AsInt64();
+
+    /// <summary>The alpha of the main timeline's instance at <paramref name="depth"/>, frame by frame (index 0: frame 1).</summary>
+    public float[] FlashAlphas(string movie, int depth) => Node.Call(M.flash_alphas, movie, depth).AsFloat32Array();
+
+    /// <summary>Bitmap <paramref name="id"/> of a Flash movie; null without it.</summary>
+    public Image? FlashBitmap(string movie, int id)
+    {
+        using var v = Node.Call(M.flash_bitmap, movie, id);
+        using var d = v.AsGodotDictionary();
+        if (d.Count == 0)
+            return null;
+        using var w = Variants.Get(d, "width");
+        using var h = Variants.Get(d, "height");
+        using var px = Variants.Get(d, "rgba");
+        return Image.CreateFromData((int)w.AsInt64(), (int)h.AsInt64(), false, Image.Format.Rgba8, px.AsByteArray());
+    }
 
     /// <summary>A material texture's face (0, or 0..6 for a cube map) as PNG bytes; empty without the archive.</summary>
     public byte[] ClassicTexture(string path, int face) => Node.Call(M.classic_texture, path, face).AsByteArray();
@@ -429,3 +543,10 @@ public readonly struct GameState
 /// run so far and the row of the last button the game took.
 /// </summary>
 public readonly record struct EscMenuState(bool Seen, bool Open, bool Parameters, bool PopUp, bool Failed, long Done, long Row);
+
+/// <summary>An AS3 call the game made on one of its Flash movies (<see cref="FfxGame.FlashCalls"/>): the movie's file name and open order, the function, its arguments as text.</summary>
+public sealed record FlashCall(string Movie, int Seq, string Function, string[] Args)
+{
+    /// <summary>Argument <paramref name="i"/>, "" past the end.</summary>
+    public string Arg(int i) => i < Args.Length ? Args[i] : "";
+}

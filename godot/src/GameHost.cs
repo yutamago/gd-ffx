@@ -47,6 +47,9 @@ public partial class GameHost : Node
         BackgroundWindow.Apply();
     }
 
+    /// <summary>Whether the start-up opening plays natively (<see cref="OpeningView"/>): set at <see cref="Start"/>.</summary>
+    public bool NativeOpening { get; private set; }
+
     /// <summary>Whether <see cref="Start"/> succeeded (the game booted, or <c>--no-game</c>).</summary>
     public bool Started { get; private set; }
 
@@ -112,6 +115,10 @@ public partial class GameHost : Node
         // the game's speed (the options' or --speed=), from the boot on
         if (UserSettings.Current.Speed != 1)
             Game!.SetSpeed(UserSettings.Current.Speed);
+        // the start-up opening (openingscreen.swf) natively when booting to the title: not with a
+        // developer save or --skip-opening (the checks), where it ends on its first frame
+        NativeOpening = devsave <= 0 && GameSettings.Int("devsave", 0) <= 0 && !GameSettings.Flag("skip-opening");
+        Game!.SetNativeOpening(NativeOpening);
         GD.Print($"ffx: booting the game from {gameDir} (documents: {documents})");
         if (!Game!.Start(gameDir, documents))
             return Fail(Game.LastError);
@@ -240,6 +247,8 @@ public partial class GameHost : Node
         Perf.End(Perf.Section.Snapshots, t0);
         var t1 = Perf.Start();
         Classic?.Poll();
+        // the Flash screens' movies and calls (the tips, the save list, the autosave prompt)
+        FlashScreens.Poll(Game, _clock);
         // the developer save once an event runs (the opening is the first)
         if (_devsave > 0 && View.Current is { } s && s.World.Event.Length > 0 && s.Update > 30)
         {

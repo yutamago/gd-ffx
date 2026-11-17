@@ -194,6 +194,14 @@ impl Classic {
         Some(String::from_utf8_lossy(&text).into_owned())
     }
 
+    /// Flash movie `name` (`chocobo.swf`) from the archive, parsed
+    /// (`ffx_import::Importer::flash_movie`).
+    #[must_use]
+    pub fn flash_movie(&self, name: &str) -> Option<Arc<ffx_import::flash::Movie>> {
+        let open = lock(&self.open).clone()?;
+        open.importer.flash_movie(name)
+    }
+
     /// A material texture's face as PNG (`ffx_import::Importer::texture_png`).
     #[must_use]
     pub fn texture_png(&self, path: &str, face: usize) -> Option<Vec<u8>> {

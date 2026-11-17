@@ -15,6 +15,8 @@
 //! - [`state`]: the few state values the G0 debug view reads;
 //! - [`keys`]: Godot's keys as the game's scan codes;
 //! - [`esc`]: the ESC menu's Flash callbacks, called for gd-ffx's native page;
+//! - [`flash`]: the movies the game opens and the calls it makes on them,
+//!   for the native screens; the native opening's `Finish`;
 //! - [`encounters`]: the battle maps of the current map's random encounters.
 //!
 //! Nothing of the game is built in: it is read from the player's folder at
@@ -24,6 +26,7 @@ pub mod audio;
 pub mod classic;
 pub mod encounters;
 pub mod esc;
+pub mod flash;
 pub mod game;
 pub mod keys;
 pub mod platform;

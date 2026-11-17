@@ -117,7 +117,8 @@ public partial class BattleMenuView : Control
                 rows.Add(CommandName(host.Game, (ushort)(m.BattleIds[i] | (m.BattleIds[i + 1] << 8)), s.World.Language));
             cursor = m.BattleCursor;
         }
-        else if (m.SaveState != 0)
+        // the save screen: SaveLoadView draws the game's own (saveload_*.swf) once it is set up
+        else if (m.SaveState != 0 && !SaveLoadView.Active)
         {
             var saving = !(m.SaveState >= 0xb && m.SaveState <= 0x11);
             title = saving ? "Save" : "Load";
