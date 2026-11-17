@@ -120,7 +120,10 @@ fn run_game(
         speed: ((boot.speed - 1.0).abs() > f64::EPSILON).then_some(boot.speed),
         ..ffx_host::Options::default()
     };
-    let mut exec = match ffx_host::boot_opts(&boot.exe, ffx_host::ports::table(), &opts) {
+    let mut table = ffx_host::ports::table();
+    // the native ESC menu's calls into the game's (docs/architecture.md)
+    crate::esc::register(&mut table);
+    let mut exec = match ffx_host::boot_opts(&boot.exe, table, &opts) {
         Ok(e) => e,
         Err(e) => return format!("boot: {e}"),
     };
@@ -587,6 +590,83 @@ impl FfxGame {
             "maps" => &maps,
             "levels" => &levels,
         }
+    }
+
+    /// Calls the ESC menu's Flash callback `EscMenuButtonClick([page,
+    /// index])` at the game's next `FFEscMenu_update`, as the page's button
+    /// would (`crate::esc`; page 13 is Change parameters). False when the
+    /// game has not booted.
+    #[func]
+    fn esc_button(&mut self, page: i64, index: i64) -> bool {
+        if self.run.as_ref().and_then(Run::shared).is_none() {
+            return false;
+        }
+        crate::esc::push(crate::esc::Call::Button {
+            page: u32::try_from(page).unwrap_or(0),
+            index: u32::try_from(index).unwrap_or(0),
+        });
+        true
+    }
+
+    /// Answers the ESC menu's open pop-up (`EscMenuPopUpConfirmed`): yes
+    /// or no.
+    #[func]
+    fn esc_popup_answer(&mut self, yes: bool) -> bool {
+        if self.run.as_ref().and_then(Run::shared).is_none() {
+            return false;
+        }
+        crate::esc::push(crate::esc::Call::PopUp {
+            answer: if yes { 1.0 } else { 0.0 },
+        });
+        true
+    }
+
+    /// What the ESC menu's wrapper saw at the game's last
+    /// `FFEscMenu_update`: `seen` (it ran), `open`, `parameters` (the
+    /// Change parameters entry is enabled, as the game's page would show
+    /// it), `popup` (the page's confirmation waits for its answer),
+    /// `failed` (a callback could not be called), `done` (calls run so
+    /// far), `row` (the row of the last button the game took).
+    #[func]
+    fn esc_state(&self) -> VarDictionary {
+        let (s, done, row) = crate::esc::state();
+        let [seen, open, parameters, popup, failed] = crate::esc::bits(s);
+        vdict! {
+            "seen" => seen,
+            "open" => open,
+            "parameters" => parameters,
+            "popup" => popup,
+            "failed" => failed,
+            "done" => i64::from(done),
+            "row" => i64::from(row.cast_signed()),
+        }
+    }
+
+    /// The random encounters of the map a random encounter looks up now
+    /// (`g_SaveData + 4`, `crate::encounters`): `ready` (false before the
+    /// game's table is read, or for a map without one), `map`, and
+    /// `groups`, each with its battle map word (`map`), `rate` (0: no
+    /// random encounters), the map's `file` and its `level`.
+    #[func]
+    fn encounter_maps(&self) -> VarDictionary {
+        let Some((map, groups)) = self
+            .run
+            .as_ref()
+            .and_then(Run::shared)
+            .and_then(|s| crate::encounters::current(&s))
+        else {
+            return vdict! { "ready" => false };
+        };
+        let mut list = Array::<VarDictionary>::new();
+        for g in &groups {
+            list.push(&vdict! {
+                "map" => i64::from(g.map),
+                "rate" => i64::from(g.rate),
+                "file" => g.file.as_str(),
+                "level" => crate::encounters::level_of(&g.file).unwrap_or_default().as_str(),
+            });
+        }
+        vdict! { "ready" => true, "map" => i64::from(map), "groups" => &list }
     }
 
     /// The game's encoded text (a message window's) as text, in

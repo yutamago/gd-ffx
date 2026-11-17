@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using GdFfx.Api;
 using GdFfx.Remake;
 using Godot;
@@ -18,7 +19,11 @@ namespace GdFfx;
 /// <item>the Godot scene of the first <see cref="Keep"/> candidates, built on a worker thread
 /// (<see cref="ContentResolver.Start"/>) and taken by the 3D view's next <c>Resolve</c> of that
 /// level; the oldest is dropped beyond <see cref="Keep"/>. Under the headless dummy renderer,
-/// whose loads run on the main thread (<see cref="Background"/>), only the imports.</item>
+/// whose loads run on the main thread (<see cref="Background"/>), only the imports;</item>
+/// <item>the battle map of the next random encounter: where the game can start one (encounters
+/// not switched off with F3, no battle running), the battle maps of the current map's encounter
+/// groups with a rate (the game's encounter table, <see cref="FfxGame.EncounterMaps"/>), imported
+/// and the first one's scene held as well (<see cref="KeepBattle"/>, beside the exits').</item>
 /// </list>
 /// <c>--no-prefetch</c> turns it off.
 /// </summary>
@@ -29,6 +34,20 @@ public sealed class MapPrefetch
 
     /// <summary>Exits imported ahead at most per map.</summary>
     public const int MostExits = 6;
+
+    /// <summary>Battle map scenes held ready at most (beside <see cref="Keep"/>).</summary>
+    public const int KeepBattle = 1;
+
+    private readonly List<string> _battle = new();
+    private readonly List<string> _battleLoads = new();
+    private int _battleOf = -2, _battleFor = -2;
+    private double _battleAsked = -10;
+
+    /// <summary>The battle maps the current map's random encounters use (for tests and the log).</summary>
+    public IReadOnlyList<string> Battle => _battle;
+
+    /// <summary>Battle map scenes started ahead (and not taken yet).</summary>
+    public IReadOnlyList<string> BattleLoads => _battleLoads;
 
     private readonly Dictionary<int, (string Level, int[] Maps, string[] Levels)> _exits = new();
     private readonly List<string> _loads = new();
@@ -84,6 +103,7 @@ public sealed class MapPrefetch
                 break;
             _imported.Add(level);
         }
+        TickBattle(lib, game, s, shown, kept, prepare);
         if (!Background.Threaded)
             return;
         // the scenes of the first candidates not shown or kept already, built on a worker
@@ -116,6 +136,87 @@ public sealed class MapPrefetch
             GD.Print($"ffx: prefetch: {level} dropped");
         }
     }
+
+    /// <summary>
+    /// The next battle's map: the levels of the current map's encounter groups with a rate, read
+    /// again when the map the game looks encounters up for changes (and every 2 s until the table
+    /// answers); imported, and the first one's scene held while an encounter can come.
+    /// </summary>
+    private void TickBattle(ClassicLibrary lib, FfxGame game, Snapshot s, string shown, string kept, System.Func<Node3D, object?> prepare)
+    {
+        _battleLoads.RemoveAll(static l => !ContentResolver.Pending("map", l));
+        var w = s.World;
+        // in a battle, or during a map change: the battle map is shown or the field not entered yet
+        if (w.Battle || w.MapChange || !w.Level.StartsWith("/map/"))
+            return;
+        double now = Time.GetTicksMsec() / 1000.0;
+        // another map: the last one's battle maps are no longer candidates (a held scene is dropped)
+        if (w.Map != _battleFor)
+        {
+            _battleFor = w.Map;
+            _battleOf = -2;
+            _battle.Clear();
+            foreach (var level in _battleLoads)
+            {
+                ContentResolver.Forget("map", level);
+                GD.Print($"ffx: prefetch: battle map {level} dropped");
+            }
+            _battleLoads.Clear();
+        }
+        if (w.Map != _battleOf && now - _battleAsked > 2)
+        {
+            _battleAsked = now;
+            if (game.EncounterMaps() is { } e)
+            {
+                _battleOf = w.Map;
+                _battle.Clear();
+                foreach (var g in e.Groups)
+                    if (g.Rate > 0 && g.Level.Length > 0 && !_battle.Contains(g.Level))
+                        _battle.Add(g.Level);
+                GD.Print($"ffx: prefetch: encounters on map 0x{e.Map:x4}: {(_battle.Count > 0 ? string.Join(" ", _battle) : "none")} (groups: {string.Join(", ", e.Groups.Select(g => $"0x{g.Map:x3} rate {g.Rate} {g.Level}"))})");
+            }
+        }
+        if (_battle.Count == 0 || s.Boosters.Encounters == 0)
+            return;
+        foreach (var level in _battle)
+        {
+            if (_imported.Contains(level))
+                continue;
+            if (lib.Path("map", level, quiet: true) == null && !lib.Failed("map", level))
+                break;
+            _imported.Add(level);
+        }
+        if (!Background.Threaded)
+            return;
+        int want = KeepBattle;
+        foreach (var level in _battle)
+        {
+            if (want == 0)
+                break;
+            if (level == shown || level == kept || lib.Failed("map", level))
+                continue;
+            want--;
+            if (_battleLoads.Contains(level) || _loads.Contains(level) || !_imported.Contains(level) || ContentResolver.Pending("map", level))
+                continue;
+            if (!ContentResolver.Start(lib, "map", level, prepare: prepare))
+                continue;
+            _battleLoads.Add(level);
+            GD.Print($"ffx: prefetch: battle map {level} loading ahead");
+        }
+        while (_battleLoads.Count > KeepBattle)
+        {
+            int drop = _battleLoads.FindIndex(l => !_battle.Contains(l));
+            if (drop < 0)
+                drop = 0;
+            var level = _battleLoads[drop];
+            _battleLoads.RemoveAt(drop);
+            ContentResolver.Forget("map", level);
+            GD.Print($"ffx: prefetch: battle map {level} dropped");
+        }
+    }
+
+    /// <summary>Whether <paramref name="level"/> was loaded ahead (an exit's or a battle's).</summary>
+    public bool Holds(string level) => _loads.Contains(level) || _battleLoads.Contains(level);
 
     private void Add(string level, string shown, string current)
     {

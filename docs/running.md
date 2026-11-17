@@ -75,14 +75,20 @@ own documents folder, so the original's settings and saves are untouched.
   game's own tip text in its language;
 - **the pause and the ESC menu** (`PauseView`): Start (B) pauses where the
   game allows it: the picture dimmed, "PAUSE" and the keys. Esc opens the
-  game's PC menu, which halts play (the game skips its field update); its page is a Flash screen gd-ffx
-  does not draw, so gd-ffx shows its entries natively (the game's texts)
-  and takes the keys and mouse while it is open: Resume, System setting
-  (gd-ffx's options, below), Special features (the four boosters with their
-  state; one picked returns to the game and presses its key), Change
-  parameters (not offered yet), Quit (asks first). Up/Down choose, Enter (C,
-  Space) confirms, Esc (Backspace, X) goes back or resumes;
-- **the options** (F10, or the ESC menu's System setting; "Options" below);
+  game's PC menu, which halts play (the game skips its field update; the
+  picture behind it stands still, as the original's); its pages are Flash
+  screens gd-ffx does not draw, so gd-ffx shows them natively (the game's
+  texts and help lines) and takes the keys and mouse while it is open:
+  Resume, System setting (gd-ffx's options, below), Special features (the
+  four boosters with their state; one picked returns to the game and
+  presses its key), Change parameters (the game's page: get every item,
+  every ability or the most gil, after the game's own "irreversible"
+  question; enabled where the game's page is), Quit (asks first). Up/Down
+  choose, Enter (C, Space) confirms, Esc (Backspace, X) goes back or
+  resumes;
+- **the options** (F10, or the ESC menu's System setting; "Options" below):
+  framed checkboxes that read ticked or not, the control with the keyboard
+  or pad focus framed in gold and its caption lit;
 - **the FPS overlay** (F9): frames a second, the frame time and the worst of
   the last second, a graph of the last 240 frame times (lines at 16.7 and
   33.3 ms), and the game's updates a second with its speed;
@@ -592,14 +598,20 @@ under Xvfb: a picture every 50 ms from the map change request);
 sphere, confirm opens its two-way choice and the native box's cursor follows
 the game's (Down, Up, Down before the confirm; the confirm picks 1); Esc
 opens the game's PC menu and the native ESC menu with its five entries,
+and play halts under it (the event frame and the motions stand still, the
+view's shader clock held),
 System setting opens the options, which set the frame cap (applied and
 saved), the glow and the game's speed (x2: about 60 updates a second, which
-the FPS overlay, F9, shows); Esc closes them and Esc again resumes; F3 and
+the FPS overlay, F9, shows), with the focus framed and moved by Down; Esc
+closes them; Change parameters is enabled, its page shows the game's three
+rows, MAX gil's Get brings the game's confirmation, No leaves the gil and
+Yes gives 999,999,999 (the game's own callbacks); Esc twice resumes; F3 and
 F1 reach the game (the encounter mode and Turbo step, with badge and tip)
 and are pressed back; Start shows the pause screen; a treasure's message
 keeps its item's name through the text cleaning. The settings go to a
 temporary file. `--shot-dir=DIR` under Xvfb writes a picture of each
-screen; `tools/ux-shots.sh OUT_DIR` takes them all (with the battle's
+screen (`parameters.png`, `parameters-confirm.png` and `options-focus.png`
+among them); `tools/ux-shots.sh OUT_DIR` takes them all (with the battle's
 command menu and target selection) offscreen, as `tools/compare-shot.sh`
 renders.
 

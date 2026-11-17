@@ -10,7 +10,9 @@ namespace GdFfx;
 /// gd-ffx's settings as controls (G5): each change goes into <see cref="UserSettings.Current"/>,
 /// is applied at once (<see cref="UserSettings.Apply"/>) and saved. The in-game overlay
 /// (<see cref="OptionsView"/>, F10 or the ESC menu's System setting) and the launcher show it.
-/// The controls are reachable by key (<see cref="Controls"/>) for the self-checks.
+/// The controls are reachable by key (<see cref="Controls"/>) for the self-checks. They wear the
+/// game-like look (<see cref="GameTheme"/>): framed checkboxes that read ticked or not, and the
+/// control with the keyboard or pad focus framed in gold, its caption lit with the menus' cursor.
 /// </summary>
 public partial class OptionsPanel : VBoxContainer
 {
@@ -24,6 +26,7 @@ public partial class OptionsPanel : VBoxContainer
 
     public override void _Ready()
     {
+        Theme = GameTheme.Get();
         AddThemeConstantOverride("separation", 6);
         var grid = new GridContainer { Columns = 2 };
         grid.AddThemeConstantOverride("h_separation", 16);
@@ -81,16 +84,43 @@ public partial class OptionsPanel : VBoxContainer
 
     private readonly List<Action> _fill = new();
 
-    private static Label Caption(GridContainer grid, string text)
+    /// <summary>The captions by setting, with their cursor (lit while the control has the focus).</summary>
+    private readonly Dictionary<string, (CursorMark Mark, Label Label)> _captions = new();
+
+    /// <summary>The caption whose control has the focus now (for tests and pictures; "" none).</summary>
+    public string Focused => _captions.FirstOrDefault(c => c.Value.Mark.On).Key ?? "";
+
+    private void Caption(GridContainer grid, string key, string text)
     {
+        var row = new HBoxContainer { SizeFlagsVertical = SizeFlags.ShrinkCenter, MouseFilter = MouseFilterEnum.Ignore };
+        row.AddThemeConstantOverride("separation", 4);
+        var mark = new CursorMark { CustomMinimumSize = new Vector2(16, 16), Colour = GameTheme.Focus };
         var l = new Label { Text = text, SizeFlagsVertical = SizeFlags.ShrinkCenter };
-        grid.AddChild(l);
-        return l;
+        row.AddChild(mark);
+        row.AddChild(l);
+        grid.AddChild(row);
+        _captions[key] = (mark, l);
+    }
+
+    /// <summary>The caption lit while <paramref name="c"/> has the focus.</summary>
+    private void Follow(string key, Control c)
+    {
+        var (mark, label) = _captions[key];
+        c.FocusEntered += () =>
+        {
+            mark.On = true;
+            label.AddThemeColorOverride("font_color", MenuList.LitColour);
+        };
+        c.FocusExited += () =>
+        {
+            mark.On = false;
+            label.RemoveThemeColorOverride("font_color");
+        };
     }
 
     private void Choice(GridContainer grid, string key, string label, string[] items, Func<UserSettings, int> get, Action<UserSettings, int> set)
     {
-        Caption(grid, label);
+        Caption(grid, key, label);
         var o = new OptionButton { Name = key, CustomMinimumSize = new Vector2(260, 0) };
         foreach (var item in items)
             o.AddItem(item);
@@ -103,13 +133,14 @@ public partial class OptionsPanel : VBoxContainer
         };
         grid.AddChild(o);
         Controls[key] = o;
+        Follow(key, o);
         _fill.Add(() => o.Select(Math.Clamp(get(UserSettings.Current), 0, items.Length - 1)));
     }
 
     private void Check(GridContainer grid, string key, string label, Func<UserSettings, bool> get, Action<UserSettings, bool> set, bool enabled = true)
     {
-        Caption(grid, label);
-        var c = new CheckBox { Name = key, Disabled = !enabled, Text = "" };
+        Caption(grid, key, label);
+        var c = new CheckBox { Name = key, Disabled = !enabled, Text = "", SizeFlagsHorizontal = SizeFlags.ShrinkBegin };
         c.Toggled += on =>
         {
             if (_filling)
@@ -119,12 +150,13 @@ public partial class OptionsPanel : VBoxContainer
         };
         grid.AddChild(c);
         Controls[key] = c;
+        Follow(key, c);
         _fill.Add(() => c.ButtonPressed = get(UserSettings.Current));
     }
 
     private void Slider(GridContainer grid, string key, string label, Func<UserSettings, double> get, Action<UserSettings, double> set)
     {
-        Caption(grid, label);
+        Caption(grid, key, label);
         var s = new HSlider { Name = key, MinValue = 0, MaxValue = 100, Step = 5, CustomMinimumSize = new Vector2(260, 0), SizeFlagsVertical = SizeFlags.ShrinkCenter };
         s.ValueChanged += v =>
         {
@@ -135,6 +167,7 @@ public partial class OptionsPanel : VBoxContainer
         };
         grid.AddChild(s);
         Controls[key] = s;
+        Follow(key, s);
         _fill.Add(() => s.Value = get(UserSettings.Current));
     }
 

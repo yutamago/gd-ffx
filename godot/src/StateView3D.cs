@@ -199,8 +199,11 @@ public partial class StateView3D : Node3D
                 ApplyGlow(look);
             }
         }
-        // the scrolling UVs' and the water's clock, every frame (between snapshots too)
-        GlobalTime = ClassicMaterials.SetTime(view.Previous, view.Current, view.Alpha);
+        // the scrolling UVs' and the water's clock, every frame (between snapshots too); held
+        // under the game's ESC menu, whose picture the original freezes (afterGraphicSync stops
+        // swapping) while the game's GlobalTime runs on (docs/architecture.md, "The ESC menu")
+        if (view.Current?.Menus.EscMenu != true || GlobalTime < 0)
+            GlobalTime = ClassicMaterials.SetTime(view.Previous, view.Current, view.Alpha);
         UpdateMap(host.Classic, view.Current);
         _prefetch.Tick(host.Classic, host.Game, view.Current, _mapLevel, _parked?.Level ?? "", ObjectIndex);
         _layers.Tick(view.Current, view.Current?.World.Map ?? -1, _camera.Far, cam);
@@ -526,7 +529,7 @@ public partial class StateView3D : Node3D
             return;
         // a map still loading in the background that the game left already (unless loaded ahead
         // for a likely next map: MapPrefetch holds or drops those)
-        if (_wantedLevel.Length > 0 && _wantedLevel != level && !_prefetch.Loads.Contains(_wantedLevel))
+        if (_wantedLevel.Length > 0 && _wantedLevel != level && !_prefetch.Holds(_wantedLevel))
             ContentResolver.Forget("map", _wantedLevel);
         _wantedLevel = level;
         // back to the map left last: it was kept
@@ -544,7 +547,7 @@ public partial class StateView3D : Node3D
             GD.Print($"ffx: map {level} shown (kept from before)");
             return;
         }
-        bool ahead = _prefetch.Loads.Contains(level);
+        bool ahead = _prefetch.Holds(level);
         if (ContentResolver.Resolve(lib, "map", level, prepare: ObjectIndex) is not { } content)
         {
             // a map of 2D layers only has no 3D model: shown once its layers are
@@ -698,6 +701,9 @@ public partial class StateView3D : Node3D
     /// the game loads nothing, and every character the game draws has its model, or after
     /// <see cref="HoldLimit"/>. Meanwhile <see cref="Holding"/>.
     /// </summary>
+    /// <summary>The map level of the last snapshot that had one (<see cref="UpdateTransition"/>).</summary>
+    private string _seenLevel = "";
+
     private void UpdateTransition(ClassicLibrary? lib, Snapshot? s)
     {
         if (s == null)
@@ -713,7 +719,13 @@ public partial class StateView3D : Node3D
         _changeWas = w.MapChange;
         ScreenBlack = Black(s);
         bool changing = w.MapChange && ScreenBlack;
-        bool start = mapPending || layersPending || w.SceneLoading || changing;
+        // a new level whose map was loaded ahead is shown in its first frame: still a change,
+        // held for the characters' models
+        var previousLevel = _seenLevel;
+        bool levelChanged = IsMapLevel(level) && IsMapLevel(previousLevel) && level != previousLevel;
+        if (IsMapLevel(level))
+            _seenLevel = level;
+        bool start = mapPending || layersPending || w.SceneLoading || changing || levelChanged;
         if (_mapLevel.Length > 0)
             EverShown = true;
         if (!start && ModelsPending == 0)
@@ -722,7 +734,7 @@ public partial class StateView3D : Node3D
         {
             _inTransition = true;
             _tStart = System.Diagnostics.Stopwatch.GetTimestamp();
-            _from = _mapLevel;
+            _from = levelChanged && _mapLevel == level ? previousLevel : _mapLevel;
             _levelMs = _mapMs = _layersMs = _loadedMs = _modelsMs = -1;
             _source = "";
         }

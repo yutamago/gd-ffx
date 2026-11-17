@@ -19,8 +19,23 @@ namespace GdFfx;
 /// the game's Esc, which closes its menu from any page), System setting (gd-ffx's own settings,
 /// <see cref="OptionsView"/>: they replace the game's video page; the volume is there too),
 /// Special features (the four boosters with their state: one picked closes the menu and taps
-/// its key, F1..F4), Change parameters (not offered: the game's page only), Quit (asks, then
-/// ends gd-ffx). Up/Down choose, Enter (C, Space) confirms, Esc (Backspace, X) goes back.</para>
+/// its key, F1..F4), Change parameters (the game's page 13, natively: below), Quit (asks, then
+/// ends gd-ffx). Up/Down choose, Enter (C, Space) confirms, Esc (Backspace, X) goes back. Each
+/// entry's help line is the game's (localisation lines 0x218..0x220, its
+/// <c>EscMenuHelpTextRefresh</c> table).</para>
+///
+/// <para><b>Change parameters</b> (<c>FFEscMenu_initializeParameterChangePage</c>): three rows,
+/// "Get all items", "Unlock all skills", "MAX gil" (lines 0x2b6, 0x2bd, 0x2c4) each with its
+/// "Get" button (0x2c8) and help (0x2b7, 0x2be, 0x2c5). The entry is enabled as the game's page
+/// enables it (<c>setEnableChangePara</c>: no movie fading, the scenario flag set, not an
+/// Eternal Calm scene; <see cref="FfxGame.EscState"/>). A button is the page's own callback,
+/// <c>EscMenuButtonClick([13, row])</c>, which the extension calls in the movie's place
+/// (<see cref="FfxGame.EscButton"/>): the game then sets up its confirmation, drawn here with its
+/// texts (0x2c9, Yes 0x2ca, No 0x2cb; the cursor starts on No, as nothing can undo it), whose
+/// answer goes back as <c>EscMenuPopUpConfirmed</c> (<see cref="FfxGame.EscPopUpAnswer"/>): yes
+/// fills the items to 99 (<c>MsDebugFullItem</c>), learns every ability
+/// (<c>MsDebugFullCommand</c>, with the game's two achievements) or sets the gil to 999,999,999
+/// (<c>MsDebugFullGill</c>). Where the game refuses, its "Function not Available now!".</para>
 ///
 /// <para>F10 opens the options from play too: gd-ffx taps the game's Esc first, so play halts
 /// under them, and the options open over the ESC menu (at once when the game's
@@ -28,7 +43,7 @@ namespace GdFfx;
 /// </summary>
 public partial class PauseView : Control
 {
-    private enum Page { Home, Features, Quit }
+    private enum Page { Home, Features, Parameters, Confirm, Quit }
 
     private ColorRect _dim = null!;
     private PanelContainer _window = null!;
@@ -39,6 +54,12 @@ public partial class PauseView : Control
     private bool _menuOpen;
     private double _resumeAt = -1, _wantOptionsAt = -1, _clock;
     private int _keyAfterClose;
+    // the parameter page's call waiting for the game (the extension's call count to reach), the row
+    private long _waitDone = -1;
+    private double _waitAt;
+    private int _row;
+    private string _note = "";
+    private EscMenuState _esc;
     private bool _optionsFromMenu;
     private OptionsView? _options;
 
@@ -48,6 +69,15 @@ public partial class PauseView : Control
 
     /// <summary>Whether the native ESC menu is up (the game's is open).</summary>
     public bool MenuOpen => _menuOpen;
+
+    /// <summary>The game's ESC menu as the extension saw it last (for tests).</summary>
+    public EscMenuState Esc => _esc;
+
+    /// <summary>The page's last note (the game's refusal, a call not answered; for tests).</summary>
+    public string Note => _note;
+
+    /// <summary>The title shown now (for tests).</summary>
+    public string Title => _title.Text;
 
     public override void _Ready()
     {
@@ -107,15 +137,55 @@ public partial class PauseView : Control
 
     private readonly Dictionary<(int, byte), string> _loc = new();
 
-    /// <summary>The home page: the game's entries (its texts) and what each does here.</summary>
-    private static readonly (int Loc, string English, string Help)[] Home =
+    /// <summary>A pop-up's text with its line breaks (<see cref="FfxGame.FlashLines"/>).</summary>
+    private string Lines(FfxGame? game, Snapshot? s, int id, string english)
+    {
+        if (game == null || s == null)
+            return english;
+        var key = (id | 0x10000, s.World.Language);
+        if (!_loc.TryGetValue(key, out var t))
+        {
+            t = game.FlashLines(id, MessageView.LanguageCode(s.World.Language));
+            _loc[key] = t.Trim().Length > 0 ? t : english;
+        }
+        return _loc[key];
+    }
+
+    /// <summary>
+    /// The home page: the game's entries and help lines (its texts; the help table
+    /// <c>0x00c33dc0</c> gives page 1's rows 0x218..0x220), and gd-ffx's own help where it does
+    /// something else than the game's page (System setting: gd-ffx's settings).
+    /// </summary>
+    private static readonly (int Loc, string English, int HelpLoc, string Help)[] Home =
     [
-        (0x217, "Resume", "Back to the game."),
-        (0x219, "System setting", "gd-ffx's settings: graphics, sound volume, game speed, the FPS overlay (also F10)."),
-        (0x21b, "Special features", "The PC boosters: Turbo, Supercharge, enemy encounters, auto battle (also F1 to F4 in play)."),
-        (0x21d, "Change parameters", "Not offered by gd-ffx yet: the game's own page is a Flash screen gd-ffx does not draw."),
-        (0x21f, "Quit", "Quit gd-ffx."),
+        (0x217, "Resume", 0x218, "Resume game"),
+        (0x219, "System setting", 0, "gd-ffx's settings: graphics, sound volume, game speed, the FPS overlay (also F10)."),
+        (0x21b, "Special features", 0, "The PC boosters: Turbo, Supercharge, enemy encounters, auto battle (also F1 to F4 in play)."),
+        (0x21d, "Change parameters", 0x21e, "Change game parameters"),
+        (0x21f, "Quit", 0, "Quit gd-ffx."),
     ];
+
+    /// <summary>The Change parameters page's rows: label and help (page 13 of the help table).</summary>
+    private static readonly (int Loc, string English, int HelpLoc, string Help)[] Parameters =
+    [
+        (0x2b6, "Get all items", 0x2b7, "Get 99 of all common items, not including key items."),
+        (0x2bd, "Unlock all skills", 0x2be, "Unlock all the character's skills."),
+        (0x2c4, "MAX gil", 0x2c5, "Get max gil."),
+    ];
+
+    /// <summary><c>FFEscMenu_onParameterButtonClicked</c>'s refusal (<c>0x00b4c52c</c>, English in every language), read from the game.</summary>
+    private string NotAvailable(FfxGame? game)
+    {
+        if (_notAvailable == null && game != null)
+        {
+            var b = game.Peek(0x00b4c52c, 40);
+            int n = System.Array.IndexOf(b, (byte)0);
+            _notAvailable = n > 0 ? System.Text.Encoding.ASCII.GetString(b, 0, n) : "";
+        }
+        return _notAvailable is { Length: > 0 } t ? t : "Not available now.";
+    }
+
+    private string? _notAvailable;
 
     /// <summary>The rows of a page with whether each can be chosen.</summary>
     private (List<string> Rows, List<bool> Enabled, string Help) Rows(FfxGame? game, Snapshot? s)
@@ -142,13 +212,32 @@ public partial class PauseView : Control
                 enabled.AddRange([true, true]);
                 help = "Quit gd-ffx? Unsaved progress is lost.";
                 break;
+            case Page.Parameters:
+            {
+                var get = Loc(game, s, 0x2c8, "Get");
+                foreach (var (loc, english, _, _) in Parameters)
+                {
+                    rows.Add($"{Loc(game, s, loc, english)}\t{get}");
+                    enabled.Add(_waitDone < 0);
+                }
+                var row = Parameters[System.Math.Clamp(_cursor, 0, Parameters.Length - 1)];
+                help = _note.Length > 0 ? _note : _waitDone >= 0 ? "…" : Loc(game, s, row.HelpLoc, row.Help);
+                break;
+            }
+            case Page.Confirm:
+                rows.Add(Loc(game, s, 0x2ca, "Yes"));
+                rows.Add(Loc(game, s, 0x2cb, "No"));
+                enabled.AddRange([_waitDone < 0, _waitDone < 0]);
+                help = _note;
+                break;
             default:
-                foreach (var (loc, english, _) in Home)
+                foreach (var (loc, english, _, _) in Home)
                 {
                     rows.Add(Loc(game, s, loc, english));
-                    enabled.Add(loc != 0x21d);
+                    enabled.Add(loc != 0x21d || _esc.Parameters);
                 }
-                help = Home[System.Math.Clamp(_cursor, 0, Home.Length - 1)].Help;
+                var h = Home[System.Math.Clamp(_cursor, 0, Home.Length - 1)];
+                help = h.HelpLoc != 0 ? Loc(game, s, h.HelpLoc, h.Help) : h.Help;
                 break;
         }
         return (rows, enabled, help);
@@ -181,12 +270,16 @@ public partial class PauseView : Control
         var host = GameHost.Instance;
         var s = host?.View.Current;
         bool esc = s?.Menus.EscMenu == true && host?.Game != null;
+        if (esc && host?.Game is { } g)
+            _esc = g.EscState();
         if (esc && !_menuOpen)
         {
             _menuOpen = true;
             _page = Page.Home;
             _cursor = 0;
             _resumeAt = -1;
+            _waitDone = -1;
+            _note = "";
             host!.Capture(this, true);
             GD.Print("ffx: the game's ESC menu is open: the native ESC menu shown");
             if (_wantOptionsAt >= 0)
@@ -210,6 +303,8 @@ public partial class PauseView : Control
                 _keyAfterClose = 0;
             }
         }
+        if (_menuOpen && _waitDone >= 0)
+            Answered(host?.Game);
         // the options asked for, but the game's menu did not open (a load, a movie): alone
         if (_wantOptionsAt >= 0 && _clock - _wantOptionsAt > 0.7)
         {
@@ -243,6 +338,9 @@ public partial class PauseView : Control
             Ui.SetText(_title, _page switch
             {
                 Page.Features => Loc(host?.Game, s, 0x21b, "Special features"),
+                Page.Parameters => Loc(host?.Game, s, 0x21d, "Change parameters"),
+                // the game's pop-up: its message over its two buttons
+                Page.Confirm => Lines(host?.Game, s, 0x2c9, "This operation is irreversible.\nDo you want to use this function?"),
                 Page.Quit => Loc(host?.Game, s, 0x21f, "Quit"),
                 _ => "PC menu (Esc)",
             });
@@ -270,7 +368,7 @@ public partial class PauseView : Control
             return;
         GetViewport().SetInputAsHandled();
         var host = GameHost.Instance;
-        int rows = _page switch { Page.Features => 4, Page.Quit => 2, _ => Home.Length };
+        int rows = _page switch { Page.Features => 4, Page.Parameters => Parameters.Length, Page.Confirm or Page.Quit => 2, _ => Home.Length };
         switch (k.PhysicalKeycode)
         {
             case Key.Up:
@@ -285,12 +383,69 @@ public partial class PauseView : Control
             case Key.Escape or Key.Backspace or Key.X when !k.Echo:
                 if (_page == Page.Home)
                     Resume(host);
-                else
+                else if (_page == Page.Confirm)
+                    Answer(host?.Game, false);
+                else if (_waitDone < 0)
                 {
-                    _cursor = _page == Page.Features ? 2 : 4;
+                    _cursor = _page switch { Page.Features => 2, Page.Parameters => 3, _ => 4 };
                     _page = Page.Home;
+                    _note = "";
                 }
                 break;
+        }
+    }
+
+    /// <summary><c>EscMenuButtonClick</c>'s page id of Change parameters (the game's help table and <c>FFEscMenu_onParameterButton_0068f610</c>).</summary>
+    public const int EscParameterPage = 13;
+
+    /// <summary>The confirmation's answer, the game's <c>EscMenuPopUpConfirmed</c>.</summary>
+    private void Answer(FfxGame? game, bool yes)
+    {
+        if (game == null || !game.EscPopUpAnswer(yes))
+            return;
+        GD.Print($"ffx: ESC menu: Change parameters row {_row}: {(yes ? "yes" : "no")} (EscMenuPopUpConfirmed {(yes ? 1 : 0)})");
+        _waitDone = _esc.Done + 1;
+        _waitAt = _clock;
+        _confirmed = yes;
+    }
+
+    private bool _confirmed;
+
+    /// <summary>A call's answer: the game ran it (the extension's count reached), or 2 s passed.</summary>
+    private void Answered(FfxGame? game)
+    {
+        if (_esc.Done >= _waitDone)
+        {
+            _waitDone = -1;
+            if (_esc.Failed)
+                _note = "The game's menu did not take the call.";
+            else if (_page == Page.Parameters)
+            {
+                if (_esc.PopUp && _esc.Row == _row)
+                {
+                    _page = Page.Confirm;
+                    _cursor = 1;
+                }
+                else
+                    _note = NotAvailable(game);
+            }
+            else if (_page == Page.Confirm)
+            {
+                _page = Page.Parameters;
+                _cursor = _row;
+                if (_confirmed)
+                    GD.Print($"ffx: ESC menu: Change parameters row {_row} done");
+            }
+        }
+        else if (_clock - _waitAt > 2)
+        {
+            _waitDone = -1;
+            _note = "The game did not answer.";
+            if (_page == Page.Confirm)
+            {
+                _page = Page.Parameters;
+                _cursor = _row;
+            }
         }
     }
 
@@ -320,11 +475,30 @@ public partial class PauseView : Control
                         _page = Page.Features;
                         _cursor = 0;
                         break;
+                    case 0x21d when _esc.Parameters:
+                        _page = Page.Parameters;
+                        _cursor = 0;
+                        _note = "";
+                        break;
                     case 0x21f:
                         _page = Page.Quit;
                         _cursor = 0;
                         break;
                 }
+                break;
+            case Page.Parameters when _waitDone < 0:
+                // the page's button: the game's callback; its answer (a confirmation or a refusal) shows next
+                _row = _cursor;
+                _note = "";
+                if (host?.Game is { } g && g.EscButton(EscParameterPage, _row))
+                {
+                    _waitDone = _esc.Done + 1;
+                    _waitAt = _clock;
+                    GD.Print($"ffx: ESC menu: Change parameters row {_row} (EscMenuButtonClick [13, {_row}])");
+                }
+                break;
+            case Page.Confirm when _waitDone < 0:
+                Answer(host?.Game, _cursor == 0);
                 break;
             case Page.Features:
                 _keyAfterClose = GameHost.ScanF1 + _cursor;
