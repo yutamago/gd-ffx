@@ -45,10 +45,12 @@ device, the start-up logos skipped) and runs the game's entry
 every game thread if the game has not ended. One game per process: ffx-rust's
 platform and parts of its state are the process's.
 
-The start-up logos are the remaster's `OpeningScreen.swf`; their end comes
+The start-up logos are the remaster's `openingscreen.swf`; their end comes
 from the Flash movie's `Finish` callback, which a build without Ruffle never
-gets. gd-ffx always sets ffx-rust's `Options::skip_opening`, which ends them
-on their first frame (Godot shows its own picture).
+gets. Booting to the title, gd-ffx plays the opening natively and calls
+`Finish` itself ("The Flash screens" below); with a developer save, a
+self-check or `--skip-opening` it sets ffx-rust's `Options::skip_opening`,
+which ends the movie on its first frame.
 
 ## Sound (G3 step 2: the pull model)
 
@@ -1126,12 +1128,14 @@ on Tidus's Cheer).
   game's own hand cursors (`hands`) belong to its command list's place on
   the PS2 screen, which the native menu does not share: not drawn.
 - **Boosters.** F1 to F4 go to the game (the debug overlay moved to F12).
-  `BoosterView` follows `Snapshot.boosters` and on a change shows the
-  game's tip: the localisation kit's lines that the game hands its Flash
-  pages and `TipSystem` are UTF-8, not the game's encoding
+  `BoosterView` follows `Snapshot.boosters` for its badges and shows the
+  game's tips as the game plays them (`OnPlay` on `box.swf`, "The Flash
+  screens" below; before, it guessed them from the boosters' changes):
+  the localisation kit's lines that the game hands its Flash pages and
+  `TipSystem` are UTF-8, not the game's encoding
   (`FfxGame.loc_text_utf8`; `loc_text` decodes the config's PC row, which
-  is in the game's encoding): 0x2fd..0x2ff the speed, 0x2f6/0x2f7 the
-  power-up, 0x2fa/0x2f9/0x2fb the encounters, 0x37f/0x380 the auto-battle.
+  is in the game's encoding): 0x2fd..0x2ff the speed, 0x2f6..0x2f8 the
+  power-up, 0x2f9..0x2fb the encounters, 0x37d..0x380 the auto-battle.
 - **The ESC menu.** `Menus.esc_menu` (`g_FFEscMenu`) is up while the game's
   `escmenu.swf` page is; meanwhile `animate` skips `updateFFX` (ffx-rust's
   docs/formats/frame-timing.md): play halts, as in the original (measured
@@ -1212,6 +1216,164 @@ on Tidus's Cheer).
   blue, lit when hovered; the control with the keyboard or pad focus (the
   same `ui_up`/`ui_down` actions) is framed in gold, and its caption lit
   with the menus' cursor (`CursorMark`) before it (`OptionsPanel.Focused`).
+
+## The Flash screens (G5)
+
+The remaster's own PC screens are 19 Flash (Iggy) movies in the archive
+(`ffx_data/gamedata/ps3data/flash/`; ffx-rust's docs/formats/pc-ui.md, "The
+19 movies"). Without Ruffle (the default build) the host's Iggy players are
+null: they draw nothing and call nothing. gd-ffx draws each natively from
+what the game tells the movie.
+
+**What the game tells them** (`rust/ffx-gd/src/flash.rs`). Three of the
+game's functions are wrapped in the function table at the boot
+(`Table::wrap`, as the ESC menu's `crate::esc`; their ports are the
+originals the wrappers call):
+
+| Function | Prologue | gd-ffx notes |
+|---|---|---|
+| `IggyMenu_ctor_00a288f0(menu; path, x, y, w, h, flags)` | `55 8b ec 6a ff` | every movie the game opens: its file name, menu, player (`[[menu + 0x6c]]`) and open order |
+| `IggyMenu_callIggyAS3External(menu; target, name, n, values, unused)` (`0x00a28ba0`) | `55 8b ec 8b 41 6c` | every AS3 function the game calls on a movie, with its `IggyDataValue`s as text (booleans, numbers, UTF-8 and UTF-16 strings; arrays, type 9, are left empty) |
+| `PhyreScene_isOpeningScreenPlaying()` (`0x00660400`) | `a0 c2 b9 cc 00` | the start-up loop's check: the native opening's `Finish` (below) |
+
+Whether the game draws a movie (asks it to play: Iggy draws only enabled
+menus) comes from the host's players' draw counts
+(`ffx_host::iggy::Iggy::players`), sampled each Godot frame
+(`flash::sample`; a player's counts go with it when the game deletes it).
+`FfxGame.flash_movies`, `flash_calls` and `flash_calls_pending` hand them to
+C#, where `FlashScreens` takes the calls once a frame and routes them; with
+`--flash-log` each movie and call is printed (`ffx flash: ...`).
+
+**The movies' art.** `ffx_import::flash` reads a movie from the player's
+archive with Ruffle's SWF reader (the `swf` crate, MIT OR Apache-2.0) and
+draws it in software at any scale: shapes (solid, linear, radial and focal
+gradient, and bitmap fills; strokes with round joins), morph shapes at a
+ratio, sprites' display lists (nested sprites loop from the frame they
+were placed), matrices and colour transforms, lossless and JPEG bitmaps
+(`DefineBits` with the movie's `JPEGTables`, `DefineBitsJPEG2/3` with
+the alpha plane; `jpeg-decoder`, MIT OR Apache-2.0). Not drawn: filters
+(`PlaceObject3`'s glows and blurs), masks, blend modes, text, scripts.
+`FfxGame.flash_render`, `flash_bounds`, `flash_class` (a `SymbolClass`
+name), `flash_label` (a frame label), `flash_alphas` (a depth's alpha frame
+by frame) and `flash_bitmap` give it to the views; `ffx-import flash` draws
+a character into a PNG (docs/importer.md). Nothing is stored.
+
+| Movie | Native | What the game does, what gd-ffx draws |
+|---|---|---|
+| `openingscreen.swf` | `OpeningView` | the start-up opening, below |
+| `chocobo.swf` | `AutosaveView` | the autosave prompt, below |
+| `saveload_jp.swf` (all languages but Korean, Chinese), `saveload_kr.swf`, `saveload_ch.swf` | `SaveLoadView` | the save and load screen, below |
+| `box.swf`, `box_kr.swf`, `box_ch.swf` | `BoosterView` (the toast) | the tips: each `OnPlay(0, text)` (`TipSystem_PlayTip`, which `TipSystem_PushTip(id)` and `graphicPushTip*` reach) shows the text the game passed, whoever sent it |
+| `speed_2`, `speed_4`, `invincible`, `enemy_0`, `enemy_1`, `autobattle` | `BoosterView` (badges) | the boosters' icons (from `Snapshot.boosters`, "Cursors, boosters, ..." above) |
+| `autobattle_disable`, `freecamera`, `time_stop` | `BoosterView` (badges) | never shown by the original (below) |
+| `escmenu.swf`, `pausemenu.swf` | `PauseView` | "Cursors, boosters, the ESC menu and the options" above |
+
+**The start-up opening** (`openingscreen.swf`, 1920 x 1080, 263 frames at
+29.97 a second: 8.8 s). `PhyreScene_beginRenderOpeningScreen` opens it
+(the menu at `PhyreScene + 0x10dc8`), registers
+`PhyreScene_onOpeningScreenFinish_00652400` for its `Finish` callback and
+sets `g_PhyreSceneOpeningPlaying` (`0x00ccb9c2`); `graphicInitScene` loops
+`PInput_Update` and `PhyreScene_renderOpeningScreen` (33 ms a frame) while
+`PhyreScene_isOpeningScreenPlaying` answers that byte. The movie has no
+key: the original cannot skip it. What it shows (its timeline): black for
+5 frames; the SQUARE ENIX logo (a 660 x 70 bitmap, at 616, 505) fading in
+over frames 6 to 34, held, fading out over 126 to 155; then the autosave
+notice: a 561 x 151 group, a text line (`getLocByStr("Loc_Texture_Saveload_Attention_Before_Game")`,
+which `FFX.exe` maps to localisation line 0x1f9: `mov [ebp-8], 0x00b4b4e0;
+mov [ebp-4], 0x1f9` at `0x006e96d2`, into the name map `0x00ce6eb0` that
+`IggyCallback_lookupName_006e9590` reads) over the running chocobo (sprite
+438, the autosave prompt's art), a black cover fading out over frames 156 to
+170 and back in from 249. The text line is the movie's own bitmap font
+(`bitmapTextField`, with a marquee for long text); gd-ffx draws the game's
+two lines (`@el@`) in the UI font, the group centred (where the movie's
+script puts it was not read from its ActionScript). gd-ffx boots without
+`skip_opening` when going to the title (`GameHost.NativeOpening`: no
+developer save, no `--skip-opening`); `OpeningView` starts when the game
+opened the movie, takes the logo (the main timeline's frame 34, drawn at
+the stage's size) and the chocobo's 8 frames from the player's movie and
+the fades from its timeline (`flash_alphas` of depths 1 and 5), and after
+frame 263 asks `opening_finish`: at the loop's next check the wrapper calls
+`Finish` through the game's dispatcher (`ffx_host::iggy::as3_call` with
+the opening's player); the handler clears the byte and the boot goes on (to
+the in-game opening, then the title, as before). If no frontend asks, the
+wrapper ends it after 30 s of the loop. Measured headless: the game waited
+(no update ran), the view played 263 frames, `Finish` sent, the loop went
+on; `--selftest` reports it (`start-up opening: logo, autosave notice
+(frame 263), the game waited, Finish sent, the start-up loop went on`).
+
+**The autosave prompt** (`chocobo.swf`, 80 x 80 stage, 70 frames).
+`PhyreScene_showAutoSavingPrompt` (`0x0066f480`) deletes the last prompt
+(`PhyreScene + 0x10ddc`) and opens the movie anew at 1220, 660, 50 x 50
+on the 1280 x 720 screen (`IggyPlayerOpenScaled`) when an autosave starts;
+the movie has no calls: the running chocobo fades in over 4 frames, runs
+(an 8-frame loop of shapes, radial gradients and morph shapes) and fades
+out over frames 66 to 70, where it stops. `AutosaveView` plays its 70
+frames (drawn from the player's movie at twice the size) each time a new
+`chocobo.swf` is opened. Reached: the Besaid check's walk from the beach
+(`--selftest-besaid --devsave=7`) changes the map, and the game autosaves.
+
+**The save and load screen** (`saveload_*.swf`). The save machine
+(`SaveDataMachine_*`, ffx-rust's docs/formats/save.md) reads the keys
+itself and drives the movie only by calls; the movie calls nothing back.
+Measured (`--flash-log`): a save sphere's save opens it with
+`setMouseVisible(false)`, `showSaveLoad()`, `SetLanguage("JPN")` (always:
+the game passes its texts already in its language), `clearSaveLoad()`,
+`showPopUpStd("Loading...")`, one `addSaveLoadItem` a row, `setSaveLoadHelpText(help,
+"n/200")`, `setSaveLoadFocus("0")`, `hidePopUpStd()`; Up/Down send
+`setSaveLoadFocus`; confirm sends `showPopUpWithBtn(question, yes, no,
+false)`, and for "Save?" and "Load this file?" a `changeSelectedBtn()` in
+the same frame (for "Overwrite?" none); Left/Right send
+`changeSelectedBtn()`; Yes sends `showPopUpStd("Saving...")`,
+`hidePopUpWithBtn()`, `hidePopUpStd()`, and the game opens the movie anew
+with the list as it is now; No sends `hidePopUpWithBtn()`. So the movie's
+cursor starts on No and the game moves it to Yes except for the overwrite
+(a fourth value of true is taken to start on Yes; not seen). A row's twelve
+values: index, slot, place, date, the player's name, play time, three party
+members (`_1` .. `_8`, `_0` none), the thumbnail (`m<n>`), a label
+("Autosave", gold), and a row text (the new file's row, "Create new save
+data", has only that and slot 0). `SaveLoadState` keeps what the calls set;
+`SaveLoadView` draws it while the machine's state (`Menus.save_state`) is
+neither 0 nor 0xa (the idle state a load leaves), laid out as the
+original's screen at 1280 x 720 (the M5 pilot's Iggy pictures of the load
+list and its pop-up): the help bar ("HELP", the help, the count under its
+end), five 1038 x 100 rows from y 118, 110 apart (label or slot, place,
+date at the right; the portraits; name and play time; the thumbnail at the
+right end), the cursor on the focused row, the scroll bar, the message box
+and the question with Yes and No and the cursor. The portraits (the movie's
+`saveload_jp_fla.face_565` sprite at its frame labels), the thumbnails
+(classes `m<n>`, JPEG) and the cursor (`saveload_jp_fla.arrow_21`) are drawn
+from the player's movie; the backdrop and frames are drawn by gd-ffx (the
+movie builds them in its script). `--selftest-save --devsave=7` and
+`--selftest-load` (docs/running.md) check saving, the questions' cursors,
+the overwrite question's No, cancel, and loading from the title. The save
+screen has no delete (the original's calls offer none). The player's name
+in the developer saves' rows reads as kana noise in Japanese ("ぅずさてつ"):
+the saves hold "Tidus" in the English encoding and the game decodes it in
+the Japanese table; the row shows what the game passes.
+
+**Free camera and time stop** (`freecamera.swf`, `time_stop.swf`, one 64 x
+64 icon each) and `autobattle_disable.swf` are never shown by the original:
+`SetFields_006f7700` stores the first two's paths and overwrites them,
+`FreeCamera_handleInput` (`0x00680030`) asks the icon panel for icons 8 and
+9 when the debug free camera's capture (`FreeCamera + 0`) or its time stop
+(`+0x338`) changes, and `IconPanel_showIcon` takes only 0..6; icon 6 is
+asked by nobody. The same function also plays the tips 0x2ed/0x2ee ("Free
+Camera On/Off") and 0x2f3/0x2f4 ("Time Stop On/Off"), which the tips box
+shows. gd-ffx shows the two icons as badges with the movies' own bitmaps
+while the free camera (`0x00ccc830`, `FreeCamera_FreeCamera` makes it on
+first use) has them on, read through `FfxGame.Peek` (a stopgap: the
+game-state API lacks them; it needs the singleton's `+0` capture counter,
+`u32`, and `+0x338` time stop, `u8`). What turns the free camera on in a
+retail build was not found (nothing writes `+0x338` in the ported code
+looked at); no check reaches it.
+
+**The check** (`--check-flash`, any self-check; `tools/sweep-devsaves.sh`
+passes it): at the end the movies the game opened and showed are listed
+(`ffx flash: flash movies opened: ...; shown: ...`), and the check fails
+when one has no native screen (`FlashScreens.Native`) or a native screen
+did not draw what the game showed (no autosave prompt played for a shown
+`chocobo.swf`, no list for a shown save screen, no logo for the opening, a
+tip not shown).
 
 ## The battle results (G4)
 
