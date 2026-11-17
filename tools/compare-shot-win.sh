@@ -3,8 +3,8 @@
 # (D3D12 or Vulkan, Forward+), compared with a reference picture of the
 # original, as tools/compare-shot.sh does for the Linux build under Xvfb.
 # WSL only: runs build/windows/gd-ffx.console.exe (tools/export.sh windows
-# first) with its window placed off the desktop (it renders, but is not seen;
-# a taskbar entry may show while it runs). The game folder and the pictures
+# first) silently (--audio-driver Dummy), its window behind every other window
+# (--background-window: no focus, sent to the bottom; it still renders). The game folder and the pictures
 # stay on the WSL side, reached through \\wsl.localhost.
 #
 #   FFX_GAME_DIR=<game> tools/compare-shot-win.sh REF.png|bmp OUT_DIR [devsave, default 7] [d3d12|vulkan]
@@ -24,9 +24,9 @@ mkdir -p "$out/docs"
 if [[ "$save" == 7 ]]; then test="--selftest-besaid --no-walk --selftest-timeout=12"
 else test="--selftest-map --selftest-timeout=90"; fi
 # shellcheck disable=SC2086
-timeout 300 "$exe" --position -30000,-30000 --rendering-driver "$driver" -- \
+timeout 300 "$exe" --audio-driver Dummy --rendering-driver "$driver" -- \
     --game-dir="$(win "$(readlink -f "$game")")" --documents="$(win "$out/docs")" \
-    $test ${FFX_SHOT_ARGS:-} --no-overlay --devsave="$save" --shot="$(win "$out/godot.png")" \
+    --background-window $test ${FFX_SHOT_ARGS:-} --no-overlay --devsave="$save" --shot="$(win "$out/godot.png")" \
     2>&1 | tr -d '\r' >"$out/godot.log" || true
 grep -E 'Forward|Compatibility|Using Device' "$out/godot.log" | head -1 || true
 [[ -f "$out/godot.png" ]] || { echo "compare-shot-win: no picture (see $out/godot.log)" >&2; exit 1; }

@@ -43,6 +43,8 @@ public partial class GameHost : Node
         ProcessPriority = -100;
         // the collector's blocking full collections are frame hitches; background ones are not
         System.Runtime.GCSettings.LatencyMode = System.Runtime.GCLatencyMode.SustainedLowLatency;
+        // --background-window: behind every other window (checks on the GPU from WSL)
+        BackgroundWindow.Apply();
     }
 
     /// <summary>Whether <see cref="Start"/> succeeded (the game booted, or <c>--no-game</c>).</summary>

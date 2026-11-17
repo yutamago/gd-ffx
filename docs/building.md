@@ -61,14 +61,15 @@ dependencies of a debug build too).
 
 ### Features
 
-- `dev-unicorn` (default): development only, as in ffx-rust. Functions of
-  the game without a Rust port yet run in Unicorn, from your own `FFX.exe`.
-  Unicorn is GPL-2.0, so a build for others turns it off
-  (`FFX_GD_FEATURES=none`); such a build stops at the first function without
-  a port until ffx-rust's port is complete.
-- `swf`: the remaster's Flash (Iggy) screens on Ruffle. Heavy (wgpu); off by
-  default. Without it the start-up logos are skipped and the Flash screens
-  are empty.
+- `swf` (default): the remaster's Flash (Iggy) screens on Ruffle. Heavy
+  (wgpu). Without it (`FFX_GD_FEATURES=none`) the start-up logos are skipped
+  and the Flash screens are empty.
+- `dev-unicorn` (off by default since 2026-11-17): development only, as in
+  ffx-rust. Functions of the game without a Rust port run in Unicorn, from
+  your own `FFX.exe`. ffx-rust runs the whole game without it now (all 110
+  developer saves pass `tools/sweep-devsaves.sh` without Unicorn, 0 errors).
+  Unicorn is GPL-2.0: a build with it (`FFX_GD_FEATURES=swf,dev-unicorn`) is
+  never given to others.
 
 ## The Godot project
 

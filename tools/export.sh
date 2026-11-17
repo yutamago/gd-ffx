@@ -14,10 +14,10 @@
 #   build/windows/  gd-ffx.exe, gd-ffx.console.exe, ffx_gd.dll, data_gd-ffx_windows_x86_64/
 #
 # FFX_GD_FEATURES  the extension's features, as tools/build-extension.sh.
-#                  Unset: dev-unicorn, a DEVELOPMENT export (Unicorn, GPL-2.0:
-#                  never distribute it). "none": an export without Unicorn,
-#                  which stops at the first game function ffx-rust has not
-#                  ported yet.
+#                  Unset: the crate's default (swf, no Unicorn): an export
+#                  to give to others. "dev-unicorn" (e.g. "swf,dev-unicorn"):
+#                  a DEVELOPMENT export (Unicorn, GPL-2.0: never distribute
+#                  it). "none": no features (no Flash screens either).
 # FFX_RUST_DIR     an ffx-rust checkout, as tools/build-extension.sh.
 # GODOT            the Godot 4.7 .NET editor binary (default:
 #                  ~/tools/Godot_v4.7.2-stable_mono_linux_x86_64/godot); its
@@ -48,7 +48,7 @@ templates="${XDG_DATA_HOME:-$HOME/.local/share}/godot/export_templates/$(sed -E 
 }
 
 dev=0
-case "${FFX_GD_FEATURES-}" in "" | *dev-unicorn*) dev=1 ;; esac
+case "${FFX_GD_FEATURES-}" in *dev-unicorn*) dev=1 ;; esac
 
 # the cargo arguments of the build (its ffx-rust [patch] entries and features),
 # for the notices: from tools/build-extension.sh itself
@@ -121,7 +121,7 @@ for platform in "${platforms[@]}"; do
     fi
     cflags=""
     for m in "${cmap[@]}"; do cflags+=" $prefix_map=$m"; done
-    echo "== $platform: the extension (features: ${FFX_GD_FEATURES:-default, dev-unicorn})"
+    echo "== $platform: the extension (features: ${FFX_GD_FEATURES:-default: swf, no Unicorn})"
     # Unicorn (dev-unicorn) built from source with the paths remapped, never a
     # prebuilt library found through pkg-config (it keeps its build paths)
     CARGO_TARGET_DIR="$repo/rust/target/export" FFX_GD_RUSTFLAGS="$remap" FFX_GD_CFLAGS="$cflags" \

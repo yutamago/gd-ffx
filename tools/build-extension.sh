@@ -19,8 +19,9 @@
 # FFX_RUST_DIR  an ffx-rust checkout to build against instead of the git
 #               dependency (a branch not merged yet, local changes): passed to
 #               cargo as [patch] entries.
-# FFX_GD_FEATURES  cargo features (default: the crate's, i.e. dev-unicorn);
-#               "none" for none (a build without Unicorn: see docs/building.md).
+# FFX_GD_FEATURES  cargo features (default: the crate's, i.e. swf, no Unicorn);
+#               "none" for none; "swf,dev-unicorn" adds Unicorn (development
+#               only: docs/building.md).
 # FFX_GD_RUSTFLAGS  added to RUSTFLAGS (tools/export.sh: --remap-path-prefix,
 #               so no path of the build machine ends up in an export).
 # FFX_GD_CFLAGS  added to the target's C and C++ flags (the same for C code's

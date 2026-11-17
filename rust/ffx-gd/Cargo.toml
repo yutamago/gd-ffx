@@ -12,11 +12,12 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = ["dev-unicorn"]
+# Unicorn-free by default since 2026-11-17: ffx-rust runs the whole game without
+# it (all 110 developer saves pass gd-ffx's sweep), and with the Flash screens.
+default = ["swf"]
 # Development only, as in ffx-rust: functions without a Rust port run in
-# Unicorn from the player's FFX.exe. Unicorn is GPL-2.0, so a release
-# build turns this off (and then stops at the first function without a
-# port; docs/building.md, "Features").
+# Unicorn from the player's FFX.exe. Unicorn is GPL-2.0: never in a build for
+# others (docs/building.md, "Features").
 dev-unicorn = ["ffx-host/dev-unicorn"]
 # Iggy's Flash screens on Ruffle (heavy: wgpu). Without it the start-up
 # logos are skipped and the Flash screens are null.

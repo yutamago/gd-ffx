@@ -116,8 +116,11 @@ FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/compare-shot-win.sh REF.bmp OUT_DIR [
 ```
 
 Runs the Windows export (`tools/export.sh windows` first) on the machine's
-GPU with Forward+, its window placed off the desktop (it renders but is not
-seen; a taskbar entry may show while it runs), and scores its picture
+GPU with Forward+, silently (`--audio-driver Dummy`) and with
+`--background-window`: the window takes no focus and is sent behind every
+other window (Godot moves an off-screen window back onto the screen, and a
+minimised one is not drawn; a covered one still renders). It can show for a
+moment as it opens. It scores its picture
 against the reference like `tools/compare-shot.sh`. On 2026-11-17 Besaid
 scored 47.6 (D3D12) and 47.7 (Vulkan) against the original, where the
 Compatibility renderer under Xvfb scores 13.9: the classic shaders compute

@@ -11,7 +11,7 @@ here: `docs/architecture.md`, `docs/building.md`, `docs/running.md`,
   decompilation output, saves. The game is read from the player's copy at
   run time; the game folder is read-only, saves go to gd-ffx's own sandbox.
 - Licence MIT OR Apache-2.0; no GPL dependencies in release builds (gdext is
-  MPL-2.0: fine; Unicorn only behind the `dev-unicorn` feature).
+  MPL-2.0: fine; Unicorn only behind the `dev-unicorn` feature, off by default).
 - Commit as Yutamago <12561505+yutamago@users.noreply.github.com>. No real
   names, user names or user paths in commits, code or docs. The second
   machine is "PC2" in docs.
@@ -51,10 +51,10 @@ FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/bench.sh [besaid besaid-walk lchb bat
 (cd godot && dotnet build)
 (cd rust && cargo run -p ffx-state-cs)                    # regenerate the C# state bindings after an ffx-state change
 tools/capped.sh tools/export.sh [linux|windows|all]       # standalone program in build/<platform>/ (docs/exporting.md)
-FFX_GD_FEATURES=none tools/capped.sh tools/export.sh all  # without Unicorn: the only kind to give to others
+FFX_GD_FEATURES=swf,dev-unicorn tools/capped.sh tools/export.sh all  # with Unicorn: development only, never distribute
 FFX_GAME_DIR=... tools/capped.sh build/linux/gd-ffx.x86_64 --headless -- --selftest --documents=/tmp/gd-ffx-docs   # the export's check
 ```
 
-An export with the default features (dev-unicorn) contains Unicorn (GPL-2.0):
-never distribute it. Exports need Godot's .NET export templates
+The default features (swf) have no Unicorn (since 2026-11-17); an export
+with dev-unicorn contains Unicorn (GPL-2.0): never distribute it. Exports need Godot's .NET export templates
 (docs/exporting.md).

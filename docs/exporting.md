@@ -6,7 +6,7 @@ but does need their own copy of the game.
 
 ```bash
 tools/capped.sh tools/export.sh [linux|windows|all]     # a development export (see "Licences")
-FFX_GD_FEATURES=none tools/capped.sh tools/export.sh all   # an export without Unicorn
+FFX_GD_FEATURES=swf,dev-unicorn tools/capped.sh tools/export.sh all   # a development export with Unicorn (never distribute)
 ```
 
 Exports are heavy (two release builds of ffx-rust and Godot's export), so
@@ -136,16 +136,14 @@ execute bit (`chmod +x`), or WSL refuses to run them (exit 126).
 
 ## Licences
 
-- **The default build (`dev-unicorn`) must not be distributed.** Its
-  extension links Unicorn (GPL-2.0), which runs the game functions ffx-rust
-  hasn't ported yet. Such an export is for your own use. Its `README.txt`
-  starts with "DEVELOPMENT EXPORT: NOT FOR DISTRIBUTION", and its
-  `licences/` adds `unicorn-NOTICE.txt` and `unicorn-COPYING`.
-- **`FFX_GD_FEATURES=none`** builds without Unicorn: no GPL code, and the
-  notices step fails if any GPL-family crate is left in the tree. Until
-  ffx-rust's port is complete, such an export stops at the first function
-  without a Rust port. ffx-rust's own release notes say that today this
-  happens at once, at the game's CRT entry point.
+- **The default build has no Unicorn** (since 2026-11-17; features `swf`):
+  no GPL code, and the notices step fails if any GPL-family crate is left in
+  the tree. ffx-rust runs the whole game without Unicorn: all 110 developer
+  saves pass the sweep with such a build.
+- **A development build with `dev-unicorn` must not be distributed.** Its
+  extension links Unicorn (GPL-2.0). Its `README.txt` starts with
+  "DEVELOPMENT EXPORT: NOT FOR DISTRIBUTION", and its `licences/` adds
+  `unicorn-NOTICE.txt` and `unicorn-COPYING`.
 - `licences/` in every export:
   - `LICENSE-MIT`, `LICENSE-APACHE`: gd-ffx (and ffx-rust), MIT OR Apache-2.0;
   - `THIRD-PARTY.txt`: every Rust crate compiled into the extension (from
