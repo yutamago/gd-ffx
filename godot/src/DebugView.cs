@@ -766,9 +766,11 @@ public sealed class MessageTest(double timeout, string? shot) : ITest
 /// targets, effect 50001800 by the example remade effect (registered at the start)
 /// (with <c>--shot=FILE.png</c> under a renderer, a picture). With <c>--to-results</c> it
 /// attacks on until the battle is won and reports the results screen (<see cref="BattleEndView"/>).
-/// Every hit pops a number: the check counts the hits from the snapshots itself (an HP change,
-/// a monster leaving the list with HP left: its killing blow) and fails when the HUD popped
-/// another count, or (with <c>--to-results</c>) no kill popped.
+/// The HUD pops the game's own damage numbers (API 12's <c>Effects.numbers</c>): the check
+/// collects them from the snapshots itself, checks each HP number against the HP its battler
+/// lost in that update (all it had when the number is more: a killing blow's overkill) and every
+/// HP change against a number, and fails when the HUD popped other numbers than the game's, or
+/// (with <c>--to-results</c>) no killing blow with overkill popped.
 /// </summary>
 public sealed class BattleTest : ITest
 {
@@ -799,45 +801,101 @@ public sealed class BattleTest : ITest
 
     public string Note { get; private set; } = "";
 
-    // the hits seen in the snapshots (each should pop a number), the monsters' among them, the kills
+    // the game's damage numbers seen in the snapshots (each should pop), checked against the HP
+    // the battlers lost: the hits, the monsters' among them, the kills, those with overkill
     private readonly System.Collections.Generic.Dictionary<int, int> _hp = new();
-    private int _hits, _monsterHits, _kills;
+    private readonly System.Collections.Generic.HashSet<BattleHudView.NumberKey> _gameKeys = new();
+    private readonly System.Collections.Generic.List<(BattleHudView.NumberKey Key, string Text)> _gameNumbers = new();
+    private int _hits, _monsterHits, _kills, _overkills, _checked;
+    private string _wrong = "";
     private uint _hitsOf;
 
     private void CountHits(GdFfx.Api.Snapshot? c)
     {
         if (c == null || !c.World.Battle || c.Update == _hitsOf)
             return;
+        // the HP checks need the update before (headless Godot sees every update)
+        bool next = c.Update == _hitsOf + 1;
         _hitsOf = c.Update;
-        var present = new System.Collections.Generic.HashSet<int>();
+        var had = new System.Collections.Generic.Dictionary<int, int>(_hp);
+        var now = new System.Collections.Generic.Dictionary<int, int>();
         foreach (var b in c.Battlers)
+            now[b.Index] = b.Hp;
+        // the game's new numbers: an HP loss or heal (no word) is what the battler lost in this
+        // update (all it had when the number is more: a killing blow's overkill)
+        var numbered = new System.Collections.Generic.HashSet<int>();
+        foreach (var n in c.Effects.Numbers)
         {
-            present.Add(b.Index);
-            if (_hp.TryGetValue(b.Index, out var was) && was != b.Hp && BattleHudView.ActorOf(c, b.Index) != null)
+            var key = BattleHudView.KeyOf(c, n);
+            if (!_gameKeys.Add(key))
+                continue;
+            if (BattleHudView.ActorOf(c, n.Battler) == null)
+                continue;
+            var word = BattleHudView.WordText(n.Word);
+            _gameNumbers.Add((key, $"{(n.Digits > 0 ? n.Value.ToString() : "")}{(n.Digits > 0 && word.Length > 0 ? " " : "")}{word} on 0x{n.Battler:x}"));
+            if (n.Word != 0 || n.Digits == 0 || n.Colour > 1)
+                continue;
+            _hits++;
+            if (n.Battler >= BattleHudView.FirstMonster)
+                _monsterHits++;
+            numbered.Add(n.Battler);
+            if (!next || n.Age != 0 || !had.TryGetValue(n.Battler, out var was))
+                continue;
+            int left = now.TryGetValue(n.Battler, out var hp) ? hp : 0;
+            if (left == 0)
+                _kills++;
+            if (n.Colour == 0)
             {
-                _hits++;
-                if (b.Index >= BattleHudView.FirstMonster)
-                    _monsterHits++;
+                if (was - left != System.Math.Min(n.Value, was))
+                    _wrong = $"the game's number {n.Value} on 0x{n.Battler:x}, which went from {was} to {left} HP";
+                if (n.Value > was)
+                    _overkills++;
             }
-            _hp[b.Index] = b.Hp;
+            else if (left - was > n.Value)
+                _wrong = $"the game's heal {n.Value} on 0x{n.Battler:x}, which went from {was} to {left} HP";
+            _checked++;
         }
-        foreach (var index in _hp.Keys.ToList())
-            if (!present.Contains(index))
+        // every HP change has its number (a battler that left the list: with HP left, a blow)
+        if (next)
+            foreach (var (index, was) in had)
             {
-                if (_hp[index] > 0 && BattleHudView.ActorOf(c, index) != null)
-                {
-                    _hits++;
-                    _kills++;
-                    if (index >= BattleHudView.FirstMonster)
-                        _monsterHits++;
-                }
-                _hp.Remove(index);
+                int left = now.TryGetValue(index, out var hp) ? hp : 0;
+                if (was != left && !numbered.Contains(index) && BattleHudView.ActorOf(c, index) != null)
+                    _wrong = $"0x{index:x} went from {was} to {left} HP without a number of the game's";
             }
+        _hp.Clear();
+        foreach (var (index, hp) in now)
+            _hp[index] = hp;
     }
 
-    /// <summary>The pops against the hits (null when they agree).</summary>
-    private string? PopsMismatch(BattleHudView? hud) =>
-        hud == null || hud.Popped != _hits ? $"{hud?.Popped} damage numbers popped for {_hits} hits ({_kills} kills)" : null;
+    /// <summary>The game's numbers in the order they came (for the report).</summary>
+    private string GameNumbers() => string.Join(", ", _gameNumbers.Select(n => n.Text));
+
+    /// <summary>
+    /// The HUD's pops against the game's numbers (null when they agree): every number of the
+    /// game's popped, nothing else, and every HP change with its number.
+    /// </summary>
+    private string? PopsMismatch(BattleHudView? hud)
+    {
+        if (hud == null)
+            return "no battle HUD";
+        if (_wrong.Length > 0)
+            return _wrong;
+        var popped = new System.Collections.Generic.HashSet<BattleHudView.NumberKey>(hud.PoppedNumbers);
+        // a number of the last two updates may not have reached the HUD yet
+        foreach (var (key, text) in _gameNumbers)
+            if (!popped.Contains(key) && _hitsOf - key.Born > 2)
+                return $"the game's number {text} (update {key.Born}) not popped: {hud.Popped} popped of the game's {_gameNumbers.Count} [{GameNumbers()}]";
+        foreach (var key in hud.PoppedNumbers)
+            if (!_gameKeys.Contains(key) && _hitsOf - key.Born > 2)
+                return $"popped {key}, which is not a number of the game's [{GameNumbers()}]";
+        return null;
+    }
+
+    /// <summary>What the HUD popped against the game's numbers (for the report).</summary>
+    private string Pops(BattleHudView? hud) =>
+        $"{hud?.Popped} damage number(s) popped, the game's {_gameNumbers.Count} [{GameNumbers()}]; {_hits} hits, "
+        + $"{_checked} checked against the HP lost, {_kills} kills, {_overkills} with overkill ({hud?.PoppedKills} popped)";
 
     public bool? Step(FfxGame game, GameState s, GameStateView v, double delta)
     {
@@ -887,7 +945,7 @@ public sealed class BattleTest : ITest
         // damage number (a monster's HP or its kill)
         if (_target.Length > 0 && _targetClosed && _monsterHits > 0)
         {
-            var attacked = $"{_first}; {_target}; {hud.Popped} damage number(s) popped for {_hits} hits; {effects?.Started ?? 0} effect(s) started "
+            var attacked = $"{_first}; {_target}; {Pops(hud)}; {effects?.Started ?? 0} effect(s) started "
                 + $"({effects?.RemadeStarted ?? 0} remade as {RemadeId}); effect draws by pass [{string.Join(", ", EffectDrawView.PassDraws)}], "
                 + $"{EffectDrawView.FadeFrames} frame(s) with a screen fade";
             if (!GameSettings.Flag("to-results"))
@@ -1026,9 +1084,10 @@ public sealed class BattleTest : ITest
             Tap(false);
         uint ap = TotalAp(e);
         var hud = root?.FindChild("BattleHudView", true, false) as BattleHudView;
-        bool pass = _apView.Length > 0 && _gilAt >= 0 && _stateChanged && _kills > 0 && PopsMismatch(hud) == null;
-        return Done(pass, $"{_attacked}; the battle's damage numbers: {hud?.Popped} popped for {_hits} hits, "
-            + $"{hud?.PoppedKills} of them killing blows ({_kills} kills); the results screen: {_resultsFirst}; the AP counted: {_apView}; the gil paid: {_gilView} "
+        var mismatch = PopsMismatch(hud);
+        bool pass = _apView.Length > 0 && _gilAt >= 0 && _stateChanged && _overkills > 0 && hud?.PoppedKills > 0 && mismatch == null;
+        return Done(pass, $"{_attacked}; the battle's damage numbers: {Pops(hud)}{(mismatch != null ? $"; {mismatch}" : "")}; "
+            + $"the results screen: {_resultsFirst}; the AP counted: {_apView}; the gil paid: {_gilView} "
             + $"(states {string.Join(" ", _states.Select(x => $"0x{x:x}"))}; AP left {_firstAp} -> {ap}, gil left {_firstGilLeft} -> 0, party gil {_firstGil} -> {c.Save.Gil}, "
             + $"most AP shown {view?.MostAp}, level-up flash frames {view?.Flashes}, state changed {_stateChanged})");
     }

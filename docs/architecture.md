@@ -783,23 +783,26 @@ the game gets from `ViewProjection2` (traced only as the main camera's).
   units away.
 - **The battle HUD** (`BattleHudView`): the party's HP and MP (KO red, a
   quarter or less yellow) by the names the player gave (`Save.members`),
-  the turn order by the turn counter (lowest next), and damage numbers: a
-  battler's HP change between snapshots, popped over its body (damage
-  white, healing green), rising and fading over 1.2 s; a monster that dies
-  with a death pattern leaves `Snapshot.battlers` in the update of the blow,
-  its HP never seen at 0, so its last HP pops as the killing blow (the
-  overkill beyond it is not in the snapshot; before, kills showed no number:
-  the deck battle popped 1 number for 3 hits, now 3). The game's own
-  numbers, overkill included, are its damage number list: `MsSubHp`
-  registers the HP loss it is handed (before the HP is clamped at 0) with
-  `MsNumberRegist`, which puts one 0x14-byte record per digit (and word
-  character) into the pool `*0x011360b8` (`g_BtlNumbers`, 0x80 records,
-  `+0` the style, 0 free) linked from `g_BtlNumberList` (`0x011360bc`, next
-  at `+0x10`): `+1` the colour (0 damage, 1 healing, 2 a word), `+2` the
-  battler, `+3` the digit's place (lowest first), `+4` the digit, `+5`
-  the delay, `+6` the age, `+7` the life, `+8`/`+0xa` the offset. A state
-  API field with these numbers (battler, value, kind, colour, age) would
-  give the HUD the game's own numbers; asked of ffx-rust as a follow-up. Party battler `i`
+  the turn order by the turn counter (lowest next), and the game's own
+  damage numbers (API 12's `Effects.numbers`, ffx-rust's docs/state-api.md,
+  "Damage numbers"): the game's list of number records joined back into
+  numbers (battler, value, colour, word, age, life). `MsSubHP` registers the
+  HP loss it is handed before it clamps the HP at 0, so a killing blow pops
+  its overkill (the deck's battle: 268 on a monster, with the Overkill word,
+  and 108 on one with 100 HP). Each number pops once, the first time a
+  snapshot lists it (its key: the update it was put in, `update - age`, with
+  battler, colour, word and value, so a skipped snapshot loses nothing), over
+  the battler's body, and follows the game's timing: its characters show
+  lowest digit first, one an update (place `k` from age `k + 1`); a loss
+  bounces by the game's own frame table (`g_BtlNumberFrames`, read from the
+  running game with `FfxGame.Peek`, not kept in gd-ffx), a heal (green)
+  rises by half its age, the Overkill word by its age, in PS2 pixels; the
+  last 5 updates of its life (30) fade, and it leaves when the game drops
+  it. The words: `0x3a` MP and `0x3d` Overkill from their callers; `0x3b`,
+  `0x3c` are taken to be Miss and Immune by the PS2 font's order (not seen
+  yet). Before API 12 the HUD popped each battler's HP change between
+  snapshots, and a monster that left the list in the update of its blow
+  popped its last HP: never the overkill. Party battler `i`
   is the party actor with id `i + 1`; monster `0x14 + k` the k-th monster
   actor by slot (seen in the deck's battle; `BattleHudView.ActorOf`).
 
