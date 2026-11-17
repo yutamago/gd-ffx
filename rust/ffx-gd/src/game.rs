@@ -98,6 +98,9 @@ struct Boot {
     /// The game's speed on the real clock at the boot (`set_speed` before
     /// `start`), 1 for the game's own pace.
     speed: f64,
+    /// The start-up logos play natively (`set_native_opening`): the
+    /// start-up loop waits for the opening's `Finish` (`crate::flash`).
+    native_opening: bool,
 }
 
 fn run_game(
@@ -113,9 +116,10 @@ fn run_game(
             ..ffx_host::gfx::Config::default()
         },
         real_clock: true,
-        // Godot shows its own picture; the start-up logos are Iggy's
-        // (without Ruffle they would never end)
-        skip_opening: true,
+        // the start-up logos: gd-ffx's native opening ends them through
+        // the movie's `Finish` (crate::flash); else they end on their first
+        // frame (without Ruffle the null player never sends `Finish`)
+        skip_opening: !boot.native_opening,
         // the debugging speed (`set_speed`, `--speed=`): only when not 1
         speed: ((boot.speed - 1.0).abs() > f64::EPSILON).then_some(boot.speed),
         ..ffx_host::Options::default()
@@ -123,6 +127,8 @@ fn run_game(
     let mut table = ffx_host::ports::table();
     // the native ESC menu's calls into the game's (docs/architecture.md)
     crate::esc::register(&mut table);
+    // the Flash screens' movies and calls, the native opening's end
+    crate::flash::register(&mut table);
     let mut exec = match ffx_host::boot_opts(&boot.exe, table, &opts) {
         Ok(e) => e,
         Err(e) => return format!("boot: {e}"),
@@ -176,6 +182,8 @@ pub struct FfxGame {
     /// The game's speed (`set_speed`): given to the boot, then to the
     /// running game's clock.
     speed: f64,
+    /// `set_native_opening`: passed to the boot.
+    native_opening: bool,
 }
 
 #[godot_api]
@@ -191,10 +199,15 @@ impl INode for FfxGame {
             cloth_held: Vec::new(),
             snaps_held: None,
             speed: 1.0,
+            native_opening: false,
         }
     }
 
     fn process(&mut self, _delta: f64) {
+        // the movies' draws, before the game deletes a player
+        if let Some(shared) = self.run.as_ref().and_then(Run::shared) {
+            crate::flash::sample(&shared.iggy);
+        }
         if self.poll_pads
             && let Some(run) = &self.run
         {
@@ -344,6 +357,7 @@ impl FfxGame {
             exe,
             documents,
             speed: self.speed,
+            native_opening: self.native_opening,
         };
         let thread = {
             let (shared, outcome) = (Arc::clone(&shared), Arc::clone(&outcome));
@@ -1071,6 +1085,204 @@ impl FfxGame {
             .as_ref()
             .and_then(Run::shared)
             .map_or(self.speed, |s| s.clock.speed())
+    }
+
+    /// Whether the start-up logos (`openingscreen.swf`) play natively
+    /// (before `start`): the game's start-up loop then waits for the
+    /// movie's `Finish`, which `opening_finish` asks (`crate::flash`; the
+    /// loop ends by itself after 30 s); else they end on their first frame.
+    #[func]
+    fn set_native_opening(&mut self, on: bool) {
+        self.native_opening = on;
+    }
+
+    /// The start-up opening's state: `waiting` (the start-up loop waited
+    /// for it), `finish_sent` (its `Finish` was called), `ended` (the loop
+    /// went on), `timed_out` (ended without `opening_finish`).
+    #[func]
+    fn opening_state(&self) -> VarDictionary {
+        let s = crate::flash::opening_state();
+        vdict! {
+            "waiting" => s & crate::flash::O_WAITING != 0,
+            "finish_sent" => s & crate::flash::O_FINISH_SENT != 0,
+            "ended" => s & crate::flash::O_ENDED != 0,
+            "timed_out" => s & crate::flash::O_TIMED_OUT != 0,
+        }
+    }
+
+    /// Ends the start-up opening: its `Finish` is called at the start-up
+    /// loop's next check.
+    #[func]
+    fn opening_finish(&mut self) {
+        crate::flash::finish_opening();
+    }
+
+    /// The Flash movies the game opened so far, oldest first: each
+    /// `name\u{1f}seq\u{1f}draws` (draws: how often the game drew it, i.e.
+    /// asked it to play; sampled each frame).
+    #[func]
+    fn flash_movies(&self) -> PackedStringArray {
+        crate::flash::movies()
+            .iter()
+            .map(|m| GString::from(format!("{}\u{1f}{}\u{1f}{}", m.name, m.seq, m.draws).as_str()))
+            .collect()
+    }
+
+    /// How many AS3 calls of the game on its movies wait (`flash_calls`).
+    #[func]
+    fn flash_calls_pending(&self) -> i64 {
+        i64::try_from(crate::flash::pending()).unwrap_or(i64::MAX)
+    }
+
+    /// The AS3 calls the game made on its movies since the last time,
+    /// oldest first: each `movie\u{1f}seq\u{1f}function\u{1f}arg...`
+    /// (`crate::flash::Call`).
+    #[func]
+    fn flash_calls(&self) -> PackedStringArray {
+        let (calls, _) = crate::flash::take_calls();
+        calls
+            .iter()
+            .map(|c| {
+                let mut s = format!("{}\u{1f}{}\u{1f}{}", c.movie, c.seq, c.function);
+                for a in &c.args {
+                    s.push('\u{1f}');
+                    s.push_str(a);
+                }
+                GString::from(s.as_str())
+            })
+            .collect()
+    }
+
+    /// Flash movie `movie` (`chocobo.swf`, from the archive: `classic_open`
+    /// first) in a dictionary: `width`, `height` (the stage), `fps`,
+    /// `frames` (the main timeline's); empty without it.
+    #[func]
+    fn flash_info(&self, movie: GString) -> VarDictionary {
+        let Some(m) = classic().flash_movie(&movie.to_string()) else {
+            return VarDictionary::new();
+        };
+        vdict! {
+            "width" => m.width,
+            "height" => m.height,
+            "fps" => m.fps,
+            "frames" => i64::from(m.frames(0)),
+        }
+    }
+
+    /// Character `id` (0: the main timeline) of Flash movie `movie` at
+    /// `frame` (1-based; sprites loop) drawn at `scale` pixels a stage pixel
+    /// into a `width` x `height` RGBA8 picture (straight alpha) whose
+    /// top-left corner is stage point (`x`, `y`) (`flash_bounds` gives
+    /// where a character draws); empty without the movie
+    /// (`ffx_import::flash`).
+    #[func]
+    #[allow(clippy::too_many_arguments)]
+    fn flash_render(
+        &self,
+        movie: GString,
+        id: i64,
+        frame: i64,
+        x: f64,
+        y: f64,
+        width: i64,
+        height: i64,
+        scale: f64,
+    ) -> PackedByteArray {
+        use ffx_import::flash::{ColourTransform, Matrix};
+        let Some(swf) = classic().flash_movie(&movie.to_string()) else {
+            return PackedByteArray::new();
+        };
+        let (Ok(id), Ok(frame), Ok(w), Ok(h)) = (
+            u16::try_from(id),
+            u32::try_from(frame),
+            u32::try_from(width.clamp(1, 4096)),
+            u32::try_from(height.clamp(1, 4096)),
+        ) else {
+            return PackedByteArray::new();
+        };
+        let to = Matrix::scale(scale).then(&Matrix {
+            tx: -x,
+            ty: -y,
+            ..Matrix::IDENTITY
+        });
+        let img = swf.render(id, frame, w, h, &to, &ColourTransform::IDENTITY);
+        PackedByteArray::from(img.rgba.as_slice())
+    }
+
+    /// Where character `id` of Flash movie `movie` draws at `frame`, in
+    /// stage pixels; an empty rectangle when it draws nothing.
+    #[func]
+    fn flash_bounds(&self, movie: GString, id: i64, frame: i64) -> Rect2 {
+        let b = classic().flash_movie(&movie.to_string()).and_then(|m| {
+            m.bounds(
+                u16::try_from(id).ok()?,
+                u32::try_from(frame).ok()?,
+                &ffx_import::flash::Matrix::IDENTITY,
+            )
+        });
+        #[allow(clippy::cast_possible_truncation)] // pixels
+        b.map_or(Rect2::default(), |(x0, y0, x1, y1)| {
+            Rect2::new(
+                Vector2::new(x0 as f32, y0 as f32),
+                Vector2::new((x1 - x0) as f32, (y1 - y0) as f32),
+            )
+        })
+    }
+
+    /// The character Flash movie `movie` exports as class `name`, -1 for
+    /// none.
+    #[func]
+    fn flash_class(&self, movie: GString, name: GString) -> i64 {
+        classic()
+            .flash_movie(&movie.to_string())
+            .and_then(|m| m.class(&name.to_string()))
+            .map_or(-1, i64::from)
+    }
+
+    /// The frame (1-based) of label `label` in sprite `id` (0: the main
+    /// timeline) of Flash movie `movie`, -1 for none.
+    #[func]
+    fn flash_label(&self, movie: GString, id: i64, label: GString) -> i64 {
+        classic()
+            .flash_movie(&movie.to_string())
+            .and_then(|m| m.label(u16::try_from(id).ok()?, &label.to_string()))
+            .map_or(-1, i64::from)
+    }
+
+    /// The alpha multiplier of the instance at `depth` of Flash movie
+    /// `movie`'s main timeline, frame by frame (index 0: frame 1; 0 where
+    /// no instance is there): its fades.
+    #[func]
+    fn flash_alphas(&self, movie: GString, depth: i64) -> PackedFloat32Array {
+        let Some(m) = classic().flash_movie(&movie.to_string()) else {
+            return PackedFloat32Array::new();
+        };
+        #[allow(clippy::cast_possible_truncation)] // a factor
+        (1..=m.frames(0))
+            .map(|f| {
+                m.display_list(0, f)
+                    .iter()
+                    .find(|i| i64::from(i.depth) == depth)
+                    .map_or(0.0, |i| i.cx.mul[3] as f32)
+            })
+            .collect()
+    }
+
+    /// Bitmap `id` of Flash movie `movie`: `width`, `height`, `rgba`
+    /// (RGBA8, straight alpha); empty without it.
+    #[func]
+    fn flash_bitmap(&self, movie: GString, id: i64) -> VarDictionary {
+        let Some(m) = classic().flash_movie(&movie.to_string()) else {
+            return VarDictionary::new();
+        };
+        let Some(b) = u16::try_from(id).ok().and_then(|id| m.bitmap(id)) else {
+            return VarDictionary::new();
+        };
+        vdict! {
+            "width" => i64::from(b.width),
+            "height" => i64::from(b.height),
+            "rgba" => &PackedByteArray::from(b.rgba.as_slice()),
+        }
     }
 
     /// A key by its `DirectInput` scan code (tests, on-screen buttons).

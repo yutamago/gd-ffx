@@ -485,8 +485,106 @@ fn inspect(imp: &ffx_import::Importer, what: &str, names: &[String]) -> Option<E
         "wname" => wname(imp, names),
         "devnames" => each(names, |n| devnames(imp, n)),
         "exits" => each(names, |n| exits(imp, n)),
+        "flash" => flash(imp, names),
         _ => return None,
     })
+}
+
+/// `flash <movie> [<character> <frame> <scale> <out.png>]`: a Flash
+/// movie's stage, frames, bitmaps and main display list; with the rest,
+/// character `character` (0: the main timeline) at `frame` drawn at
+/// `scale` pixels a stage pixel into a PNG (`ffx_import::flash`).
+fn flash(imp: &ffx_import::Importer, args: &[String]) -> ExitCode {
+    use ffx_import::flash::{ColourTransform, Matrix};
+    let Some(name) = args.first() else {
+        eprintln!("flash <movie> [<character> <frame> <scale> <out.png>]");
+        return ExitCode::FAILURE;
+    };
+    let Some(movie) = imp.flash_movie(name) else {
+        eprintln!("{name}: no such movie, or it does not parse");
+        return ExitCode::FAILURE;
+    };
+    if let [_, id, frame, scale, out] = args {
+        // a character by id or class name, a frame by number or label; the
+        // picture cropped to what it draws
+        let Some(id) = parse_num(id)
+            .and_then(|n| u16::try_from(n).ok())
+            .or_else(|| movie.class(id))
+        else {
+            eprintln!("flash: no character {id}");
+            return ExitCode::FAILURE;
+        };
+        let Some(frame) = parse_num(frame).or_else(|| movie.label(id, frame)) else {
+            eprintln!("flash: no frame {frame}");
+            return ExitCode::FAILURE;
+        };
+        let Ok(scale) = scale.parse::<f64>() else {
+            eprintln!("flash: <scale> is a number");
+            return ExitCode::FAILURE;
+        };
+        let Some((x0, y0, x1, y1)) = movie.bounds(id, frame, &Matrix::scale(scale)) else {
+            eprintln!("flash: character {id} draws nothing at frame {frame}");
+            return ExitCode::FAILURE;
+        };
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // a picture's size
+        let (w, h) = (
+            ((x1 - x0).ceil() as u32).max(1),
+            ((y1 - y0).ceil() as u32).max(1),
+        );
+        let to = Matrix {
+            tx: -x0.floor(),
+            ty: -y0.floor(),
+            ..Matrix::IDENTITY
+        }
+        .then(&Matrix::scale(scale));
+        let img = movie.render(id, frame, w + 1, h + 1, &to, &ColourTransform::IDENTITY);
+        return match std::fs::write(out, ffx_import::flash::png(&img)) {
+            Ok(()) => {
+                println!(
+                    "{out}: character {id} frame {frame}, {}x{} from ({:.1}, {:.1})",
+                    w + 1,
+                    h + 1,
+                    x0 / scale,
+                    y0 / scale
+                );
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("{out}: {e}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+    println!(
+        "{name}: {}x{} at {} fps, {} frames",
+        movie.width,
+        movie.height,
+        movie.fps,
+        movie.frames(0)
+    );
+    for id in movie.bitmap_ids() {
+        if let Some(b) = movie.bitmap(id) {
+            println!("  bitmap {id}: {}x{}", b.width, b.height);
+        }
+    }
+    for f in [1, movie.frames(0)] {
+        for i in movie.display_list(0, f) {
+            println!(
+                "  frame {f} depth {}: character {} ({} frames) at ({:.1}, {:.1}) alpha x{:.2}{}",
+                i.depth,
+                i.id,
+                movie.frames(i.id),
+                i.matrix.tx / 20.0,
+                i.matrix.ty / 20.0,
+                i.cx.mul[3],
+                i.name
+                    .as_deref()
+                    .map(|n| format!(" \"{n}\""))
+                    .unwrap_or_default()
+            );
+        }
+    }
+    ExitCode::SUCCESS
 }
 
 /// `exits <map>...` (hex `0x14` or decimal): the map's event and the maps

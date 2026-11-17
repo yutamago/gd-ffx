@@ -23,6 +23,7 @@ use serde_json::{Value, json};
 
 pub mod effect;
 pub mod exits;
+pub mod flash;
 pub mod morph;
 
 /// The version of what the importer writes into a `.glb`
@@ -144,6 +145,8 @@ pub struct Importer {
     effects: std::sync::Mutex<HashMap<String, Option<Value>>>,
     /// The event names by map number ([`exits::event_names`]), read once.
     events: std::sync::OnceLock<Vec<String>>,
+    /// Flash movies parsed so far ([`Importer::flash_movie`]), by name.
+    flash: std::sync::Mutex<HashMap<String, Option<std::sync::Arc<flash::Movie>>>>,
 }
 
 impl std::fmt::Debug for Importer {
@@ -169,6 +172,7 @@ impl Importer {
             lockit: std::sync::Mutex::default(),
             effects: std::sync::Mutex::default(),
             events: std::sync::OnceLock::new(),
+            flash: std::sync::Mutex::default(),
         })
     }
 
@@ -205,6 +209,25 @@ impl Importer {
         self.archive
             .read(entry)
             .map_err(|e| Error::Archive(format!("{path}: {e}")))
+    }
+
+    /// The Flash movie `name` (`chocobo.swf`, from
+    /// `ffx_data/gamedata/ps3data/flash/`), parsed once; `None` when the
+    /// archive lacks it or it does not parse.
+    #[must_use]
+    pub fn flash_movie(&self, name: &str) -> Option<std::sync::Arc<flash::Movie>> {
+        let key = name.to_ascii_lowercase();
+        let mut cache = self
+            .flash
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        cache
+            .entry(key.clone())
+            .or_insert_with(|| {
+                let data = self.read(&flash::movie_path(&key)).ok()?;
+                flash::Movie::parse(&data).ok().map(std::sync::Arc::new)
+            })
+            .clone()
     }
 
     /// The game's character set for `language` (`us`, `jp`, `de`...; the

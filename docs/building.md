@@ -69,7 +69,9 @@ Godot (docs/architecture.md, "Native UI"). All 110 developer saves pass
 - `swf`: the remaster's Flash (Iggy) screens on Ruffle inside ffx-host.
   Heavy (wgpu). gd-ffx shows none of them (the game runs on the null
   graphics device); only for comparing with ffx-rust's own runs. Without it
-  the Flash screens are null; the start-up logos are skipped either way.
+  the Flash screens are null players and gd-ffx draws each natively from
+  the game's calls (docs/architecture.md, "The Flash screens"); the
+  start-up opening's `Finish` is gd-ffx's either way.
 - `dev-unicorn` (off by default since 2026-11-17): development only, as in
   ffx-rust. Functions of the game without a Rust port run in Unicorn, from
   your own `FFX.exe`. ffx-rust runs the whole game without it now (all 110

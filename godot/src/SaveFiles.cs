@@ -141,6 +141,31 @@ public static class SaveFilesSelfTest
             Check(h.PlayerName.SequenceEqual(new byte[] { 0x63, 0x58, 0x53 }) && h.Name(4).SequenceEqual(new byte[] { 0x66, 0x50 }) && h.Name(1).Length == 0,
                 "the player's name and the characters' names from the block");
             Check(FieldMenuView.Time(h.PlayTime) == "2:01", "play time as the menu shows it");
+
+            // the save screen's state from the game's calls on saveload_*.swf, as measured
+            // (docs/architecture.md, "The Flash screens"): a list, a question, the cursor
+            var st = new SaveLoadState();
+            void Call(string f, params string[] a) => st.Apply(new FlashCall("saveload_jp.swf", 1, f, a));
+            Call("showSaveLoad");
+            Call("clearSaveLoad");
+            Call("showPopUpStd", "Loading");
+            Call("addSaveLoadItem", "0", "0", "", "", "", "", "", "", "", "", "", "Create new save data");
+            Call("addSaveLoadItem", "1", "1", "Besaid - Beach", "2026/11/17  9:51:32", "Tidus", "Play Time:  001:07:07", "_1", "_5", "_0", "m26", "", "");
+            Call("setSaveLoadHelpText", "Select a file", "1/200");
+            Call("setSaveLoadFocus", "0");
+            Call("hidePopUpStd");
+            Check(st.Shown == 1 && st.Items.Count == 2 && st.Items[1].Party[1] == "_5" && st.Items[1].Thumbnail == "m26"
+                && st.Items[0].Extra == "Create new save data" && st.Count == "1/200" && st.Focus == 0 && st.Message == null,
+                "save screen: rows, help, count, focus from the game's calls");
+            Call("showPopUpWithBtn", "Save?", "Yes", "No", "false");
+            Check(st.Question != null && st.Button == 1, "a question starts on No (the movie's)");
+            Call("changeSelectedBtn");
+            Check(st.Button == 0, "the game's changeSelectedBtn moves it to Yes");
+            Call("hidePopUpWithBtn");
+            Call("setSaveLoadFocus", "1");
+            Check(st.Question == null && st.Focus == 1, "the question closes; the focus follows");
+            Call("clearSaveLoad");
+            Check(st.Items.Count == 0 && st.Focus == -1, "clearSaveLoad empties the list");
         }
         catch (System.Exception e)
         {
@@ -151,7 +176,7 @@ public static class SaveFilesSelfTest
             try { Directory.Delete(tmp, true); } catch (IOException) { }
         }
         var pass = fails.Count == 0;
-        Godot.GD.Print(pass ? "ffx selftest: PASS (saves: header fields, names, load and save list order)" : $"ffx selftest: FAIL ({string.Join("; ", fails)})");
+        Godot.GD.Print(pass ? "ffx selftest: PASS (saves: header fields, names, load and save list order; the save screen's state from the game's calls)" : $"ffx selftest: FAIL ({string.Join("; ", fails)})");
         node.GetTree().Quit(pass ? 0 : 1);
     }
 }

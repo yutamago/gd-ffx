@@ -180,10 +180,12 @@ cargo run --release -p ffx-import -- --game-dir <game> wname jp [kana]          
 cargo run --release -p ffx-import -- --game-dir <game> devnames 7                 # a developer save's 18 names, decoded in jp and us
 cargo run --release -p ffx-import -- --game-dir <game> exits 0x46 0x14            # a map's event and the maps its script jumps to (docs/architecture.md, "Map transitions")
 cargo run --release -p ffx-import -- --game-dir <game> cat <archive path> > /tmp/x # a file's raw bytes
+cargo run --release -p ffx-import -- --game-dir <game> flash chocobo.swf          # a Flash movie's stage, frames, bitmaps, main display list
+cargo run --release -p ffx-import -- --game-dir <game> flash saveload_jp.swf m26 1 1 /tmp/m26.png   # a character (id or class) at a frame (number or label), scale, cropped (docs/architecture.md, "The Flash screens")
 ```
 
-The WGSL, the texts and the files are reading aids printed from the
-player's own files; keep them out of git.
+The WGSL, the texts, the pictures and the files are reading aids printed
+from the player's own files; keep them out of git.
 
 `--game-dir` defaults to `FFX_GAME_DIR`.
 

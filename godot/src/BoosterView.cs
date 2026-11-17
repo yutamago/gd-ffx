@@ -9,10 +9,17 @@ namespace GdFfx;
 /// x4), F2 the power-up ("Supercharge"), F3 the encounter mode (none, normal, frequent), F4
 /// the auto-battle. The keys go to the game, which keeps the modes; this shows a badge for
 /// each one that is on (the speed-up dimmed where the game does not apply it, e.g. in an
-/// event) and, when one changes, a short toast with the game's own tip (its localisation kit:
-/// lines 0x2fd..0x2ff, 0x2f6/0x2f7, 0x2f9..0x2fb, 0x37f/0x380), as the game's
-/// <c>TipSystem</c> shows it. gd-ffx's debugging speed (the options, <c>--speed=</c>) gets a
-/// badge too while it is not 1.
+/// event). The tips box (<c>box.swf</c>, <c>_kr</c>, <c>_ch</c>): every tip the game plays
+/// (<c>TipSystem_PlayTip</c>'s <c>OnPlay(0, text)</c>, taken by <see cref="FlashScreens"/>) is
+/// shown as a short toast, whatever sends it: the boosters' (localisation lines 0x2fd..0x2ff,
+/// 0x2f6..0x2f8, 0x2f9..0x2fb, 0x37d..0x380), the free camera's and time stop's (0x2ed/0x2ee,
+/// 0x2f3..0x2f5), the HUD's (0x2f0..0x2f2), "You get 50000 Gils!" (0x2fc). The free camera
+/// (<c>freecamera.swf</c>) and time stop (<c>time_stop.swf</c>) get a badge with the movie's
+/// own icon while on: the game asks its icon panel for them (icons 8 and 9), which the original
+/// refuses (<c>IconPanel_showIcon</c> takes only 0..6), so these two are gd-ffx's; their state is
+/// read from the free camera (<c>0x00ccc830</c>: <c>+0</c> the capture, <c>+0x338</c> the time
+/// stop) through <see cref="FfxGame.Peek"/> until the state API carries it. gd-ffx's debugging
+/// speed (the options, <c>--speed=</c>) gets a badge too while it is not 1.
 /// </summary>
 public partial class BoosterView : Control
 {
@@ -20,8 +27,13 @@ public partial class BoosterView : Control
     private PanelContainer _toast = null!;
     private Label _toastText = null!;
     private double _toastAge = double.MaxValue;
-    private (byte Speed, bool Powerup, byte Encounters, bool Auto)? _last;
     private readonly Dictionary<string, (PanelContainer Panel, Label Label)> _badge = new();
+    private readonly Dictionary<string, ImageTexture?> _icons = new();
+    private double _cameraAt = -1;
+    private (bool Free, bool Stop) _camera;
+
+    /// <summary>The free camera's singleton (<c>FreeCamera</c>, 0x344 bytes).</summary>
+    public const long FreeCameraInstance = 0x00ccc830;
 
     /// <summary>Seconds a toast stays.</summary>
     public const double ToastTime = 2.5;
@@ -44,34 +56,30 @@ public partial class BoosterView : Control
         AddChild(_toast);
     }
 
-    /// <summary>The game's tip <paramref name="id"/> in its language, else <paramref name="english"/>.</summary>
-    private static string Tip(FfxGame? game, Snapshot s, int id, string english)
+    /// <summary>The free camera's capture and time stop, as <c>FreeCamera_handleInput</c> reads them (4 times a second).</summary>
+    private (bool Free, bool Stop) Camera(FfxGame game, double now)
     {
-        if (game == null)
-            return english;
-        var t = game.FlashText(id, MessageView.LanguageCode(s.World.Language));
-        return t.Length > 0 ? t : english;
+        if (now - _cameraAt < 0.25)
+            return _camera;
+        _cameraAt = now;
+        var p = game.Peek(FreeCameraInstance, 4);
+        uint cam = p.Length == 4 ? System.BitConverter.ToUInt32(p) : 0;
+        if (cam == 0)
+            return _camera = (false, false);
+        var capture = game.Peek(cam, 4);
+        var stop = game.Peek(cam + 0x338, 1);
+        return _camera = (capture.Length == 4 && System.BitConverter.ToUInt32(capture) != 0, stop.Length == 1 && stop[0] != 0);
     }
 
-    /// <summary>The toasts a change from <paramref name="was"/> to <paramref name="now"/> makes (the game's tips).</summary>
-    public static List<(int Id, string English)> TipsFor((byte Speed, bool Powerup, byte Encounters, bool Auto) was,
-        (byte Speed, bool Powerup, byte Encounters, bool Auto) now)
+    /// <summary>A movie's icon (its first bitmap), cached.</summary>
+    private ImageTexture? Icon(FfxGame game, string movie)
     {
-        var tips = new List<(int, string)>();
-        if (was.Speed != now.Speed)
-            tips.Add(now.Speed switch { 1 => (0x2fd, "Turbo x2"), 2 => (0x2fe, "Turbo x4"), _ => (0x2ff, "Normal") });
-        if (was.Powerup != now.Powerup)
-            tips.Add(now.Powerup ? (0x2f6, "Supercharge (On)") : (0x2f7, "Supercharge (Off)"));
-        if (was.Encounters != now.Encounters)
-            tips.Add(now.Encounters switch
-            {
-                0 => (0x2fa, "Enemy Encounters (None)"),
-                2 => (0x2fb, "Enemy Encounters (Frequent)"),
-                _ => (0x2f9, "Enemy Encounters (Normal)"),
-            });
-        if (was.Auto != now.Auto)
-            tips.Add(now.Auto ? (0x37f, "Auto Battle (On)") : (0x380, "Auto Battle (Off)"));
-        return tips;
+        if (!_icons.TryGetValue(movie, out var t))
+        {
+            t = game.FlashBitmap(movie, 1) is { } img ? ImageTexture.CreateFromImage(img) : null;
+            _icons[movie] = t;
+        }
+        return t;
     }
 
     public override void _Process(double delta)
@@ -83,20 +91,6 @@ public partial class BoosterView : Control
         if (s != null)
         {
             var b = s.Boosters;
-            var now = (b.SpeedLevel, b.Powerup, b.Encounters, b.AutoBattle);
-            if (_last is { } was && was != now)
-            {
-                var tips = TipsFor(was, now);
-                if (tips.Count > 0)
-                {
-                    var text = string.Join("\n", tips.ConvertAll(t => Tip(host?.Game, s, t.Id, t.English)));
-                    Ui.SetText(_toastText, text);
-                    _toastAge = 0;
-                    Toasts.Add(text.Replace('\n', ' '));
-                    GD.Print($"ffx: booster: {text.Replace('\n', ' ')}");
-                }
-            }
-            _last = now;
             if (b.SpeedLevel > 0)
                 want.Add(("speed", b.SpeedLevel == 2 ? "F1 Turbo x4" : "F1 Turbo x2", new Color(0.55f, 0.85f, 1f), !b.Speeding));
             if (b.Powerup)
@@ -105,6 +99,26 @@ public partial class BoosterView : Control
                 want.Add(("encounters", b.Encounters == 0 ? "F3 No encounters" : "F3 Encounters x10", new Color(0.7f, 1f, 0.6f), false));
             if (b.AutoBattle)
                 want.Add(("auto", "F4 Auto battle", new Color(1f, 0.9f, 0.45f), false));
+        }
+        // the tips the game played (its own text, in its language)
+        if (FlashScreens.Tips.Count > 0)
+        {
+            var lines = new List<string>();
+            while (FlashScreens.Tips.Count > 0)
+                lines.Add(MessageView.Clean(FlashScreens.Tips.Dequeue().Replace("@el@", "\n")));
+            var text = string.Join("\n", lines);
+            Ui.SetText(_toastText, text);
+            _toastAge = 0;
+            Toasts.Add(text.Replace('\n', ' '));
+        }
+        string? iconOf(string key) => key switch { "freecamera" => "freecamera.swf", "timestop" => "time_stop.swf", _ => null };
+        if (host?.Game is { } g && s != null)
+        {
+            var (free, stop) = Camera(g, Time.GetTicksMsec() / 1000.0);
+            if (free)
+                want.Add(("freecamera", "Free camera", new Color(0.6f, 1f, 0.6f), false));
+            if (stop)
+                want.Add(("timestop", "Time stop", new Color(1f, 0.8f, 0.4f), false));
         }
         var speed = UserSettings.Current.Speed;
         if (System.Math.Abs(speed - 1) > 1e-6 && host?.Game != null)
@@ -125,7 +139,17 @@ public partial class BoosterView : Control
                     ContentMarginLeft = 9, ContentMarginRight = 9, ContentMarginTop = 2, ContentMarginBottom = 3,
                 });
                 var label = Panels.Text(text, 15, colour);
-                panel.AddChild(label);
+                var row = new HBoxContainer { MouseFilter = MouseFilterEnum.Ignore };
+                row.AddThemeConstantOverride("separation", 4);
+                if (iconOf(key) is { } movie && host?.Game is { } ig && Icon(ig, movie) is { } icon)
+                    row.AddChild(new TextureRect
+                    {
+                        Texture = icon, ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+                        StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+                        CustomMinimumSize = new Vector2(22, 22), MouseFilter = MouseFilterEnum.Ignore,
+                    });
+                row.AddChild(label);
+                panel.AddChild(row);
                 _badges.AddChild(panel);
                 badge = (panel, label);
                 _badge[key] = badge;

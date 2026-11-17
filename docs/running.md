@@ -46,6 +46,10 @@ own documents folder, so the original's settings and saves are untouched.
   and the characters' models); both for comparing.
 - `--mods=DIR` (repeatable): mount the `*.pck` mod packs of `DIR` after
   those of `user://mods/`; `--no-mods`: none (docs/remake.md).
+- `--skip-opening`: end the start-up opening on its first frame (the
+  self-checks with a developer save do anyway); `--flash-log`: print every
+  Flash movie the game opens and every call it makes on one (`ffx flash:
+  ...`).
 
 ## The main scene
 
@@ -71,8 +75,15 @@ own documents folder, so the original's settings and saves are untouched.
 - **the boosters** (F1 to F4, the PC version's, kept by the game): a badge
   in the top right for each one on (F1 Turbo x2/x4, dimmed where the game
   does not speed up, e.g. in an event; F2 Supercharge; F3 no or frequent
-  encounters; F4 auto battle) and, on each change, a short toast with the
-  game's own tip text in its language;
+  encounters; F4 auto battle) and a short toast with each tip the game
+  plays, its own text in its language;
+- **the game's Flash screens, natively** (G5; docs/architecture.md, "The
+  Flash screens"): the start-up opening (the SQUARE ENIX logo and the
+  autosave notice, 8.8 s, before the in-game opening; not with a developer
+  save or `--skip-opening`), the autosave prompt (the running chocobo at
+  the bottom right while the game autosaves), the save and load screen
+  (the game's rows, help, count, cursor, its questions; portraits and
+  thumbnails from your copy's movie);
 - **the pause and the ESC menu** (`PauseView`): Start (B) pauses where the
   game allows it: the picture dimmed, "PAUSE" and the keys. Esc opens the
   game's PC menu, which halts play (the game skips its field update; the
@@ -669,6 +680,23 @@ and the camera's offset, to find a route; developer save 8 (Besaid's lodge
 weavers' hut `bsvr05` with `...,down:1.4,right:5,up:6` (docs/architecture.md,
 "The 2D layers").
 
+The Flash screens (G5; docs/architecture.md, "The Flash screens"):
+`--selftest-save --devsave=7` opens the save sphere's save screen, checks
+the game's rows drawn natively, its question's cursor (on Yes, Right to No,
+Left back), saves (a file appears in the sandbox), opens it again with the
+saved row, checks the overwrite question starts on No and that No keeps
+the file, and cancels; `--selftest-load` (a sandbox with a save, e.g. the
+one the save check left: `--documents=` the same folder) plays the
+start-up opening, goes to the title, opens Load (its cursor starts on Load
+when there are saves), checks "Load this file?" on Yes, Right and No keep
+the list, Yes loads the save's map. `--check-flash` (any check; the sweep
+passes it) lists the movies the game opened and showed and fails on one
+without a native screen or not drawn by it. `--selftest` reports the
+start-up opening (logo, notice, the game waited, `Finish`, the loop went
+on); the Besaid check's walk reaches an autosave (the prompt played).
+`tools/ux-shots.sh` takes pictures of the opening, the autosave prompt and
+the save and load screens too.
+
 `--selftest-remake --devsave=7` and `--selftest-mods --no-game` (G6):
 remade content and mod packs (docs/remake.md); `--selftest-launcher --no-game`:
 the launcher (docs/launcher.md).
@@ -680,7 +708,8 @@ FFX_GAME_DIR=/path/to/game tools/selftest.sh [--timeout SECONDS]
 
 Godot runs headless (no window; its audio is the dummy driver, so the
 game's sound is fed and drained but never heard), boots the game, checks that the
-game-state API's snapshots come and decode, waits for the party at the fire
+game-state API's snapshots come and decode, plays the start-up opening
+natively (the game waits for it, as for the original's movie), waits for the party at the fire
 in the opening (at least three party members shown, posed by their
 skeletons, and the camera), presses Start through Godot's input and
 expects the title, with the game's sound pulled by Godot's player by then
