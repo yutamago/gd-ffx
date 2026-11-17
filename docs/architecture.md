@@ -329,6 +329,16 @@ Godot's own lit materials (remade content, docs/remake.md) write linear
 values into this buffer like the classic ones: they show as under
 Compatibility, darker than Godot would show them in a project of its own.
 
+A map drawn remastered (docs/remaster-editor.md, "The render path") turns
+this around: `RemasterLighting` switches `ClassicPost` off and sets the
+global `ffx_linear_out`, with which every classic shader still drawing
+(characters, water, 2D layers, effects; `ffx_out` in `ClassicMaterials`,
+inline in `EffectDrawView`) writes its gamma values decoded to linear, so
+Godot's tone map and encode give them back beside the lit parts. Under
+Compatibility it stays 0: the classic parts come out as they were
+(measured on Besaid: Tidus 123 against 129 classic with AgX; 89 with the
+decode).
+
 ## Water
 
 `ClassicMaterials`' water shader is `PhyreWaterShader`'s math as its

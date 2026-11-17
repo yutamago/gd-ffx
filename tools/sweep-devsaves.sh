@@ -19,6 +19,8 @@
 # all: every developer save, 1..110, for changes that touch everything (the
 # importer's format, the shaders, the loading path) and before a release.
 # FFX_CLASSIC: the classic cache to use (default: the project's, user://classic)
+# FFX_SWEEP_ARGS: more arguments for each run, e.g. "--render-path=remastered"
+# (every map drawn by the remaster's lit path: docs/remaster-editor.md)
 set -u
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 godot="${GODOT:-$HOME/tools/Godot_v4.7.2-stable_mono_linux_x86_64/godot}"
@@ -36,7 +38,7 @@ cd "$repo/godot"
 for n in $saves; do
     log="$out/devsave-$n.log"
     timeout 240 "$repo/tools/capped.sh" "$godot" --headless --path . -- --selftest-map --check-flash --devsave="$n" \
-        --selftest-timeout=150 --documents="$out/docs-$n" ${FFX_CLASSIC:+--classic="$FFX_CLASSIC"} >"$log" 2>&1
+        --selftest-timeout=150 --documents="$out/docs-$n" ${FFX_CLASSIC:+--classic="$FFX_CLASSIC"} ${FFX_SWEEP_ARGS:-} >"$log" 2>&1
     code=$?
     rm -rf "$out/docs-$n"
     result=$(grep -E '^ffx selftest: (PASS|FAIL)' "$log" | tail -1 | cut -c15-260)

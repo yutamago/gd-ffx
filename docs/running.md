@@ -131,6 +131,7 @@ gd-ffx's own keys never reach the game:
 
 | Keys | gd-ffx |
 |---|---|
+| F7 | the remaster's compare: the map classic or remastered, in turn, for every map this run (docs/remaster-editor.md, "The render path") |
 | F9 | the FPS overlay (saved) |
 | F10 | the options (over the ESC menu: gd-ffx presses the game's Esc first, so play halts; alone when the game's menu does not open within 0.7 s) |
 | F11 | windowed / fullscreen (saved) |
@@ -160,9 +161,10 @@ sections `[video]`, `[audio]`, `[debug]` beside the launcher's `[game]`):
 | sound volume | 0 to 100 % (Godot's Master bus, the game's mix) | `audio/volume` |
 | game speed | x0.25 to x8, for debugging (ffx-host's clock: game time and the updates run that much faster; a pink badge shows it while not x1) | `debug/speed` |
 | FPS overlay | on/off (F9) | `debug/fps_overlay` |
+| render path | as each map says, classic everywhere, remastered everywhere (docs/remaster-editor.md, "The render path"; F7 flips it for the run) | `video/render_path` |
 
 The command line wins for its run and is not saved: `--quality=high|deck`,
-`--no-vsync`, `--no-glow`, `--speed=X` (0.25 to 8). The self-checks and the
+`--no-vsync`, `--no-glow`, `--speed=X` (0.25 to 8), `--render-path=map|classic|remastered`. The self-checks and the
 benchmark start from the defaults and never read the saved file (unless
 `--settings=PATH` names one), so a player's settings do not change their
 pictures. `--language=CODE` (jp en fr de it es kr ch) writes the game's

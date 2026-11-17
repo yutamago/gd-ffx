@@ -131,6 +131,10 @@ ffx: mods: 1 pack(s): tidus-hd
 The launcher (docs/launcher.md) lists the packs of each folder with a
 switch and Up and Down, and writes the folder's `load_order.txt`.
 
+A pack's remaster textures and materials (docs/remaster-editor.md,
+"Textures") are in `res://mods/<pack>/remaster/textures/textures.tres` and
+layer over the project's per texture ID, the later pack winning.
+
 Not yet: C# scripts in packs (they need gd-ffx's assembly rebuilt; use
 GDScript or plain scenes), `ffx-rust`'s data mods (and the launcher
 listing them beside the packs).
@@ -168,7 +172,7 @@ Per map, keyed by its level (`bsil00`):
 
 `MapOverrides`: `Level` (informational: the folder decides), `Status`
 (`Original`, `InProgress`, `Remastered`, `Approved`), `RenderPath`
-(`Classic`, `Remastered`: read by R2), `Notes`, `Parts` (an array of
+(`Classic`, `Remastered`: how the map is drawn, docs/remaster-editor.md, "The render path"), `Notes`, `Parts` (an array of
 `PartOverride`), `Additions`. A `PartOverride` (`PartOverride.cs`) edits one
 part by `Id`; every operation has an `Unset`, so a layer says only what it
 changes:

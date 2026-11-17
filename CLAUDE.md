@@ -5,12 +5,13 @@ here: `docs/architecture.md`, `docs/building.md`, `docs/running.md`,
 `docs/exporting.md`, `docs/launcher.md` (the main scene; skipped with
 `--game-dir`, `FFX_GAME_DIR`, `--devsave`, `--selftest*`, `--no-launcher`),
 `docs/remaster-plan.md`, `docs/remaster-editor.md` (the editor plugin,
-`godot/addons/ffx_remaster`).
+`godot/addons/ffx_remaster`; R2's textures, materials and render path).
 
 ## Rules
 
 - No game data in git: no game files, extracted or converted assets,
-  decompilation output, saves. The game is read from the player's copy at
+  decompilation output, saves, nor textures or maps made from the game's
+  (`godot/remaster/textures/` is gitignored: remaster projects are packs). The game is read from the player's copy at
   run time; the game folder is read-only, saves go to gd-ffx's own sandbox.
 - Licence MIT OR Apache-2.0; no GPL dependencies in release builds (gdext is
   MPL-2.0: fine; Unicorn only behind the `dev-unicorn` feature, off by default).
@@ -47,6 +48,7 @@ FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/bench.sh [besaid besaid-walk lchb bat
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-remake --devsave=7)  # G6: a remade c001 posed by the game
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-remake-map --devsave=7)  # G6: the remade Besaid beach example
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-overrides --devsave=7)  # R1: Besaid's example overrides (remove, hide, move, replace, add) in the running game; the catalogue entry
+(cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-materials --devsave=7)  # R2: a replaced texture drawn classic, a PBR material remastered, F7, a live replacement (--shot=F.png under Xvfb: F.png, F-remastered.png)
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-menu --devsave=7)        # G4: the field menu panel (party, gil, time), then Items (--menu-screen=status|abilities|overdrive|sphere-grid|config)
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-battle --devsave=7 --battle=3,0,0)  # G3/G4: battle, HUD, attack, effects, a damage number per hit (--to-results: on to the results screen)
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-ux --devsave=7)   # G5: choice cursor, ESC menu (halt, Change parameters) + options, game speed, F1/F3 boosters, pause
@@ -55,7 +57,7 @@ FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/bench.sh [besaid besaid-walk lchb bat
 # any check: --check-flash (every Flash movie the game opened/showed has a native screen); --flash-log
 FFX_GAME_DIR=... tools/ux-shots.sh OUT_DIR                 # G5: offscreen pictures of the native screens (Xvfb)
 FFX_GAME_DIR=... FFX_SHOT_TEST="--selftest-overrides --selftest-timeout=90 [--no-overrides]" tools/compare-shot.sh - OUT_DIR  # R1: the overrides' after (before) picture
-FFX_GAME_DIR=... tools/remaster-editor-check.sh [OUT_DIR]   # R1: the editor plugin headless on Besaid beach (open, move, hide, remove, replace, add, undo, save, reopen, status), then the game on save 7 with what it saved, then R1a's example round trip (FFX_EDITOR_SHOT=1: under Xvfb, pictures); rm OUT_DIR after
+FFX_GAME_DIR=... tools/remaster-editor-check.sh [OUT_DIR]   # R1/R2: the editor plugin headless on Besaid beach (open, move, hide, remove, replace, add, undo, save, reopen, status; where-used, a replaced texture, a generated material, render path remastered, the batch), then the game on save 7 with what it saved and with its textures, then R1a's example round trip (FFX_EDITOR_SHOT=1: under Xvfb, pictures); rm OUT_DIR after
 (cd godot && godot --headless --path . -- --selftest-saves --no-game)  # G4: the save list reader (no game)
 (cd godot && godot --headless --path . -- --selftest-mods --no-game)   # G6: mod packs, load order, registry, overrides layered over packs (no game)
 (cd godot && godot --headless --path . -- --selftest-launcher --no-game)   # G6: the launcher (no game; fake folders in /tmp)
