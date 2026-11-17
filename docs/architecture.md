@@ -467,6 +467,30 @@ soon as it was there: the snapshot has the new map's characters at once
   at most one is held, the older dropped. Under the headless dummy
   renderer, whose loads run on the main thread, only the imports.
   `--no-prefetch` turns loading ahead, the pool and the kept map off.
+- **The next battle's map** (`MapPrefetch.TickBattle`,
+  `rust/ffx-gd/src/encounters.rs`). The game says which battle maps a
+  field map's random encounters use: its encounter table (`btl.bin`, held
+  from the start: the fields at `*0x0112a9c8`, 14 bytes each, their count
+  the `u16` at `0x0112a9d0`, the blocks at `*0x0112a9cc`; ffx-rust's
+  docs/formats/battle.md), whose field for the map a random encounter
+  looks up (`g_SaveData + 4`, not the event map at `+0`) lists groups of
+  a battle map word (`0x400` a battle map, low ten bits its number) and an
+  encounter rate. A map is files `2 n` and `2 n + 1` of CD directory 0x1a
+  (battle) or 0x13 (field); their names come from the game's copy of
+  `cdrom.fid` (`g_CdLib + 0x2c`, the directory's first file number) and
+  `cdrom.fnd` (`g_CdLib + 0x30`), e.g.
+  `host0:/ffx/master/jppc/btlmap/mihn/mihn00_a/bin/mapout.vpa`, the level
+  `/btlmap/mihn/mihn00_a/`. Where an encounter can come (no battle, not
+  switched off with F3), the levels of the groups with a rate are
+  imported and the first one's scene held beside the exits' (one more,
+  `KeepBattle`). Besaid's beach (`+4` map 0x41) has no field: none; the
+  Mi'ihen highroad's start (developer save 33, `mihn00`, `+4` 0xd2):
+  `mihn00_a` and `mihn00_b`, rate 50 each.
+- **A map shown at once is still a change.** A level whose map was loaded
+  ahead (or kept) is shown in the snapshot's first frame of it, so nothing
+  was pending and the hold never began: its characters came up one by one
+  as their models loaded. A new map level now starts the hold too, which
+  ends once the characters' models are there.
 - **The log.** Each change prints `ffx: transition FROM -> TO: shown N ms
   after the game's new level (its map, where it came from: loaded ahead,
   kept, loaded then; the 2D layers, the game's load, the characters' models),
@@ -485,6 +509,12 @@ request": from `World.map_change` set):
 | | now | **0 ms** (loaded ahead) | 775 to 1,009 ms | 2.70 GB |
 | cold (a new cache) | hold, no loading ahead | 3,917 to 3,997 ms | 4,750 to 5,031 ms | 2.32 GB |
 | | now | **0 ms** (imported and loaded on the beach) | 1,023 to 1,043 ms | 2.53 GB |
+
+A battle start (Xvfb, developer save 33, `--selftest-battle --battle=18,0,0`:
+Mi'ihen's field, group 0, `mihn00_a`): loaded then (`--no-prefetch`),
+held 725 to 730 ms (its map 523 to 612 ms); loaded ahead, held 64 ms (its
+map 0 ms). Peak memory of that run 2.05 GB, against 1.68 GB with
+`--no-prefetch` (which also turns the exits' loading ahead off).
 
 What remains after the request is the game's own: its fade out, the black
 it holds and its load (`TkInitScene`), before its new level. Headless, the
@@ -759,7 +789,17 @@ the game gets from `ViewProjection2` (traced only as the main camera's).
   with a death pattern leaves `Snapshot.battlers` in the update of the blow,
   its HP never seen at 0, so its last HP pops as the killing blow (the
   overkill beyond it is not in the snapshot; before, kills showed no number:
-  the deck battle popped 1 number for 3 hits, now 3). Party battler `i`
+  the deck battle popped 1 number for 3 hits, now 3). The game's own
+  numbers, overkill included, are its damage number list: `MsSubHp`
+  registers the HP loss it is handed (before the HP is clamped at 0) with
+  `MsNumberRegist`, which puts one 0x14-byte record per digit (and word
+  character) into the pool `*0x011360b8` (`g_BtlNumbers`, 0x80 records,
+  `+0` the style, 0 free) linked from `g_BtlNumberList` (`0x011360bc`, next
+  at `+0x10`): `+1` the colour (0 damage, 1 healing, 2 a word), `+2` the
+  battler, `+3` the digit's place (lowest first), `+4` the digit, `+5`
+  the delay, `+6` the age, `+7` the life, `+8`/`+0xa` the offset. A state
+  API field with these numbers (battler, value, kind, colour, age) would
+  give the HUD the game's own numbers; asked of ffx-rust as a follow-up. Party battler `i`
   is the party actor with id `i + 1`; monster `0x14 + k` the k-th monster
   actor by slot (seen in the deck's battle; `BattleHudView.ActorOf`).
 
@@ -947,18 +987,69 @@ on Tidus's Cheer).
   power-up, 0x2fa/0x2f9/0x2fb the encounters, 0x37f/0x380 the auto-battle.
 - **The ESC menu.** `Menus.esc_menu` (`g_FFEscMenu`) is up while the game's
   `escmenu.swf` page is; meanwhile `animate` skips `updateFFX` (ffx-rust's
-  docs/formats/frame-timing.md), but the snapshots keep coming and the
-  game's clock goes on (measured under Xvfb: 35 snapshots and 1.17 s of
-  game time in 1 s). gd-ffx draws its home page
-  natively (localisation lines 0x217 Resume, 0x219 System setting, 0x21b
-  Special features, 0x21d Change parameters, 0x21f Quit: `FFEscMenu_initializeMainSettingPage`'s
-  `setHomePage`) and takes the input (`GameHost.Capture`), so the Flash
-  page's own cursor never moves; Resume taps the game's Esc
-  (`GameHost.Tap`: held 0.1 s, as the game reads its keyboard once an
-  update), which closes the menu from any page. A booster picked on the
-  Special features page is tapped once the menu has closed (the game
-  clears the booster bits while paused). Change parameters needs the Flash
-  page's own buttons: not offered.
+  docs/formats/frame-timing.md): play halts, as in the original (measured
+  under the menu: the event frame and the characters' motion frames stand
+  still). The snapshots keep coming (a frame boundary each frame) and three
+  wall-clock counters of the game's run on, as they do in the original:
+  game time (the Phyre timer; the original measures the time the menu was
+  open, `g_FFEscMenuClosedTime`, for `Sg_FrameSync`), the shaders'
+  `GlobalTime` and the play time (`Atel_PlayTimeUpdate_0086ca20` adds the
+  `graphicGetTime` difference, so the original counts the menu's time too).
+  The original's picture stands still (`afterGraphicSync` stops swapping
+  once `graphicIsEscMenuActive`), so the 3D view holds its shader clock
+  under the menu (`StateView3D`: no scrolling clouds or water behind it);
+  halting ffx-host's clock instead would stop the frame limiter, and with
+  it `FFEscMenu_update`, which closes the menu. gd-ffx draws its pages
+  natively and takes the input (`GameHost.Capture`), so the Flash page's
+  own cursor never moves. The home page: localisation lines 0x217 Resume,
+  0x219 System setting, 0x21b Special features, 0x21d Change parameters,
+  0x21f Quit (`FFEscMenu_initializeMainSettingPage`'s `setHomePage`), with
+  the game's help lines for its own entries (the help table `0x00c33dc0`:
+  `(text, page, index)`, page 1 rows 0x218..0x220, page 13 below); Resume
+  taps the game's Esc (`GameHost.Tap`: held 0.1 s, as the game reads its
+  keyboard once an update), which closes the menu from any page. A
+  booster picked on the Special features page is tapped once the menu has
+  closed (the game clears the booster bits while paused).
+- **Change parameters** (the game's page 13,
+  `FFEscMenu_initializeParameterChangePage`: three `addChangeParaPageItem`
+  rows of kind `spinnerButton`): "Get all items" 0x2b6, "Unlock all
+  skills" 0x2bd, "MAX gil" 0x2c4, each with its "Get" button 0x2c8 and
+  help 0x2b7, 0x2be, 0x2c5 (0x2c7 "Get max status" is in the table, row 3,
+  but the game adds no such row). The Flash page talks to the game only
+  through AS3 callbacks; without Ruffle the movie is a null player and
+  calls none, so the extension calls them in its place, through the
+  game's own dispatcher (`ffx_host::iggy::as3_call`, which matches the
+  menu's player `[[menu + 0x6c]]`), on the game's main thread
+  (`rust/ffx-gd/src/esc.rs`): `FfxGame.start` wraps `FFEscMenu_update`
+  (`0x0068ffb0`, once a frame while the menu exists; prologue `55 8b ec
+  83 ec 18`) in the function table before the boot (`Table::wrap`, the
+  table's modding seam: no ffx-rust change), and the wrapper runs the
+  queued calls before the original, whose `IggyMenuHandlers_flush` runs
+  what they queue. A row's button is `EscMenuButtonClick([13, row])`:
+  `FFEscMenu_onParameterButton_0068f610` keeps the row in
+  `g_EscParameterButtonArg` and queues
+  `FFEscMenu_onParameterButtonClicked`, which, when no movie fades
+  (`g_MovieFading`), the scenario flag's low 16 bits are set and the map
+  is not an Eternal Calm scene, shows its confirmation (0x2c9 "This
+  operation is irreversible.@el@Do you want to use this function?", 0x2ca
+  Yes, 0x2cb No) and sets its answer `FFEscMenu_onDebugFill_006fc970` at
+  `g_FFEscMenu + 0x10c`; else the movie's `showPopUpStd("Function not
+  Available now!")` (English in every language, read from the game). The
+  wrapper reports after each update whether that answer waits (`+0x10c`),
+  the row, and, while the menu is open, the page's enable condition
+  (`setEnableChangePara`, computed with the game's `getScenerioFlag` and
+  `isEternalCalmScene`): `FfxGame.esc_state`. `PauseView` greys the entry
+  where the game's page would, draws the rows with the button at the right
+  (`MenuList`: a row's text after a tab), and on the game's confirmation
+  draws its message over Yes and No, the cursor on No (nothing undoes it;
+  which button the movie starts on was not looked at); the answer is
+  `EscMenuPopUpConfirmed(1)` or `(0)`
+  (`FFEscMenu_onPopUpButton_0068f8f0` calls the answer with it and clears
+  it). Yes runs `MsDebugFullItem` (every common item to 99),
+  achievements 0x19 and 0x18 then `MsDebugFullCommand` (every ability), or
+  `MsDebugFullGill` (999,999,999 gil). Measured at Besaid (developer save
+  7): the entry enabled, MAX gil's Get brought the confirmation (row 2),
+  No left 665 gil, Yes gave 999,999,999.
 - **The options.** `UserSettings` (saved, applied live: docs/running.md,
   "Options"); the glow switch is the run-time flag `no-glow`
   (`GameSettings.SetFlag`), which the 3D view already reads. The game's
@@ -966,6 +1057,14 @@ on Tidus's Cheer).
   "Game speed"): `FfxGame.set_speed` before the boot goes into
   `Options::speed`, afterwards to the running clock; measured at Besaid,
   x2 gives 59.9 updates a second headless.
+- **The settings' look** (`GameTheme` in `Ui.cs`, on `OptionsPanel`: the
+  overlay and the launcher). Godot's default checkbox was a dark outline
+  on the dark window, unreadable unticked. Now every box is a light frame
+  on a near-black fill, ticked ones filled in the cursor's gold with a
+  dark tick (disabled ones dimmed); buttons and lists take the window's
+  blue, lit when hovered; the control with the keyboard or pad focus (the
+  same `ui_up`/`ui_down` actions) is framed in gold, and its caption lit
+  with the menus' cursor (`CursorMark`) before it (`OptionsPanel.Focused`).
 
 ## The battle results (G4)
 
