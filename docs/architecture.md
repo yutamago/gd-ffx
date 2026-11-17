@@ -229,6 +229,74 @@ up (characters keep 0), each (material, priority) its own copy of the
 material; the refraction water (drawn after the scene) gets 125, its second
 pass 126, and the game's effects, drawn after everything, 127 (below).
 
+## Colours (G5)
+
+The game computes on the stored (gamma) values of its textures and vertex
+colours and writes the result as it is into `R8G8B8A8_UNORM` targets: every
+blend adds and mixes those values, and the screen shows them unchanged. The
+classic shaders (`ClassicMaterials`: maps, water, characters, 2D layers;
+`EffectDrawView`; the overlays, which are 2D canvas items) do the same: no
+sRGB hint on any texture or colour, the result written as `ALBEDO`
+unshaded. The two renderers differ in what they do with it:
+
+- **Compatibility** (OpenGL, `--rendering-driver opengl3`, what
+  `tools/compare-shot.sh` runs under Xvfb) writes the values as they are.
+- **Forward+** (the export's renderer: D3D12 and Vulkan on Windows, Vulkan
+  on Linux) keeps a linear float buffer and encodes it to sRGB in its tone
+  map pass: the same values came out brightened and washed out (Besaid
+  47.6 / 255 against the original on D3D12, 47.7 on Vulkan, where
+  Compatibility scored 13.9). `ClassicPost` (a `CompositorEffect` on the
+  `WorldEnvironment`, made only when `RenderingServer.GetCurrentRenderingMethod()`
+  is `forward_plus`; `--no-classic-post` leaves it out) fixes that without
+  touching the shaders: the buffer holds the game's values all the way
+  through the opaque and transparent passes (so blends, the water's
+  refraction and the effects' frame copies see what the game's targets
+  hold), and after the transparent pass (`POST_TRANSPARENT`) a compute
+  shader runs the game's glow on them and decodes the buffer, clamped to
+  0..1, from sRGB to linear, so that the tone map's encode (linear, exposure
+  1) gives the game's values back. The clear colour is given to Godot
+  encoded (`Look.background` through `LinearToSrgb`), as Forward+ decodes it.
+  The Mobile renderer is not handled (its buffer is another format, with a
+  luminance multiplier).
+
+**The glow** (ffx-rust's docs/formats/postfx.md, "Glow map", "Glow"; the
+pixel programs of `phyreglow.fx`, `ffx-import effect --wgsl PASS
+PS3Data/Shaders/phyreglow.fx`). `GenerateGlowMap`: per pixel `t c / max(c.r,
+c.g, c.b)` with `t = saturate((dot(c, (0.3, 0.5, 0.2)) - min(F, N)) / (F -
+N))`, F `FullGlowThreshold`, N `NoGlowThreshold`. Level 0, at half the
+picture's size (the game's 640 x 360 at 720 lines): `RenderGaussianBlurX`
+and `RenderGaussianBlurY`, 7 taps one texel apart weighted 1/3, 4/21, 2/21,
+1/21, each times `GaussianOutputScale` s = spread + 1 (1.34 at Besaid); the
+up pass's `RenderGaussianBlurX` (scale 1), then `RenderGaussianBlurYAdditive`
+times `GlowGain` added to the picture (one, one). Every target is 8-bit, so
+`ClassicPost` clamps each pass's output to 0..1; the level-0 blur reads the
+glow map between four of its pixels (their mean), the add reads level 0
+bilinearly at the picture's pixels, as the game's samplers do. The game's
+levels 1 and 2 are drawn but nothing reads them, so they are left out. One
+difference stays: the game draws its effects after the glow, while in Godot
+they are part of the transparent pass, so the glow takes them in too.
+
+Under Compatibility (no compositor effects) Godot's environment glow stands
+in for it: one level (level 1, half size), the ramp `smoothstep(N, N +
+hdr_scale, max(c))` with `hdr_scale` = F - N, intensity gain x s². Before,
+it used three levels and `hdr_scale` = 1 / (F - N), which is the ramp's
+width, not its slope.
+
+Measured (2026-11-17, developer save 7 against the original's
+`event-besaid-1.bmp`, mean absolute difference per channel):
+
+| Renderer | Before | No glow | Now |
+|---|---|---|---|
+| Forward+, D3D12 (`tools/compare-shot-win.sh`, Intel Arc 140T) | 47.6 | 14.3 | **8.9** |
+| Forward+, Vulkan (the same) | 47.7 | | **8.9** |
+| Compatibility, Xvfb (`tools/compare-shot.sh`) | 13.9 | 13.3 | **11.8** |
+
+What is left in the Forward+ picture: the shallow water at the shore (see
+"Water", "Not matched yet") and the minimap, which gd-ffx does not draw.
+Godot's own lit materials (remade content, docs/remake.md) write linear
+values into this buffer like the classic ones: they show as under
+Compatibility, darker than Godot would show them in a project of its own.
+
 ## Water
 
 `ClassicMaterials`' water shader is `PhyreWaterShader`'s math as its
@@ -280,10 +348,9 @@ six faces from the archive (`FfxGame.classic_texture`, ffx-phyre's
 is mirrored into Godot's (`cube_axes`).
 
 The glow pass: the map's glow values (API 9's `Look.glow_*`: Besaid none
-below 0.5, full at 1, gain 0.11, spread 0.34) drive Godot's environment glow
-(additive, three blurred levels, the threshold at `NoGlowThreshold`;
-`--no-glow` turns it off). On the save sphere's orb it brings the patch
-closer to the original (29.9 -> 24.0).
+below 0.5, full at 1, gain 0.11, spread 0.34) drive the game's glow, drawn
+as the game draws it under Forward+ ("Colours" below) and approximated by
+Godot's environment glow under Compatibility; `--no-glow` turns it off.
 
 The screen is cleared to the map's background colour (`Look.background`,
 the `GlobalCamera`'s `m_bgColor`; Besaid 0.306, 0.357, 0.537).
@@ -487,6 +554,45 @@ the game gets from `ViewProjection2` (traced only as the main camera's).
   sparkles: read top-down their quad covered four atlas frames (pink
   rings); read as the game does it is one soft glow ball.
 
+  Each draw's shader is the one its VSP flags pick (`EffectDrawView.Shader`,
+  effects-draw.md "Shaders"): the flags as `vfxShader_fx.txt` lists them
+  (every line's `VSP_*` bits; 62 shaders), else, as
+  `ClassDynamicGeometry_SetShader` retries, the shader of bit 8 alone
+  (`VfxDefaultShader` with a texture, `VfxNoTextureShader` without). The
+  lens flares (`KeLnsArnd/Crn/Fls_Draw`: the frame's mode `| 0x800`, `|
+  0x40` for flag bit 3) are such flags: `0x80a` is `VfxNZAdditiveShader`,
+  `0x84a` is not listed and draws with the default shader. What the shader
+  writes (`Form`) follows from that shader's flags: textured ones
+  premultiplied under `Transparent` (straight under `OptimizedTrans`; the
+  textured subtract family under both), untextured additive ones `(2 v.a
+  v.rgb, v.a)`, the other untextured ones `(2 v.a v.rgb, 2 v.a)`. Before,
+  any flags but the decoded families' fell to the straight form, and with
+  a `(one, one)` blend and no texture that was a flat quad of the vertex
+  colour at full strength: the white rectangle of the sun's glare. Seen
+  over the 110 developer saves (`FFX_EFFECT_LOG=1` in the sweep): lens
+  flares `0x80a` in saves 13, 30, 62, 65, 88, 97, 98 (none is in Besaid
+  village's outdoor maps), `0x808` (`VfxNoZTestShader`) in 61, and `0x40`,
+  `0x240`, `0x249`. Under `Transparent` these are premultiplied; the old
+  straight form ignored the alpha that holds the HD glow textures'
+  brightness (their colour is white): in Luca (save 30) the sun's glare was
+  a white wedge over a third of the picture (61.5 / 255 against the new
+  picture), in Macalania (save 61) the no-depth-test mist covered the
+  whole screen in white (139.6 / 255); now the glare is faint and the woods
+  misty with the pyreflies as small lights. An
+  untextured shader samples nothing, whatever name the segment holds; the
+  shader's `VSP_ZTEST_DISABLE` (0x800) draws without the depth test,
+  `VSP_ZWRITE_ENABLE` (0x40) writes depth. A textured shader's texture
+  that is not found is read three times, a second apart, then logged once
+  (`ffx effects: texture "..." not found in the archive`) and its draws are
+  not drawn (before: drawn untextured, a flat quad); the map check prints
+  them (`N without their texture`). `FFX_EFFECT_LOG=1` prints each kind of
+  draw once (flags, shader, technique, pass, key, texture, look, first
+  vertex colour). Entries the game hides (`graphicVFXSetVisible(.., 0)`,
+  `PhyreScene_setMeshVisible` on the geometry's mesh) are not on the
+  capture's list: the list is rebuilt each frame by the geometries'
+  updates (`VfxGeometry_Register`), `KeLnsFls_Draw` hides instead of
+  updating, and neither `DrawMostVFX` nor the capture tests visibility.
+
 - **The draw events** (the same capture): the screen fade (kind 2) is
   drawn by `ScreenFadeView`, a full-screen quad of the event's colour
   (bytes / 128) blended as it says (2 additive, 0x10 subtract, else
@@ -496,6 +602,25 @@ the game gets from `ViewProjection2` (traced only as the main camera's).
   buffer (kind 1), PS2 lighting and specular (3, 4: seen on Valefor's
   overdrive), a character drawn between the effects (5), a depth-only
   pre-pass (6), characters with the event camera (0).
+
+- **The screen filters** (`ScreenFilterView`, `Effects.filters`, the
+  game's `g_FadeSlots`): one full-screen quad a slot, in slot order, with
+  the alpha `Sg_DrawFilter` (`0x0082c0c0`, ffx-rust's
+  `ffx_sg::control::draw_filter`) hands to `graphicAddScreenFadeTask`, its
+  integer quotients as the game takes them. The snapshot is read after the
+  update, so after the draw's own step of the frame counter n: mode 2 (from
+  black) `1 - (127 - n 127 / total) / 127`; mode 3 (to black) `1 - (n 127 /
+  total) / 127`, and at 0 the game writes 1 back and draws 1.0, so a held
+  fade (the snapshot's 1) is fully black; mode 4 (from white) `((n + 1) 255
+  / total) / 127`, up to 2, clamped to 1; mode 5 (to white) `(255 - n 255 /
+  total) / 127`, 255 held; mode 6 (a flash) `((n + 1) 127 / total) / 127`;
+  modes 7 and 8 (the colour filters) the level / 127, 8 subtracted (the
+  task's flag 0x10). Modes 2 and 3 draw black, the others the slot's colour
+  (bytes / 256). Before, a held fade was `1 - 1 / total` (0.967: not black),
+  4 and 5 were drawn white and the filters at half their alpha. The Besaid
+  check watches them on its walk off the beach: the map change fades to
+  black in mode 3 and holds at 1.000 (118 frames); a fade to black that
+  stays below 1 fails it.
 
 - **Effects as events** (`EffectView`, under the 3D view): each effect
   record the game starts (`Effects.running`, keyed by slot) plays where the
@@ -515,6 +640,22 @@ the game gets from `ViewProjection2` (traced only as the main camera's).
   white, healing green), rising and fading over 1.2 s. Party battler `i`
   is the party actor with id `i + 1`; monster `0x14 + k` the k-th monster
   actor by slot (seen in the deck's battle; `BattleHudView.ActorOf`).
+
+## The window: 16:9 with bars (G5)
+
+The game fits its picture to 16:9 with bars in a window of any other shape
+(`PostProcessManager_setNon16By9Viewport`, ffx-rust's render.md). gd-ffx
+does it with Godot's stretch mode (`project.godot`: `canvas_items`, aspect
+`keep`, base 1280 x 720): the root viewport is the largest 16:9 rectangle
+in the window, at the window's own pixels (2560 x 1080 draws the picture at
+1920 x 1080, bars left and right), so the 3D camera, the 2D layers (whose
+clip space spans the viewport) and the overlays always see 16:9 and agree.
+The 2D canvas is scaled from 1280 x 720 to that rectangle, so every panel
+and font size in the views is in 720-line units and grows with the window:
+the message boxes' text is 24 (`MessageView.FontSize`), 36 px at 1080
+lines, the game's glyph height. The game is told the window's own size
+(`DisplayServer.WindowGetSize`, its `WM_SIZE`; the viewport's visible rect
+is the 1280 x 720 base), sent again whenever it changes.
 
 ## Native UI (G4)
 

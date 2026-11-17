@@ -162,11 +162,19 @@ public partial class GameHost : Node
         return false;
     }
 
+    /// <summary>The window size last sent to the game.</summary>
+    private Vector2I _windowSent = new(-1, -1);
+
     private void SendWindow()
     {
         if (Game == null)
             return;
-        var size = (Vector2I)GetViewport().GetVisibleRect().Size;
+        // the window's own size, as the game's WM_SIZE has it (the root viewport's visible rect
+        // is the 1280 x 720 of the stretch mode, project.godot); headless has none
+        var size = DisplayServer.WindowGetSize();
+        if (size.X <= 0 || size.Y <= 0)
+            size = (Vector2I)GetViewport().GetVisibleRect().Size;
+        _windowSent = DisplayServer.WindowGetSize();
         Game.SetWindow(size, DisplayServer.ScreenGetSize(), DisplayServer.WindowGetPosition());
     }
 
@@ -216,6 +224,9 @@ public partial class GameHost : Node
         TextureFetcher.Poll(Game);
         if (Game == null)
             return;
+        // a window made wider than 16:9 keeps the viewport's size (the bars grow): its own size is watched
+        if (DisplayServer.WindowGetSize() != _windowSent)
+            SendWindow();
         var t0 = Perf.Start();
         View.Refresh(Game);
         Perf.End(Perf.Section.Snapshots, t0);

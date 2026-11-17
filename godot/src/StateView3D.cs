@@ -17,8 +17,10 @@ public partial class StateView3D : Node3D
 {
     private Camera3D _camera = null!;
     private long _lookOf = -1;
-    private (bool On, float None, float Full, float Gain) _glow = (false, -1, -1, -1);
+    private (bool On, float None, float Full, float Gain, float Spread) _glow = (false, -1, -1, -1, -1);
     private WorldEnvironment _env = null!;
+    /// <summary>Forward+'s post effect (the game's colours and glow; null under Compatibility).</summary>
+    private ClassicPost? _post;
     private readonly Dictionary<ushort, ActorNode> _actors = new();
     private readonly HashSet<ushort> _seen = new();
 
@@ -94,6 +96,13 @@ public partial class StateView3D : Node3D
                 TonemapMode = Environment.ToneMapper.Linear,
             },
         };
+        // Forward+: the buffer holds the game's values, the game's glow and the decode after the
+        // transparent pass (ClassicPost); Compatibility writes them as they are
+        if (ClassicPost.Needed() && !GameSettings.Flag("no-classic-post"))
+        {
+            _post = new ClassicPost();
+            _env.Compositor = new Compositor { CompositorEffects = [_post] };
+        }
         AddChild(_env);
         _layers = new MapLayers { Name = "MapLayers" };
         AddChild(_layers);
@@ -159,6 +168,10 @@ public partial class StateView3D : Node3D
             if (view.Current?.Look is { Valid: true } look)
             {
                 var bg = new Color(look.Background.X, look.Background.Y, look.Background.Z);
+                // Forward+ clears with the colour taken as sRGB (decoded to its linear buffer):
+                // encoded here, so the buffer holds the game's value
+                if (_post != null)
+                    bg = bg.LinearToSrgb();
                 if (_env.Environment.BackgroundColor != bg)
                     _env.Environment.BackgroundColor = bg;
                 ApplyGlow(look);
@@ -182,29 +195,42 @@ public partial class StateView3D : Node3D
 
     /// <summary>
     /// The game's glow pass (docs/formats/postfx.md in ffx-rust, "Glow"): a glow map of what is
-    /// brighter than <c>NoGlowThreshold</c> (full at <c>FullGlowThreshold</c>), blurred in three
-    /// levels and added with <c>GlowGain</c>. Godot's environment glow is the same kind of pass:
-    /// threshold, three blurred levels, additive mix; the map's values drive it (the shapes of
-    /// the blurs and the threshold ramp are Godot's own). <c>--no-glow</c> turns it off.
+    /// brighter than <c>NoGlowThreshold</c> (full at <c>FullGlowThreshold</c>), blurred at half
+    /// the picture's size (level 0; the game's levels 1 and 2 reach nothing) and added with
+    /// <c>GlowGain</c>, the down pass's two blurs each times <c>spread + 1</c>. Under Forward+
+    /// <see cref="ClassicPost"/> draws it as the game does. Under Compatibility Godot's
+    /// environment glow stands in: its level 1 (half size) only, its ramp
+    /// <c>smoothstep(N, N + hdr_scale, max(c))</c> from N over <c>F - N</c>, intensity
+    /// <c>GlowGain (spread + 1)²</c> (the blur's shape and the map's colour are Godot's own;
+    /// Besaid 11.8 against the original where the three levels and a scale of <c>1 / (F - N)</c>
+    /// gave 13.9, 13.3 without glow). <c>--no-glow</c> turns it off.
     /// </summary>
     private void ApplyGlow(GdFfx.Api.Look look)
     {
         var env = _env.Environment;
         bool on = look.GlowGain > 0 && !GameSettings.Flag("no-glow");
-        var glow = (on, look.GlowNone, look.GlowFull, look.GlowGain);
+        var glow = (on, look.GlowNone, look.GlowFull, look.GlowGain, look.GlowSpread);
         if (glow == _glow)
             return;
         _glow = glow;
+        if (_post != null)
+        {
+            // Forward+: the game's own glow (ClassicPost)
+            env.GlowEnabled = false;
+            (_post.GlowOn, _post.GlowNone, _post.GlowFull, _post.GlowGain, _post.GlowSpread) = glow;
+            return;
+        }
         env.GlowEnabled = on;
         if (!on)
             return;
         env.GlowBlendMode = Environment.GlowBlendModeEnum.Additive;
-        env.GlowHdrThreshold = Mathf.Max(look.GlowNone, 0.35f);
-        env.GlowHdrScale = 1f / Mathf.Max(look.GlowFull - look.GlowNone, 0.05f);
-        env.GlowIntensity = look.GlowGain;
         env.GlowBloom = 0f;
+        env.GlowHdrThreshold = Mathf.Max(look.GlowNone, 0.35f);
+        env.GlowHdrScale = Mathf.Max(look.GlowFull - look.GlowNone, 0.01f);
+        float s = look.GlowSpread + 1f;
+        env.GlowIntensity = look.GlowGain * s * s;
         for (int i = 0; i < 7; i++)
-            env.SetGlowLevel(i, i is >= 1 and <= 3 ? 1f : 0f);
+            env.SetGlowLevel(i, i == 0 ? 1f : 0f);
     }
 
     // ---- the map's objects ------------------------------------------------------

@@ -123,9 +123,11 @@ minimised one is not drawn; a covered one still renders). It can show for a
 moment as it opens. It scores its picture
 against the reference like `tools/compare-shot.sh`. On 2026-11-17 Besaid
 scored 47.6 (D3D12) and 47.7 (Vulkan) against the original, where the
-Compatibility renderer under Xvfb scores 13.9: the classic shaders compute
-in gamma space (as the game does) and Forward+ encodes their output to sRGB
-again, so the picture is washed out.
+Compatibility renderer under Xvfb scored 13.9: the classic shaders compute
+in gamma space (as the game does) and Forward+ encoded their output to sRGB
+again, so the picture was washed out. With `ClassicPost` (the buffer kept in
+the game's values, the game's glow, then the decode: docs/architecture.md,
+"Colours") it scores 8.9 on both, and Compatibility 11.8.
 
 ## Sweeping the developer saves
 

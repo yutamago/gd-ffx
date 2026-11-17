@@ -172,7 +172,9 @@ The Deck runs the Linux export (SteamOS is Linux x86_64). To play there:
    in the launch options turns it off, `--quality=deck` turns it on
    elsewhere (the project setting `ffx/render/quality` too). For a lighter
    renderer still, add `--rendering-method mobile` to the launch options
-   (Godot chooses the renderer at start).
+   (Godot chooses the renderer at start); its colours are not matched to
+   the game's yet (docs/architecture.md, "Colours": only Forward+ and
+   Compatibility are), so it looks brighter and paler.
 
 The preset is checked headless (`SteamDeck=1 ... --selftest-besaid`: "ffx:
 quality deck", then the check passes). Not run on a Deck: no Deck here.

@@ -353,10 +353,28 @@ public sealed class BesaidTest(double timeout, string? shot) : ITest
     public const int MapBeach = 0x46;
     public const int MapNext = 0x14;
 
-    private enum Phase { Boot, Beach, Classic, Shot, Walk, AutoSave }
+    private enum Phase { Boot, Beach, Classic, Shot, Walk, Fade, AutoSave }
 
     private Phase _phase = Phase.Boot;
     private double _phaseTime;
+    // the screen filters seen while walking (ScreenFilterView): modes, the highest alpha, frames at 1
+    private readonly System.Collections.Generic.HashSet<int> _fadeModes = new();
+    private float _fadeMost;
+    private int _fadeBlack, _fadeEvents;
+
+    private void WatchFilters()
+    {
+        if ((Engine.GetMainLoop() as SceneTree)?.Root.FindChild("ScreenFilterView", true, false) is not ScreenFilterView filter)
+            return;
+        foreach (var (mode, alpha) in filter.Shown)
+            if (alpha > 0)
+            {
+                _fadeModes.Add(mode);
+                _fadeMost = System.Math.Max(_fadeMost, alpha);
+                if (alpha >= 1f)
+                    _fadeBlack++;
+            }
+    }
     private double _total;
     private string _seen = "";
     private Vector3 _start;
@@ -443,11 +461,24 @@ public sealed class BesaidTest(double timeout, string? shot) : ITest
                 if (moved < 5f)
                     return Done(false, $"map {MapNext:x} came without the player moving ({moved:F1} units)");
                 _seen = $"{_seen}; walked {moved:F0} units off the beach to map {MapNext:x} in {_phaseTime:F1} s";
+                _fadeEvents = EffectDrawView.FadeFrames;
+                Next(Phase.Fade);
+                break;
+            }
+            // the screen filters for 4 s more (the map change's fades)
+            case Phase.Fade:
+                WatchFilters();
+                if (_phaseTime < 4)
+                    break;
+                _seen += $"; the filters: modes {string.Join(",", _fadeModes.Order())}, highest alpha {_fadeMost:F3}, "
+                    + $"{_fadeBlack} frames fully black; {EffectDrawView.FadeFrames - _fadeEvents} frames with a screen fade event";
+                // a fade to black is fully black once it holds (Sg_DrawFilter's mode 3)
+                if (_fadeModes.Contains(3) && _fadeMost < 1f)
+                    return Done(false, $"the fade to black stopped at alpha {_fadeMost:F3} ({_seen})");
                 if (!GameSettings.Flag("check-autosave"))
                     return Done(true, _seen);
                 Next(Phase.AutoSave);
                 break;
-            }
             // --check-autosave: the game writes ffx_000 on entering the map; the load list
             // reads it back as its first row, the header as the game's own state
             case Phase.AutoSave:
@@ -470,6 +501,7 @@ public sealed class BesaidTest(double timeout, string? shot) : ITest
             case Phase.Walk:
                 if (v.Current?.World.Map == MapBeach)
                     _last = Player(v);
+                WatchFilters();
                 if (_phaseTime > 60)
                 {
                     Keys(false);
@@ -553,7 +585,7 @@ public sealed class MapTest(double timeout, string? shot) : ITest
         }
         return Done(true, $"{(c.World.Battle ? "battle" : "field")} {c.World.Level} (map {c.World.Map:x}): {view.Posed.Models} models "
             + $"({view.Posed.PosedBones} bones), {view.ObjectsPlaced} objects ({view.ObjectsUnmatched} without a mesh), {view.Morphed.Meshes} morphing ({view.Morphed.Moved} with a weight), {fx?.Shown.Draws ?? 0} effect draws "
-            + $"({fx?.Shown.Textured ?? 0} textured), distortion {(dv?.Shown.On == true ? "on" : "off")}{Layers(view)}, {Characters(c)}, "
+            + $"({fx?.Shown.Textured ?? 0} textured, {fx?.MissingDraws ?? 0} without their texture), distortion {(dv?.Shown.On == true ? "on" : "off")}{Layers(view)}, {Characters(c)}, "
             + $"global time {view.GlobalTime:F2} s, at {_total:F0} s");
     }
 
