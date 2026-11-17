@@ -148,7 +148,7 @@ sections `[video]`, `[audio]`, `[debug]` beside the launcher's `[game]`):
 
 | Setting | Choices | Key |
 |---|---|---|
-| quality preset | High (the project's own settings), Deck (3D at 75 %, no MSAA, 60 fps at most) | `video/quality` |
+| quality preset | High (the project's own settings), Deck (3D at 75 %, no MSAA, 60 fps at most, lighting quality low) | `video/quality` |
 | window | windowed, fullscreen (borderless), exclusive fullscreen | `video/window_mode` |
 | 3D resolution | 50 % to 200 % of the window (`Viewport.Scaling3DScale`) | `video/scale_3d` |
 | upscaler | bilinear; FSR 1.0 and 2.2 under Forward+ | `video/upscaler` |
@@ -162,9 +162,11 @@ sections `[video]`, `[audio]`, `[debug]` beside the launcher's `[game]`):
 | game speed | x0.25 to x8, for debugging (ffx-host's clock: game time and the updates run that much faster; a pink badge shows it while not x1) | `debug/speed` |
 | FPS overlay | on/off (F9) | `debug/fps_overlay` |
 | render path | as each map says, classic everywhere, remastered everywhere (docs/remaster-editor.md, "The render path"; F7 flips it for the run) | `video/render_path` |
+| lighting quality | high, medium, low: what a remastered map's lighting may cost (GI, volumetric fog, SSAO/SSIL/SSR, shadows; docs/remaster-editor.md, "Lighting quality") | `video/lighting` |
 
 The command line wins for its run and is not saved: `--quality=high|deck`,
-`--no-vsync`, `--no-glow`, `--speed=X` (0.25 to 8), `--render-path=map|classic|remastered`. The self-checks and the
+`--no-vsync`, `--no-glow`, `--speed=X` (0.25 to 8), `--render-path=map|classic|remastered`,
+`--lighting=high|medium|low`. The self-checks and the
 benchmark start from the defaults and never read the saved file (unless
 `--settings=PATH` names one), so a player's settings do not change their
 pictures. `--language=CODE` (jp en fr de it es kr ch) writes the game's
@@ -212,11 +214,12 @@ stays white. Without a GPU driver for Mesa in WSL both run on the CPU
 ## Comparing on the GPU (Windows, from WSL)
 
 ```bash
-FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/compare-shot-win.sh REF.bmp OUT_DIR [devsave] [d3d12|vulkan]
+FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/compare-shot-win.sh REF.bmp OUT_DIR [devsave] [vulkan|d3d12]
 ```
 
 Runs the Windows export (`tools/export.sh windows` first) on the machine's
-GPU with Forward+, silently (`--audio-driver Dummy`) and with
+GPU with Forward+ (Vulkan by default, as the project renders on Windows since
+2026-11-18: D3D12 lost the device in the remastered view, docs/remaster-editor.md), silently (`--audio-driver Dummy`) and with
 `--background-window`: the window takes no focus and is sent behind every
 other window (Godot moves an off-screen window back onto the screen, and a
 minimised one is not drawn; a covered one still renders). It can show for a

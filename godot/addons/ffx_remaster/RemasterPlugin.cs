@@ -50,7 +50,7 @@ public partial class RemasterPlugin : EditorPlugin
         _textures = new TextureDock(this);
         AddDock(_textures);
         // the 3D view's compare: the open map classic or remastered (its render path when opened)
-        _lookToggle = new CheckButton { Text = "Remastered", TooltipText = "Draw the open map remastered (PBR materials, the provisional lights) or classic" };
+        _lookToggle = new CheckButton { Text = "Remastered", TooltipText = "Draw the open map remastered (PBR materials, the map's lighting) or classic" };
         _lookToggle.Toggled += on => SetEditorLook(on);
         AddControlToContainer(CustomControlContainer.SpatialEditorMenu, _lookToggle);
         _inspector = new PartInspector(this);
@@ -199,7 +199,7 @@ public partial class RemasterPlugin : EditorPlugin
             _lookToggle.SetPressedNoSignal(remastered);
         if (Current is not { Built: true, Map: { } map })
             return 0;
-        int n = MapLook.Of(map).Set(remastered);
+        int n = MapLook.Of(map).Set(remastered, Current.Lighting?.Res.BlendedParts == BlendedLook.Lit);
         if (n > 0)
             GD.Print($"ffx remaster: {Current.Key} drawn {(remastered ? "remastered" : "classic")} in the editor ({n} surface(s))");
         return n;
@@ -261,7 +261,7 @@ public partial class RemasterPlugin : EditorPlugin
         {
             RemasterTextures.Refresh(map);
             if (MapLook.Find(map) is { } look)
-                look.Set(look.Remastered);
+                look.Set(look.Remastered, look.LitBlended);
         }
         _textures?.TexturesChanged();
     }
@@ -326,15 +326,21 @@ public partial class RemasterPlugin : EditorPlugin
     }
 
     /// <summary>What "Add" can drop into the map.</summary>
-    public static readonly string[] Primitives = ["Box", "Sphere", "Cylinder", "Omni light", "Spot light"];
+    public static readonly string[] Primitives = ["Box", "Sphere", "Cylinder", "Omni light", "Spot light", "Directional light", "Reflection probe", "Fog volume"];
 
     /// <summary>A new node of kind <paramref name="kind"/> (<see cref="Primitives"/>), sized for the map (render units: a character is about 16 tall).</summary>
     public static Node3D MakePrimitive(string kind) => kind switch
     {
         "Sphere" => new MeshInstance3D { Name = "Sphere", Mesh = new SphereMesh { Radius = 5, Height = 10 } },
         "Cylinder" => new MeshInstance3D { Name = "Cylinder", Mesh = new CylinderMesh { TopRadius = 4, BottomRadius = 4, Height = 16 } },
-        "Omni light" => new OmniLight3D { Name = "OmniLight", OmniRange = 60 },
-        "Spot light" => new SpotLight3D { Name = "SpotLight", SpotRange = 80 },
+        // lights with shadows; they light the remastered path only (the classic shaders are unshaded)
+        "Omni light" => new OmniLight3D { Name = "OmniLight", OmniRange = 60, ShadowEnabled = true },
+        "Spot light" => new SpotLight3D { Name = "SpotLight", SpotRange = 80, ShadowEnabled = true },
+        "Directional light" => new DirectionalLight3D { Name = "DirectionalLight", ShadowEnabled = true, LightEnergy = 0.5f },
+        // a box probe for reflections around a spot (render units)
+        "Reflection probe" => new ReflectionProbe { Name = "ReflectionProbe", Size = new Vector3(200, 100, 200), BoxProjection = true, UpdateMode = ReflectionProbe.UpdateModeEnum.Once },
+        // Godot's local volumetric fog (Forward+, the map's volumetric fog on)
+        "Fog volume" => new FogVolume { Name = "FogVolume", Size = new Vector3(100, 40, 100), Material = new FogMaterial { Density = 0.05f } },
         _ => new MeshInstance3D { Name = "Box", Mesh = new BoxMesh { Size = new Vector3(10, 10, 10) } },
     };
 
@@ -352,6 +358,20 @@ public partial class RemasterPlugin : EditorPlugin
         Undo.AddDoMethod(root, MapEditRoot.MethodName.Own, node);
         Undo.AddDoReference(node);
         Undo.AddUndoMethod(parent, Node.MethodName.RemoveChild, node);
+        Undo.CommitAction();
+        Select(node);
+    }
+
+    /// <summary>Adds the lighting volume <paramref name="node"/> at <paramref name="world"/> (one undo step); selects it.</summary>
+    public void AddVolume(MapEditRoot root, VolumeNode node, Transform3D world)
+    {
+        var group = root.Lighting!.Volumes;
+        node.Transform = group.GlobalTransform.AffineInverse() * world;
+        Undo.CreateAction($"Add the lighting volume {node.Name}", UndoRedo.MergeMode.Disable, root);
+        Undo.AddDoMethod(group, Node.MethodName.AddChild, node, true);
+        Undo.AddDoMethod(root, MapEditRoot.MethodName.Own, node);
+        Undo.AddDoReference(node);
+        Undo.AddUndoMethod(group, Node.MethodName.RemoveChild, node);
         Undo.CommitAction();
         Select(node);
     }

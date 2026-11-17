@@ -16,7 +16,7 @@ namespace GdFfx;
 /// </summary>
 public partial class OptionsPanel : VBoxContainer
 {
-    /// <summary>The controls by setting: <c>preset</c>, <c>window</c>, <c>scale</c>, <c>upscaler</c>, <c>msaa</c>, <c>aa</c>, <c>taa</c>, <c>vsync</c>, <c>fps</c>, <c>glow</c>, <c>volume</c>, <c>speed</c>, <c>fps_overlay</c>, <c>render_path</c>.</summary>
+    /// <summary>The controls by setting: <c>preset</c>, <c>window</c>, <c>scale</c>, <c>upscaler</c>, <c>msaa</c>, <c>aa</c>, <c>taa</c>, <c>vsync</c>, <c>fps</c>, <c>glow</c>, <c>volume</c>, <c>speed</c>, <c>fps_overlay</c>, <c>render_path</c>, <c>lighting</c>.</summary>
     public Dictionary<string, Control> Controls { get; } = new();
 
     private bool _filling;
@@ -63,14 +63,17 @@ public partial class OptionsPanel : VBoxContainer
                 u.RenderPath = Remaster.RenderPaths.Choices[i];
                 Remaster.RenderPaths.Set(null);
             });
+        Choice(grid, "lighting", fwd ? "Lighting quality (remastered maps)" : "Lighting quality (remastered; GI needs Forward+)",
+            ["High (GI, volumetric fog, SSAO/SSIL)", "Medium (no SDFGI, lighter fog)", "Low (no GI or fog; Steam Deck)"],
+            u => Math.Max(0, Array.IndexOf(UserSettings.LightingQualities, u.Lighting)), (u, i) => u.Lighting = UserSettings.LightingQualities[i]);
         var buttons = new HBoxContainer();
         var defaults = new Button { Name = "Defaults", Text = "Defaults" };
         defaults.Pressed += () =>
         {
             var d = UserSettings.Defaults();
             var u = UserSettings.Current;
-            (u.WindowMode, u.Scale3D, u.Upscaler, u.Msaa, u.ScreenAA, u.Taa, u.VSync, u.MaxFps, u.Glow, u.Quality, u.Volume, u.Speed, u.FpsOverlay, u.RenderPath) =
-                (d.WindowMode, d.Scale3D, d.Upscaler, d.Msaa, d.ScreenAA, d.Taa, d.VSync, d.MaxFps, d.Glow, d.Quality, d.Volume, d.Speed, d.FpsOverlay, d.RenderPath);
+            (u.WindowMode, u.Scale3D, u.Upscaler, u.Msaa, u.ScreenAA, u.Taa, u.VSync, u.MaxFps, u.Glow, u.Quality, u.Volume, u.Speed, u.FpsOverlay, u.RenderPath, u.Lighting) =
+                (d.WindowMode, d.Scale3D, d.Upscaler, d.Msaa, d.ScreenAA, d.Taa, d.VSync, d.MaxFps, d.Glow, d.Quality, d.Volume, d.Speed, d.FpsOverlay, d.RenderPath, d.Lighting);
             Remaster.RenderPaths.Set(null);
             Changed();
         };

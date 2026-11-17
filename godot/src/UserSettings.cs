@@ -59,6 +59,13 @@ public sealed class UserSettings
     public bool FpsOverlay;
     /// <summary>The render path (docs/remaster-editor.md, "The render path"): <c>map</c> (as each map says), <c>classic</c> or <c>remastered</c> for all.</summary>
     public string RenderPath = "map";
+    /// <summary>
+    /// The remastered maps' lighting quality (docs/remaster-editor.md, "Lighting quality"): <c>high</c>
+    /// (each map's GI, volumetric fog, SSAO, SSIL, SSR, 4 shadow splits at 4096), <c>medium</c> (no
+    /// SDFGI or SSIL/SSR, lighter volumetric fog, 2 splits at 2048) or <c>low</c> (no GI, volumetric
+    /// fog or screen-space effects, shorter shadows: the Steam Deck's).
+    /// </summary>
+    public string Lighting = "high";
 
     // ---- the choices the overlay offers ------------------------------------------------------
 
@@ -70,6 +77,7 @@ public sealed class UserSettings
     public static readonly string[] VSyncs = ["on", "off", "adaptive", "mailbox"];
     public static readonly int[] FpsCaps = [0, 30, 60, 120, 144, 240];
     public static readonly string[] Presets = ["high", "deck"];
+    public static readonly string[] LightingQualities = ["high", "medium", "low"];
     public static readonly double[] Speeds = [0.25, 0.5, 1, 2, 4, 8];
 
     /// <summary>Whether this run is a self-check or the benchmark (the saved file not read).</summary>
@@ -90,11 +98,11 @@ public sealed class UserSettings
         Quality = preset == "deck" ? "deck" : "high";
         if (Quality == "deck")
         {
-            (Scale3D, Upscaler, Msaa, ScreenAA, Taa, MaxFps) = (0.75f, "bilinear", 0, "off", false, 60);
+            (Scale3D, Upscaler, Msaa, ScreenAA, Taa, MaxFps, Lighting) = (0.75f, "bilinear", 0, "off", false, 60, "low");
         }
         else
         {
-            (Scale3D, Upscaler, Msaa, ScreenAA, Taa, MaxFps) = (1f, "bilinear", 0, "off", false, 0);
+            (Scale3D, Upscaler, Msaa, ScreenAA, Taa, MaxFps, Lighting) = (1f, "bilinear", 0, "off", false, 0, "high");
         }
         Glow = true;
         VSync = "on";
@@ -121,6 +129,8 @@ public sealed class UserSettings
         // the command line, for this run only
         if (GameSettings.Arg("quality") is "high" or "deck")
             u.ApplyPreset(GameSettings.Arg("quality")!);
+        if (GameSettings.Arg("lighting") is "high" or "medium" or "low")
+            u.Lighting = GameSettings.Arg("lighting")!;
         if (GameSettings.CommandLineFlag("no-vsync"))
             u.VSync = "off";
         if (GameSettings.CommandLineFlag("no-glow"))
@@ -157,6 +167,7 @@ public sealed class UserSettings
         Speed = Math.Clamp(D("debug", "speed", Speed), 0.25, 8);
         FpsOverlay = B("debug", "fps_overlay", FpsOverlay);
         RenderPath = Pick(Remaster.RenderPaths.Choices, S("video", "render_path", RenderPath), RenderPath);
+        Lighting = Pick(LightingQualities, S("video", "lighting", Lighting), Lighting);
     }
 
     /// <summary>
@@ -180,6 +191,7 @@ public sealed class UserSettings
         cfg.SetValue("debug", "speed", Speed.ToString("0.###", CultureInfo.InvariantCulture));
         cfg.SetValue("debug", "fps_overlay", FpsOverlay);
         cfg.SetValue("video", "render_path", RenderPath);
+        cfg.SetValue("video", "lighting", Lighting);
         var ok = GameSettings.SaveSettingsFile(cfg);
         if (!ok)
             GD.PrintErr($"ffx: cannot write the settings to {GameSettings.SettingsPath}");
@@ -261,5 +273,5 @@ public sealed class UserSettings
         string.Create(CultureInfo.InvariantCulture,
             $"window {WindowMode}, 3D x{Scale3D:0.##} {Upscaler}, MSAA {Msaa}, AA {ScreenAA}{(Taa ? "+TAA" : "")}, vsync {VSync}, "
             + $"fps cap {(MaxFps == 0 ? "none" : MaxFps.ToString(CultureInfo.InvariantCulture))}, glow {(Glow ? "on" : "off")}, preset {Quality}, "
-            + $"volume {Volume * 100:0}%, speed x{Speed:0.##}, fps overlay {(FpsOverlay ? "on" : "off")}, render path {RenderPath}");
+            + $"volume {Volume * 100:0}%, speed x{Speed:0.##}, fps overlay {(FpsOverlay ? "on" : "off")}, render path {RenderPath}, lighting {Lighting}");
 }

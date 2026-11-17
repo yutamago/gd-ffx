@@ -162,6 +162,8 @@ public static class MapEditSave
         res.Parts = new Godot.Collections.Array<PartOverride>(entries);
         var additions = Additions(root, out int added);
         bool ok = MapStore.Write(root.Key, additions);
+        // the lighting beside them (R3)
+        ok &= root.Lighting?.Save() ?? true;
         if (ok)
         {
             // what was written is now what the scene was opened with

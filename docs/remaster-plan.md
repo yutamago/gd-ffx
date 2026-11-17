@@ -180,17 +180,81 @@ R2, textures and materials, is done (2026-11-17; docs/remaster-editor.md,
 
 Open after R2:
 
-- the lighting is provisional (R3: the game's lights and fog as objects,
-  GI, a sky of Godot's instead of the classic dome);
+- ~~the lighting is provisional~~ (R3);
 - where-used covers the maps' 3D models only (characters, 2D layers,
   effects, menus next);
 - no PBR model template for ComfyUI yet, and the client is untested against
   a real server;
-- the baked vertex light is kept at one level everywhere
-  (`ffx_vertex_light` 0.5), not per map or part;
+- the baked vertex light is set per map (R3: `VertexLight`), not per part;
 - a recipe's live preview, per-texture recipes in the batch;
 - the water, the 2D layers and the characters keep their classic shaders on
   a remastered map (R6, R7).
+
+## R3 in detail
+
+R3, lighting and atmosphere, is done but for the GPU check (2026-11-17;
+docs/remaster-editor.md, "Lighting" to "The colour check"):
+
+- **R2's grey remaster fixed, and measured.** The colour check
+  (`ColourBalance`, `tools/compare/colour.py`): mean OKLab lightness, chroma
+  and hue of the remastered picture against the classic one, over the
+  picture and a 4 x 3 grid, within tolerances. R2's rig failed it (Besaid,
+  Forward+ on lavapipe: lightness -0.21, chroma x0.35, hue off by 159°). The
+  causes: light and ambient colours decoded twice or taken as sRGB (a blue
+  sun, a black ambient), the game's blue character lights multiplying the
+  yellow sand, half the baked vertex light dropped, AgX, and the refraction
+  sea losing its colour under the linear output. Now (Besaid, the defaults):
+  Forward+ on lavapipe lightness +0.007, chroma x0.88, hue 2.0° (PBR
+  materials: +0.003, x0.87, 2.1°); Compatibility +0.040, x0.93, 3.5°; the
+  GPU (D3D12, Intel Arc 140T) +0.006, x0.89, 2.0° (PBR: +0.000, x0.87,
+  2.1°), classic scoring 8.9 as on main. The remastered view lost the D3D12
+  device in six of seven runs, Vulkan none of four: Windows renders with
+  Vulkan (docs/remaster-editor.md, "D3D12 and Vulkan").
+- **The game's lighting as editable objects**: `MapLighting`
+  (`lighting.tres` beside the overrides; text, stable, layered per file):
+  the key light, the ambient, the fog as the game's look gives them (or
+  custom), sky (the game's colours, procedural, physical, an HDRI), tone map,
+  exposure, glow, SSAO/SSIL/SSR, volumetric fog, GI, the vertex light, the
+  blended parts. In the editor: nodes tagged `x:level/<key>#light/key`,
+  `#ambient`, `#fog`, `#environment`, `#volume/<name>` (the key light a
+  directional light with Godot's gizmo, the rest in the inspector, one undo
+  step each), the game's rig as the preview, the game's look from a cache the
+  game writes per map (`LookCache`).
+- **Volumes**: boxes with their own exposure, ambient, fog, key light,
+  saturation, volumetric density, blended at their edges by the camera's
+  place.
+- **Godot lights and probes**: omni, spot, directional lights (shadows),
+  reflection probes and fog volumes through the additions.
+- **GI**: SDFGI (high quality), VoxelGI baked on the player's machine at the
+  first visit (`user://remaster/bake/`, never shipped: the file holds the
+  recipe); LightmapGI not yet (no lightmap UVs).
+- **The lighting quality** (options, `--lighting=`): high, medium, low (the
+  Deck preset): GI, volumetric fog, screen-space effects, shadows.
+- **Compatibility**: no GI, volumetric fog or screen-space effects; the lit
+  shaders take the game's colours in gamma there (`ffx_lit_gamma`), the rig
+  its own key, ambient and exposure scales (measured, not over-bright).
+- **The classic path** unchanged: the classic Besaid picture against main's
+  differs within run-to-run noise, in the moving clouds, sea and NPCs only
+  (mean absolute difference; Compatibility: 0.23 and 0.03 against two runs of
+  main, which differ by 0.21 from each other; Forward+ on lavapipe: 0.53 and
+  0.52, main against itself 0.84).
+- **Checks**: `--selftest-lighting --devsave=7`, the editor check's lighting
+  steps and the game applying them, the quick sweep classic and remastered
+  (10 of 10, 0 errors each), the GPU comparison with the colour check.
+
+Open after R3:
+
+- D3D12: the remastered view loses the device on the Intel Arc 140T (cause
+  unknown; Windows renders with Vulkan): check again after a Godot or driver
+  upgrade, and on other GPUs;
+- LightmapGI (lightmap UVs for the maps: an importer step);
+- the shore: the game's painted layers blend in gamma; they stay classic by
+  default, and Besaid's lagoon is still paler than the classic one;
+- volumes by the player's place (now the camera's), per-field layering of
+  lighting files, the VoxelGI bake seeing the PBR materials' emission;
+- the Steam Deck's budgets measured on the device (R8);
+- R4's wizard: the defaults are its first pass; the wizard tunes them per map
+  (exposure from the classic picture, the vertex light against added lights).
 
 ## Beyond the milestones
 

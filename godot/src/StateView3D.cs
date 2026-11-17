@@ -21,6 +21,7 @@ public partial class StateView3D : Node3D
 {
     private Camera3D _camera = null!;
     private long _lookOf = -1;
+    private string _lookCached = "";
     private (bool On, float None, float Full, float Gain, float Spread) _glow = (false, -1, -1, -1, -1);
     private WorldEnvironment _env = null!;
     /// <summary>Forward+'s post effect (the game's colours and glow; null under Compatibility).</summary>
@@ -131,7 +132,7 @@ public partial class StateView3D : Node3D
         AddChild(new EffectDrawView { Name = "EffectDrawView" });
         var light = new DirectionalLight3D { RotationDegrees = new Vector3(-55, 30, 0), LightEnergy = 0.8f };
         AddChild(light);
-        // the remastered render path's provisional lighting (R2; off while the map draws classic)
+        // the remastered render path's lighting (R3; off while the map draws classic)
         _rig = new Remaster.RemasterLighting(_env, _post, light);
         AddChild(_rig);
         _boneMesh = new SphereMesh { Radius = 0.6f, Height = 1.2f, RadialSegments = 6, Rings = 3 };
@@ -220,6 +221,15 @@ public partial class StateView3D : Node3D
                 if (_env.Environment.BackgroundColor != bg)
                     _env.Environment.BackgroundColor = bg;
                 ApplyGlow(look);
+                // the editor shows the game's lights and fog from what the game last showed (once a map a run)
+                // (a check writes it only into --remaster-looks=DIR: never the player's)
+                if (_lookCached != _mapLevel && _mapLevel.Length > 0 && _map != null
+                    && (!UserSettings.IsCheck() || GameSettings.Arg("remaster-looks") is { Length: > 0 }))
+                {
+                    _lookCached = _mapLevel;
+                    if (Remaster.LookCache.Write(_mapLevel, look))
+                        GD.Print($"ffx: look of {Remaster.PartIds.LevelKey(_mapLevel)} kept for the editor ({Remaster.LookCache.PathOf(_mapLevel)})");
+                }
             }
         }
         // the scrolling UVs' and the water's clock, every frame (between snapshots too); held
@@ -293,7 +303,8 @@ public partial class StateView3D : Node3D
 
     private string _pathLevel = "\0";
     private int _pathVersion = -1;
-    private bool _pathRemastered;
+    private int _pathLighting = -1;
+    private bool _pathRemastered, _pathLitBlended;
 
     /// <summary>Whether the shown map draws remastered now (for tests).</summary>
     public bool Remastered => _rig.Active;
@@ -301,27 +312,29 @@ public partial class StateView3D : Node3D
     /// <summary>
     /// The shown map's look (docs/remaster-editor.md, "The render path"): remastered when its
     /// render path (or the options' choice, or the F7 toggle) says so, its parts with the lit
-    /// materials (<see cref="Remaster.MapLook"/>) and the provisional rig on; classic otherwise.
+    /// materials (<see cref="Remaster.MapLook"/>) and the lighting rig on (<see cref="Remaster.RemasterLighting"/>:
+    /// the map's lighting file or the defaults from the game's look); classic otherwise.
     /// A remade map keeps its own materials, the rig follows the choice.
     /// </summary>
     private void UpdateRenderPath(GameStateView view)
     {
         // the choice evaluated when the map or the choice changes, not every frame (it makes strings)
-        if (_pathLevel != _mapLevel || _pathVersion != Remaster.RenderPaths.Version)
+        if (_pathLevel != _mapLevel || _pathVersion != Remaster.RenderPaths.Version || _pathLighting != Remaster.LightingLayers.Version)
         {
-            (_pathLevel, _pathVersion) = (_mapLevel, Remaster.RenderPaths.Version);
+            (_pathLevel, _pathVersion, _pathLighting) = (_mapLevel, Remaster.RenderPaths.Version, Remaster.LightingLayers.Version);
             _pathRemastered = Remaster.RenderPaths.Remastered(_mapLevel);
+            _pathLitBlended = _pathRemastered && Remaster.LightingLayers.For(_mapLevel).Lighting.BlendedParts == Remaster.BlendedLook.Lit;
         }
         bool want = _map != null && _pathRemastered;
         if (_map is { } m && m.Name == "ClassicMap")
         {
-            int n = Remaster.MapLook.Of(m).Set(want);
+            int n = Remaster.MapLook.Of(m).Set(want, _pathLitBlended);
             if (n > 0)
                 GD.Print($"ffx: map {_mapLevel} drawn {(want ? "remastered" : "classic")} ({n} surface(s); lit materials: "
                     + $"{Remaster.RemasterLook.Count.Pbr} PBR, {Remaster.RemasterLook.Count.Plain} from the colour texture)");
         }
         bool was = _rig.Active;
-        _rig.Set(want, view.Current?.Look, view.Decoded);
+        _rig.Set(want, view.Current?.Look, view.Decoded, _mapLevel, _map, _camera.GlobalPosition);
         if (was && !_rig.Active)
         {
             // the classic look again, from the next snapshot

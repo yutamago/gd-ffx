@@ -189,6 +189,9 @@ public partial class MapBrowserDock : EditorDock
         var add = new Button { Text = "Add at selection", TooltipText = "Add it at the selected part (anchored: it follows the part in the game), else at the map's root" };
         add.Pressed += AddAtSelection;
         row.AddChild(add);
+        var vol = new Button { Text = "Add volume", TooltipText = "Add a lighting volume (its own exposure, ambient, fog...) around the selected part or the view's centre" };
+        vol.Pressed += AddVolume;
+        row.AddChild(vol);
         _parts = new Tree { Columns = 2, HideRoot = true, SizeFlagsVertical = SizeFlags.ExpandFill, CustomMinimumSize = new Vector2(0, 160) };
         _parts.SetColumnExpand(1, false);
         _parts.SetColumnCustomMinimumWidth(1, 150);
@@ -493,6 +496,23 @@ public partial class MapBrowserDock : EditorDock
         var node = RemasterPlugin.MakePrimitive(_addKind.GetItemText(_addKind.Selected));
         _plugin.AddNode(root, node, anchor, RemasterPlugin.PlaceAt(root, anchor));
         Say($"added {node.Name}" + (anchor != null ? $" at {anchor.Short(root.Model)}" : " at the map's root"));
+    }
+
+    private void AddVolume()
+    {
+        if (_plugin.Current is not { Built: true, Lighting: { } lighting } root)
+        {
+            Say("open a map first");
+            return;
+        }
+        PartInfo? anchor = null;
+        if (EditorInterface.Singleton.GetSelection().GetSelectedNodes() is { Count: > 0 } sel)
+            anchor = root.PartOf(sel[0]);
+        var at = anchor != null ? RemasterPlugin.PlaceAt(root, anchor).Origin
+            : EditorInterface.Singleton.GetEditorViewport3D(0)?.GetCamera3D() is { } cam ? cam.GlobalPosition - cam.GlobalBasis.Z * 100f : Vector3.Zero;
+        var v = lighting.NewVolume();
+        _plugin.AddVolume(root, v, new Transform3D(Basis.Identity, at));
+        Say($"added the lighting volume {v.Name}");
     }
 }
 #endif

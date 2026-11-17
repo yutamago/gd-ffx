@@ -1,11 +1,12 @@
 # The remaster editor
 
-gd-ffx's editor plugin for the remaster (docs/remaster-plan.md, R1b and R2):
+gd-ffx's editor plugin for the remaster (docs/remaster-plan.md, R1b to R3):
 browse the game's maps, open one as an editable scene of its classic parts,
 move, hide, remove, replace and add parts with Godot's own tools, and save
 the edits as the map's override files (docs/remake.md, "Overrides"), which
 the game applies; replace textures, make physically based materials for them
-and draw a map remastered ("Textures" and below). What it writes into the
+and draw a map remastered ("Textures" and below), and light it: the game's
+lights and fog as nodes, sky, GI, volumes ("Lighting"). What it writes into the
 project is IDs and your own work; images made from the game's textures are
 your work products too, but never belong in gd-ffx's git ("Your work and
 git").
@@ -312,38 +313,215 @@ dock's **Render**):
   classic one) as a plain rough surface. The lit material keeps what the
   classic one does the game's way: blend, cull and depth modes, the alpha
   test, the UV set, the scrolling UVs (clouds), the morphs the game drives.
-  The game's vertex colours hold baked light and tint (128 neutral):
-  `ffx_vertex_light` (0.5) keeps half of it under the real lights;
+  The game's vertex colours hold baked light and tint (128 neutral): the
+  map's `VertexLight` ("Lighting") says how much of it stays under the real
+  lights (all of it by default);
 - the sky keeps the classic look: sky domes (`m_DObjKind` 1) and, after
   ffx-remix's R-45 rule, the parts grouped by texture that reach 1,000 units
   from the vertical axis, centred on it and rising above the ground (Besaid's
-  four scrolling cloud quarters); water, 2D layers and characters keep their
-  classic shaders;
-- a provisional lighting rig (`RemasterLighting`, until R3): a directional
-  light from the game's key light (`Look.lights[0]`, turned as the characters'
-  shader turns it; shadows), the map's ambient as the fill (never black), a
-  procedural sky from its background and fog colours, Godot's depth fog from
-  the game's fog, the AgX tone map and Godot's glow. Under Forward+
-  `ClassicPost` is off and the classic shaders still drawing write their
-  colours as linear ones (`ffx_linear_out`), so Godot's encode gives them
-  back (docs/architecture.md, "Colours"); under Compatibility they write them
-  as they are (measured: the characters unchanged that way).
-
-Checked on the GPU (2026-11-17, the Windows export, D3D12 Forward+, Intel
-Arc 140T, `tools/compare-shot-win.sh` with `FFX_SHOT_TEST="--selftest-materials
---selftest-timeout=240"`): Besaid beach remastered with materials made from
-its six biggest textures, the clouds and the characters in their classic
-colours, the sand and cliffs sunlit with shadows; the classic path still
-scores 8.7 there (8.9 before, within a run's spread) and 11.9 under
-Compatibility (as main on the same machine). Under Compatibility (Xvfb) the
-sunlit sand comes out brighter than on the GPU: the provisional rig is
-tuned for Forward+.
+  four scrolling cloud quarters), unless the map's lighting hides them for a
+  sky of Godot's; water, 2D layers and characters keep their classic
+  shaders, and so do the map's blended parts (the game's painted layers: wet
+  sand, shallow water, shading) unless the lighting says `BlendedParts = Lit`;
+- the map's lighting ("Lighting"): the game's key light as the sun, the
+  ambient, the sky, fog, tone map, GI. Under Forward+ `ClassicPost` is off and
+  the classic shaders still drawing write their colours as linear ones
+  (`ffx_linear_out`), so Godot's encode gives them back (docs/architecture.md,
+  "Colours"); premultiplied ones (the refraction sea, `ONE, INV_SRC_ALPHA`
+  map parts) decode their colour before the alpha, so the sea keeps its
+  colour. Under Compatibility they write them as they are, and the lit
+  shaders take the game's colours as they are too (`ffx_lit_gamma`), with
+  their own exposure ("Lighting quality").
 
 To compare: the 3D view's **Remastered** toggle (the editor's 3D toolbar; a
 map opens as its render path says), F7 in the game (classic and remastered
 in turn, every map, for the run), the options' **Render path** (as each map
 says, classic everywhere, remastered everywhere; saved), or
 `--render-path=map|classic|remastered`.
+
+## Lighting
+
+A remastered map's lighting and atmosphere (R3) is a Godot resource beside
+its overrides, `res://remaster/maps/<level>/lighting.tres` (a `MapLighting`,
+`godot/src/Remaster/MapLighting.cs`; a pack's
+`res://mods/<pack>/remaster/maps/<level>/lighting.tres`). Unlike the
+overrides it layers per file: the last layer that has one wins, whole
+(`LightingLayers`: the project's, the packs' in load order, the registered
+ones; `--no-overrides` turns them off). A map without one draws with the
+defaults, which follow the game's look (`Look`: the key light, the ambient,
+the background and fog colours, the fog's range). Only the remastered path
+reads it; a classic map never does.
+
+| Group | Fields | Default |
+|---|---|---|
+| Key light | `KeyMode` (Game: the game's direction, `Look.lights[0]` turned as the characters' shader turns it; Custom: `KeyDirection`; Off), `KeyColourMode` (Game: the game's colour kept by `KeyGameTint`, warmed by `KeyWarmth`; Custom: `KeyColour`), `KeyEnergy` (times the game's level against Besaid's daylight one), `KeyShadows`, `KeyAngularSize` | Game, Game, tint 0.2, warmth 0.35, 2.0, shadows, 0° (above 0: soft shadows by Godot's PCSS, costly) |
+| Ambient | `AmbientMode` (Game: the map's and characters' ambient, its hue kept by `AmbientGameTint`; Custom; Off), `AmbientColour`, `AmbientEnergy` (times the game's level), `AmbientSkyContribution`; `VertexLight` (the game's baked vertex light kept, 0..1), `BlendedParts` (Classic, Lit) | Game, tint 0, 0.65, 0; vertex light 1, blended classic |
+| Fog | `FogMode` (Game: the game's colour, near, far, curve and limit as Godot's depth fog; Custom; Off), `FogColour`, `FogDensity`, `FogBegin`, `FogEnd`, `FogCurve` | Game |
+| Volumetric fog | `VolumetricFog`, `VolumetricDensity`, `VolumetricAlbedo`, `VolumetricEmission`, `VolumetricAnisotropy`, `VolumetricLength` | off |
+| Sky | `SkyMode` (Game: a procedural sky in the game's background and fog colours; Procedural: `SkyTop`, `SkyHorizon`, `SkyGround`; Physical; Panorama: `SkyPanorama`, an HDRI of the project's), `SkyEnergy`, `SkyHideClassic` (the classic sky parts hidden) | Game, the classic sky parts kept |
+| Tone and colour | `ToneMapper` (Linear, Reinhard, Filmic, ACES, AgX), `ToneExposure`, `ToneWhite`, `ToneSaturation`, `ToneContrast` | Filmic, 1, 2.5, 1.15, 1 |
+| Glow | `Glow`, `GlowIntensity`, `GlowThreshold`, `GlowBloom` | on, 0.5, 1, 0 |
+| Screen-space | `ScreenSsao` (+ radius, intensity), `ScreenSsil` (+ intensity), `ScreenSsr` | all off |
+| Global illumination | `GiMode` (None, Sdfgi, VoxelGi, LightmapGi), `GiEnergy`, `GiSize`/`GiCentre` (the VoxelGI's box; zero: the map's middle, at most 1,200 x 400 x 1,200), `GiCascades`, `GiCellSize` (SDFGI) | None |
+| Volumes | `Volumes` (`LightingVolume`s: "Volumes") | none |
+
+The defaults are measured, not guessed ("The colour check"): the game's key
+light and ambient are made for its characters and lean blue (Besaid's key
+light 1.20, 1.29, 1.37; ambient 0.34, 0.34, 0.45), so they give their
+direction and level and little of their hue; the baked vertex light stays
+whole (it holds the map's colour: without it Besaid's sand lost its yellow);
+Filmic with a little saturation keeps the classic chroma better than AgX or
+ACES did there.
+
+### In the editor
+
+Opening a map builds its lighting as nodes under `Lighting`, each tagged
+with its stable ID (the `<resource>#<fragment>` form of the part IDs,
+docs/importer.md):
+
+```
+bsil00                    MapEditRoot
+├── ClassicMap ...
+├── Additions
+└── Lighting
+    ├── KeyLight          x:level/bsil00#light/key     a DirectionalLight3D: the gizmo turns it, the inspector colours and dims it
+    ├── Ambient           x:level/bsil00#ambient       the Ambient fields, VertexLight, BlendedParts
+    ├── Fog               x:level/bsil00#fog           the Fog and Volumetric fields
+    ├── Environment       x:level/bsil00#environment   Sky, Tone, Glow, Screen, GI
+    └── Volumes
+        └── <name>        x:level/bsil00#volume/<name> a box (VolumeNode)
+```
+
+`Ambient`, `Fog` and `Environment` (`LightingFacet`) show their part of the
+map's `MapLighting` in the inspector as their own properties: Godot's
+inspector edits them, each change one undo step, the revert arrow goes back
+to the default. The key light is shown where the game puts it: the editor
+runs no game, so the game writes each map's look when it shows the map
+(`user://remaster/looks/<level>.json`, `LookCache`: the key light, the
+ambient, the background and the fog; never in git); a map the game has not
+shown here yet gets the defaults' direction (the log says so: play it once).
+With the 3D view's **Remastered** toggle on, the game's own rig previews the
+lighting (the key light node is its sun; the volumes by the editor camera's
+place).
+
+Saving (**Save edits**, Ctrl+S) writes `lighting.tres` beside the overrides:
+the key light compared with the game's (a turn makes `KeyMode = Custom` and
+the direction, a colour `KeyColourMode = Custom`, an energy the file's
+`KeyEnergy`; hidden or deleted: `Off`), the facets' fields as edited, the
+volume nodes. Text, only the fields that differ from the defaults, stable
+sub-resource IDs (`v_<hash of the volume's name>`): a save without an edit
+changes no byte, and a lighting that says only the defaults has no file.
+
+### Volumes
+
+A volume (`LightingVolume`) is a box with lighting of its own: **Add volume**
+in the dock (one undo step; around the selected part, else in front of the
+view), moved, turned and scaled with Godot's gizmos (the scale goes into its
+`Size` on save), its values in the inspector. Each value has a switch
+(`SetExposure`, `SetAmbient`, `SetFog`, `SetKeyEnergy`, `SetSaturation`,
+`SetVolumetricDensity`): a volume says only what it changes. In the game the
+camera's place weighs each volume (0 outside, 1 deeper than `Blend` units
+inside every face, smooth between), the set values blended over the map's
+in the list's order (a later volume over an earlier one).
+
+### Lights and probes
+
+**Add at selection** adds, besides the shapes: omni, spot and directional
+lights (shadows on), a reflection probe (a box, box projection, updated
+once) and Godot's fog volume (local volumetric fog; it needs the map's
+volumetric fog on). They are additions (docs/remake.md, "Overrides"): saved
+in `additions.tscn`, anchored to a part or the map, in the game on every
+path, but they only light the remastered path (the classic shaders are
+unshaded).
+
+### Global illumination and baking
+
+- **SDFGI**: real time, Forward+ at the high quality only.
+- **VoxelGI**: a VoxelGI over `GiSize` (or the map's middle), baked on the
+  player's machine the first time the map shows remastered (Besaid beach:
+  0.3 s, 131 surfaces, on the development machine's CPU renderer) and kept
+  in `user://remaster/bake/<level>/voxelgi.res`. The bake is made from the
+  player's game content, so it is never shipped and never in git: the
+  lighting file holds the recipe (the mode, the box, the energy). The bake
+  sees each lit surface's albedo texture (Godot's voxelizer reads only its
+  own materials: plain ones stand in for the bake). A changed box bakes
+  again.
+- **LightmapGI**: not yet (the maps have no lightmap UVs; drawn as None).
+
+### Lighting quality
+
+The options' **Lighting quality** (`video/lighting`, `--lighting=`) caps
+what a remastered map's lighting costs:
+
+| | high | medium | low (Steam Deck) |
+|---|---|---|---|
+| GI | the map's | VoxelGI only | none |
+| volumetric fog | the map's (128 x 96 froxels) | the map's (64 x 48) | off |
+| SSAO / SSIL / SSR | the map's | the map's SSAO | none |
+| shadows | 4 splits, the project's atlas and filter, 3,000 units | 2 splits, 2048, 2,000 | 2 splits, 2048, 1,200 |
+
+The Deck preset sets low. Compatibility draws no GI, volumetric fog or
+screen-space effects whatever the quality; its lit shaders light the game's
+colours in gamma, so the rig gives it its own scales (key light x0.55,
+ambient x1.25, exposure x0.8: measured by the colour check, not over-bright).
+Budgets for the Deck (to be measured on the device: R8): low quality, the
+3D at 75 %, 60 fps; one directional shadow, no GI.
+
+### The colour check
+
+A remastered map must stay recognisably FFX: its colours keep the classic
+map's hue and saturation balance, with better light. `ColourBalance`
+(`godot/src/Remaster/ColourBalance.cs`) and `tools/compare/colour.py`
+measure a remastered picture against the classic one of the same view: the
+mean OKLab lightness, chroma and hue over the picture, and over a 4 x 3
+grid. The tolerances:
+
+| | limit |
+|---|---|
+| mean lightness, remastered minus classic | ±0.06 |
+| mean chroma, remastered over classic | 0.75 .. 1.35 |
+| chroma-weighted mean hue | 12° |
+| the cells' median lightness difference | 0.15 |
+| the cells' median hue difference (cells with colour) | 25° |
+
+`--selftest-lighting` (with a renderer) and `tools/compare-shot-win.sh`
+(`FFX_SHOT_TEST="--selftest-lighting ..."`) apply them; R2's rig failed them
+everywhere (Besaid, lavapipe Forward+: lightness -0.21, chroma x0.35, hue
+off by 159°: grey sand, a black shade). The causes: Godot takes light,
+ambient and fog colours as sRGB and decodes them, so R2's sun was decoded
+twice (blue) and its ambient became 0.09 (black, blue); the game's blue key
+light and ambient multiplied the yellow sand to grey; half the baked vertex
+light was dropped; AgX desaturated; and the refraction sea lost its colour
+under the linear output (a premultiplied colour decoded with its alpha).
+
+Measured on Besaid beach (developer save 7, the defaults, 2026-11-17):
+
+| Renderer | lit from the colour textures | with PBR materials |
+|---|---|---|
+| Forward+, Vulkan on lavapipe (Xvfb) | lightness +0.007, chroma x0.88, hue 2.0°; cells 0.022, 1.7° | +0.003, x0.87, 2.1°; cells 0.034, 2.9° |
+| Compatibility (Xvfb) | +0.040, x0.93, 3.5°; cells 0.040, 2.1° | within the limits |
+| Forward+, D3D12 and Vulkan (Intel Arc 140T, the Windows export) | +0.006, x0.89, 2.0°; cells 0.022, 1.7° | +0.000, x0.87, 2.1°; cells 0.034, 3.0° |
+
+The GPU check (`tools/compare-shot-win.sh` with `--selftest-lighting`): the
+classic picture scores 8.9 against the original's, as on main; the whole check
+passes on D3D12 and on Vulkan (the defaults, PBR materials, the lighting file
+with volumetric fog, VoxelGI and a volume, the three qualities, F7).
+
+**D3D12 and Vulkan.** Under D3D12 the remastered view lost the device
+(`0x887a0005`, device removed) in six of seven runs on the Windows export with
+an Intel Arc 140T (2026-11-18), at random moments after the switch (with SSAO
+or without, soft shadows or not, the lighting file or the defaults); the
+classic view never did. Under Vulkan, on the same GPU, four of four runs
+passed with no error. No GPU reset showed in Windows' logs (the device was
+lost inside the process only). So gd-ffx's renderer on Windows is Vulkan
+(`rendering/rendering_device/driver.windows`; Godot falls back to D3D12 where
+Vulkan is missing; `--rendering-driver d3d12` picks D3D12). The cause is not
+known: the D3D12 debug layer (Windows' optional "Graphics Tools") was not
+installed. Check D3D12 again after a Godot or driver upgrade
+(`tools/compare-shot-win.sh - OUT 7 d3d12` with
+`FFX_SHOT_TEST="--selftest-lighting --selftest-timeout=400"`, a few runs).
+A remastered picture identical to the classic one (a
+frame not drawn, as a lost device leaves) fails the colour check.
 
 ## Your work and git
 
@@ -357,6 +535,12 @@ move the folder to `res://mods/<pack>/remaster/textures/` (its paths are
 relative) and export it with the pack's other files. Whether you may
 publish such a pack depends on what it holds; textures made by hand from
 nothing of the game's are yours.
+
+A map's `lighting.tres` holds IDs and values only (directions, colours,
+energies, the volumes' boxes, an HDRI path of the project's): original work,
+fine in a pack and in git. What is made from the game stays on the player's
+machine: the looks the game writes for the editor (`user://remaster/looks/`)
+and the GI bakes (`user://remaster/bake/`).
 
 ## Checks
 
@@ -396,6 +580,20 @@ FFX_EDITOR_SHOT=1 FFX_GAME_DIR=<game> tools/remaster-editor-check.sh [OUT_DIR]  
    kept as one undo step, undone, redone); then every PNG and material
    imported, the material an ORMMaterial3D over its imported maps, drawn by
    the map. It writes `DIR/textures-expect.json`.
+   Then R3 (`--remaster-looks=DIR/looks`: a stand-in look of Besaid beach
+   written there, the editor runs no game): the lighting nodes tagged by ID,
+   the key light where the look puts it, the facets at the defaults; the key
+   light turned (an undoable transform change, as the gizmo makes), the
+   exposure and the fog's mode set in the facets (as the inspector sets
+   them), a volume around the beach added (exposure 0.6), each one undo step,
+   all four undone and redone; saved (`lighting.tres`, the same twice, no
+   absolute ID, no path of this machine), read back; the map opened again (the
+   turned key light, the facets' values, the volume; the preview on, the
+   editor camera in the volume), saved again the same. It writes
+   `DIR/lighting-expect.json`; the game's check (2) then also takes
+   `--lighting-file=DIR/bsil00/lighting.tres --lighting-expect=...`: the map
+   drawn remastered, the editor's lighting in force (the key light as turned,
+   the exposure, the volume's exposure by the camera, the fog's mode).
 3. The game with the editor's textures (`--selftest-materials
    --textures-file=.../textures.tres --textures-expect=DIR/textures-expect.json
    --devsave=7`; "The game's check" below).
@@ -427,6 +625,33 @@ renderer: FILE.png (classic, with the second replacement) and
 FILE-remastered.png. With `--textures-file`, the editor's textures instead
 of its own first two.
 
+### The lighting check
+
+```bash
+FFX_GAME_DIR=<game> godot --headless --path godot -- --selftest-lighting --devsave=7
+FFX_GAME_DIR=<game> FFX_SHOT_TEST="--selftest-lighting --selftest-timeout=400" tools/compare-shot.sh - OUT_DIR       # Compatibility (Xvfb)
+FFX_GAME_DIR=<game> FFX_SHOT_TEST="--selftest-lighting --selftest-timeout=400" tools/compare-shot-win.sh - OUT_DIR   # the GPU (Windows export)
+```
+
+`--selftest-lighting` on Besaid beach (its files in
+`user://selftest-lighting`, removed at the end): the classic picture; the
+render path remastered (a registered overrides layer) with no lighting file:
+the rig on, the sun along the game's key light, its colour near white, the
+ambient not black, the fog as the game's, the colour check against the
+classic picture lit from the colour textures, then again with PBR materials
+made from the map's six biggest textures; a lighting file registered (a
+custom key light, exposure, volumetric fog, VoxelGI, a volume around the
+camera): the key light's direction, the volume's exposure in full, volumetric
+fog and VoxelGI under Forward+ only (the bake made afresh, removed at the
+end); the lighting quality low, medium and high (GI, volumetric fog, SSAO,
+the shadows); F7: the classic environment back and its picture as the first.
+Without a renderer the colour check is skipped (said in the note). With
+`--shot=FILE.png`: FILE.png, FILE-remastered.png, FILE-pbr.png,
+FILE-file.png, FILE-classic-again.png. For tuning, `--lighting-variants=FILE.json`
+draws and measures variants of the defaults (`[{"name": "...", "props":
+{"KeyEnergy": 2.0}}]`; `_CompatExposure` and the like set the rig's
+Compatibility scales); `--lighting-debug` prints each map surface's colours.
+
 The pictures show the player's game: keep them out of git.
 
 ## Exports
@@ -455,8 +680,16 @@ export that holds either (`project.godot` still names the plugin's
   load from the files meanwhile.
 - The ComfyUI client is untested against a real server; there is no PBR
   model template yet (ffx-remix's `pbr-from-albedo` is the model to port).
-- The lighting is provisional (R3); the game's baked vertex light is half
-  kept everywhere (`ffx_vertex_light`), not per map.
+- Lighting (R3): the lighting file layers whole, not per field; LightmapGI
+  is not drawn (no lightmap UVs); the VoxelGI bake sees albedo textures, not
+  the PBR materials' emission; the editor previews the key light from the
+  game's last look, which the game writes only when it shows the map; a
+  volume blends by the camera, not the player; the Steam Deck budgets are
+  not measured on the device.
+- The game's painted shore layers blend in gamma in the game; lit (the
+  `BlendedParts = Lit` choice) and in linear light they come out paler, so
+  they stay classic by default, and the shore under them stays paler than
+  the classic one (Besaid's lagoon).
 - The materials' recipe has no live preview; the batch has no per-texture
   recipe.
 - A headless editor save prints Godot's own "Parameter "t" is null" (no
@@ -479,6 +712,9 @@ export that holds either (`project.godot` still names the plugin's
 | `TextureStore.cs` | the project's texture index and files, the import |
 | `WhereUsed.cs` | the where-used index and its cache |
 | `ComfyUpscaler.cs` | the optional ComfyUI upscaling |
+| `LightingEdit.cs` | the map's lighting as nodes, the preview, the save of `lighting.tres` |
+| `LightingFacet.cs` | the ambient, fog and environment nodes (a part of `MapLighting` as the node's properties) |
+| `VolumeNode.cs` | a lighting volume's node (the box) |
 | `EditorSelfTest.cs` | the check |
 
 Game side (R2): `RemasterTexture`, `RemasterTextureSet`, `PbrRecipe` (the
@@ -488,6 +724,13 @@ materials, the binding on the classic materials), `PbrBuilder` and
 materials, the swap), `RemasterLighting` and `RenderPaths` (the rig, the
 choice), `MaterialsTest`; `ClassicMaterials` binds the replacements and
 notes each map material's modes and defines (`ffx_map_shader`).
+
+Game side (R3): `MapLighting`, `LightingVolume` (the resources),
+`LightingLayers` (the files and their layers), `RemasterLighting` (the rig:
+the defaults from the look, the volumes, GI, the quality), `LookCache` (the
+looks for the editor), `ColourBalance` (the colour check), `LightingTest`;
+`RemasterLook` (`ffx_lit_gamma`, the blended parts), `ClassicMaterials`
+(premultiplied output under the linear one).
 
 Game side: `GameHost.ClassicGame` (the running game's object, else the
 editor's), `ClassicLibrary.Load` in the editor (the glTF images kept in

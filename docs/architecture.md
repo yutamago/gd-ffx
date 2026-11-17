@@ -337,7 +337,13 @@ inline in `EffectDrawView`) writes its gamma values decoded to linear, so
 Godot's tone map and encode give them back beside the lit parts. Under
 Compatibility it stays 0: the classic parts come out as they were
 (measured on Besaid: Tidus 123 against 129 classic with AgX; 89 with the
-decode).
+decode). A premultiplied classic output (the refraction sea, map parts
+blended `ONE, INV_SRC_ALPHA`: `PREMUL`) decodes its colour before the
+alpha (`a x lin(o)`, not `lin(a x o)`) and takes the screen's shift as it is
+(the buffer is linear already): decoding the premultiplied sum darkened the
+sea to nothing (R3). On the classic path the same lines compute the same
+values (`ffx_out` returns its input). The map's tone map (Filmic by default,
+docs/remaster-editor.md, "Lighting") applies to these classic parts too.
 
 ## Water
 
