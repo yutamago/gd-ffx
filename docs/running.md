@@ -214,11 +214,12 @@ stays white. Without a GPU driver for Mesa in WSL both run on the CPU
 ## Comparing on the GPU (Windows, from WSL)
 
 ```bash
-FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/compare-shot-win.sh REF.bmp OUT_DIR [devsave] [d3d12|vulkan]
+FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/compare-shot-win.sh REF.bmp OUT_DIR [devsave] [vulkan|d3d12]
 ```
 
 Runs the Windows export (`tools/export.sh windows` first) on the machine's
-GPU with Forward+, silently (`--audio-driver Dummy`) and with
+GPU with Forward+ (Vulkan by default, as the project renders on Windows since
+2026-11-18: D3D12 lost the device in the remastered view, docs/remaster-editor.md), silently (`--audio-driver Dummy`) and with
 `--background-window`: the window takes no focus and is sent behind every
 other window (Godot moves an off-screen window back onto the screen, and a
 minimised one is not drawn; a covered one still renders). It can show for a

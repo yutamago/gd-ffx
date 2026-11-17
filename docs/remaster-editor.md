@@ -500,23 +500,27 @@ Measured on Besaid beach (developer save 7, the defaults, 2026-11-17):
 |---|---|---|
 | Forward+, Vulkan on lavapipe (Xvfb) | lightness +0.007, chroma x0.88, hue 2.0°; cells 0.022, 1.7° | +0.003, x0.87, 2.1°; cells 0.034, 2.9° |
 | Compatibility (Xvfb) | +0.040, x0.93, 3.5°; cells 0.040, 2.1° | within the limits |
-| Forward+, D3D12 (Intel Arc 140T, the Windows export) | +0.006, x0.89, 2.0°; cells 0.022, 1.7° | +0.000, x0.87, 2.1°; cells 0.034, 3.0° |
+| Forward+, D3D12 and Vulkan (Intel Arc 140T, the Windows export) | +0.006, x0.89, 2.0°; cells 0.022, 1.7° | +0.000, x0.87, 2.1°; cells 0.034, 3.0° |
 
 The GPU check (`tools/compare-shot-win.sh` with `--selftest-lighting`): the
 classic picture scores 8.9 against the original's, as on main; the whole check
 passes on D3D12 and on Vulkan (the defaults, PBR materials, the lighting file
 with volumetric fog, VoxelGI and a volume, the three qualities, F7).
 
-**SSAO and D3D12.** Under D3D12, Godot 4.7's SSAO lost the device
-(`0x887a0005`, device removed) about a second after it was turned on, on the
-Windows export with an Intel Arc 140T (2026-11-18): the defaults plus SSAO
-alone lose it; with VoxelGI and volumetric fog on as well they do not. The
-same GPU under Vulkan draws SSAO in every case. So the rig never turns SSAO
-on under D3D12 (`RemasterLighting.SsaoUnsafe`, any GPU, said once in the
-log); start with `--rendering-driver vulkan` to have it. Check again after a
-Godot upgrade (`--lighting-variants` with `{"ScreenSsao": true}` on the GPU).
-The same goes for a `WorldEnvironment` with SSAO in a map's additions: the
-rig does not guard those. A remastered picture identical to the classic one (a
+**D3D12 and Vulkan.** Under D3D12 the remastered view lost the device
+(`0x887a0005`, device removed) in six of seven runs on the Windows export with
+an Intel Arc 140T (2026-11-18), at random moments after the switch (with SSAO
+or without, soft shadows or not, the lighting file or the defaults); the
+classic view never did. Under Vulkan, on the same GPU, four of four runs
+passed with no error. No GPU reset showed in Windows' logs (the device was
+lost inside the process only). So gd-ffx's renderer on Windows is Vulkan
+(`rendering/rendering_device/driver.windows`; Godot falls back to D3D12 where
+Vulkan is missing; `--rendering-driver d3d12` picks D3D12). The cause is not
+known: the D3D12 debug layer (Windows' optional "Graphics Tools") was not
+installed. Check D3D12 again after a Godot or driver upgrade
+(`tools/compare-shot-win.sh - OUT 7 d3d12` with
+`FFX_SHOT_TEST="--selftest-lighting --selftest-timeout=400"`, a few runs).
+A remastered picture identical to the classic one (a
 frame not drawn, as a lost device leaves) fails the colour check.
 
 ## Your work and git

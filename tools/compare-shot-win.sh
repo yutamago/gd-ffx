@@ -7,7 +7,7 @@
 # (--background-window: no focus, sent to the bottom; it still renders). The game folder and the pictures
 # stay on the WSL side, reached through \\wsl.localhost.
 #
-#   FFX_GAME_DIR=<game> tools/compare-shot-win.sh REF.png|bmp OUT_DIR [devsave, default 7] [d3d12|vulkan]
+#   FFX_GAME_DIR=<game> tools/compare-shot-win.sh REF.png|bmp OUT_DIR [devsave, default 7] [vulkan|d3d12] (default vulkan, the project's)
 # FFX_SHOT_ARGS: more arguments for the check, as tools/compare-shot.sh.
 # FFX_SHOT_TEST: the check to run instead, as tools/compare-shot.sh (e.g.
 # "--selftest-materials --selftest-timeout=200": godot.png and godot-remastered.png;
@@ -16,7 +16,7 @@
 # REF "-": no reference (the pictures and their colour check only)
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/.." && pwd)"
-ref="$1"; out="$2"; save="${3:-7}"; driver="${4:-d3d12}"
+ref="$1"; out="$2"; save="${3:-7}"; driver="${4:-vulkan}"
 game="${FFX_GAME_DIR:?FFX_GAME_DIR: the game folder}"
 exe="$repo/build/windows/gd-ffx.console.exe"
 [[ -f "$exe" ]] || { echo "compare-shot-win: no $exe (tools/export.sh windows)" >&2; exit 1; }
