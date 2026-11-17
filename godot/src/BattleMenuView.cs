@@ -240,6 +240,9 @@ public partial class TargetHands : Control
             if (cam.IsPositionBehind(at))
                 continue;
             var p = cam.UnprojectPosition(at) + new Vector2(0, -12 + bob);
+            // a point the projection cannot place (on the camera's plane) draws nothing
+            if (!p.IsFinite() || Mathf.Abs(p.X) > 1e5f || Mathf.Abs(p.Y) > 1e5f)
+                continue;
             // a hand pointing down at the battler: the palm a rounded box, the finger a triangle
             var fill = current ? new Color(1f, 0.95f, 0.6f) : new Color(0.75f, 0.78f, 0.85f, 0.85f);
             var line = new Color(0, 0, 0, 0.9f);
