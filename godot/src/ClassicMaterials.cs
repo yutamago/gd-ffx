@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using System.Collections.Generic;
+using GdFfx.Remaster;
 using Godot;
 
 namespace GdFfx;
@@ -40,6 +41,14 @@ global uniform vec3 ffx_fog_colour;
 global uniform vec4 ffx_fog; // near, far, curve, limit
 // the shaders' GlobalTime (Look.global_time, interpolated between snapshots; SetTime)
 global uniform float ffx_time;
+// 1 while the scene draws remastered (Forward+ without ClassicPost's decode: RemasterLighting):
+// the classic shaders' gamma values written as linear ones, so Godot's encode gives them back
+global uniform float ffx_linear_out;
+vec3 ffx_out(vec3 c) {
+	if (ffx_linear_out < 0.5) { return c; }
+	c = clamp(c, 0.0, 1.0);
+	return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
+}
 // the game's fog: min(((depth - near) / (far - near))^curve, limit) x fgEff,
 // mixed in before the colour scale and the tone curve
 uniform float fog_effect = 1.0;
@@ -121,7 +130,7 @@ void fragment() {
 #ifdef FOG
 	c.rgb = ffx_fog_apply(c.rgb, -VERTEX.z);
 #endif
-	ALBEDO = ffx_curve(c.rgb * ffx_colour_scale);
+	ALBEDO = ffx_out(ffx_curve(c.rgb * ffx_colour_scale));
 #ifdef BLEND
 	ALPHA = clamp(c.a, 0.0, 1.0);
 #endif
@@ -221,14 +230,14 @@ void fragment() {
 	off.y *= clamp((abs(PROJECTION_MATRIX[1][1]) * VERTEX.y + 0.9) * 10.0, 0.0, 1.0);
 	vec3 d = texture(ffx_screen, SCREEN_UV + vec2(off.x, -off.y)).rgb - texture(ffx_screen, SCREEN_UV).rgb;
 #ifdef REFRACTION_SUB
-	ALBEDO = (1.0 - c.a) * max(-d, vec3(0.0));
+	ALBEDO = ffx_out((1.0 - c.a) * max(-d, vec3(0.0)));
 	ALPHA = 1.0;
 #else
-	ALBEDO = c.a * o + (1.0 - c.a) * max(d, vec3(0.0));
+	ALBEDO = ffx_out(c.a * o + (1.0 - c.a) * max(d, vec3(0.0)));
 	ALPHA = c.a;
 #endif
 #else
-	ALBEDO = o;
+	ALBEDO = ffx_out(o);
 	ALPHA = c.a;
 #endif
 }
@@ -257,10 +266,10 @@ void fragment() {
 	}
 	vec4 c = t * vertex_colour * material_colour;
 	vec3 o = min(c.rgb * lit, vec3(1.0));
-	ALBEDO = ffx_fog_apply(o, -VERTEX.z);
+	ALBEDO = ffx_out(ffx_fog_apply(o, -VERTEX.z));
 #ifdef CLOTH_NUMBER
 	float far = smoothstep(0.25, 2.0, cloth_shown.y);
-	ALBEDO = mix(ALBEDO, vec3(far, 1.0 - far, 0.0), cloth_shown.x * ffx_cloth_debug);
+	ALBEDO = mix(ALBEDO, ffx_out(vec3(far, 1.0 - far, 0.0)), cloth_shown.x * ffx_cloth_debug);
 #endif
 }
 ";
@@ -354,7 +363,7 @@ void vertex() {
 void fragment() {
 	vec4 c = texture(tex, UV) * material_colour * COLOR;
 	if (c.a < cut_alpha) { discard; }
-	ALBEDO = c.rgb;
+	ALBEDO = ffx_out(c.rgb);
 	ALPHA = c.a;
 }
 ";
@@ -385,6 +394,9 @@ void fragment() {
         Add("ffx_layer_window", RenderingServer.GlobalShaderParameterType.Vec4, new Vector4(1f / 3f - 2f * 0.035f, 4f / 3f, 0, 0));
         Add("ffx_layer_far", RenderingServer.GlobalShaderParameterType.Float, 19000f);
         Add("ffx_time", RenderingServer.GlobalShaderParameterType.Float, 0f);
+        // the remastered path (RemasterLighting, RemasterLook)
+        Add("ffx_linear_out", RenderingServer.GlobalShaderParameterType.Float, 0f);
+        Add("ffx_vertex_light", RenderingServer.GlobalShaderParameterType.Float, 0.5f);
         // the characters' cloth (ClothView sets the texture)
         Add("ffx_cloth", RenderingServer.GlobalShaderParameterType.Sampler2D, default);
         Add("ffx_cloth_alpha", RenderingServer.GlobalShaderParameterType.Float, 0f);
@@ -434,6 +446,9 @@ void fragment() {
         Variants.SetGlobal(G_ffx_light_colours, new Basis(Col(0), Col(1), Col(2)));
         RenderingServer.GlobalShaderParameterSet(G_ffx_light_sign, LightSign);
     }
+
+    /// <summary>A light's direction as the characters' shader takes it (turned by the map's yaw and pitch; before <see cref="LightSign"/>).</summary>
+    public static Vector3 LightDirection(GdFfx.Api.Light x) => Turn(x);
 
     /// <summary>A light's direction turned by the map's yaw and pitch: Rx(pitch) Ry(yaw) d.</summary>
     private static Vector3 Turn(GdFfx.Api.Light x)
@@ -729,6 +744,9 @@ void fragment() {
                         defines.Add("TEX_CLAMP");
                     if (blends && !modes.Contains("blend_")) modes += ", blend_mix";
                     s = new ShaderMaterial { Shader = MapShader(modes, MapBody, defines) };
+                    // what the remastered path needs to draw the part the game's way (its blend, cull,
+                    // UV set, morphs and scrolls): RemasterLook
+                    PartIds.SetString(s, MapShaderMeta, modes + "|" + string.Join(",", defines));
                     var sx = extras.Floats("ScrollSpeed_X", [0f]); var sy = extras.Floats("ScrollSpeed_Y", [0f]);
                     s.SetShaderParameter(Variants.Name("scroll"), new Vector2(sx[0], sy[0]));
                     if (defines.Contains("UV_MORPH"))
@@ -744,7 +762,8 @@ void fragment() {
                 s.SetShaderParameter(Variants.Name("fog_effect"), (fg[0] + fg[1] + fg[2]) / 3f);
                 if (blends) transparent.Add(i);
             }
-            Variants.SetParameter(s, "tex", std.AlbedoTexture);
+            // the remaster's replacement for the texture's ID, when there is one (RemasterTextures)
+            Variants.SetParameter(s, "tex", RemasterTextures.Bind(s, "tex", TextureId(extras, "TextureSampler"), std.AlbedoTexture));
             s.SetShaderParameter(Variants.Name("material_colour"), ToColor(colour));
             // the refraction's second pass: the same parameters, its own shader
             if (refractionSub != null && s.Duplicate() is ShaderMaterial sub)
@@ -912,10 +931,12 @@ void fragment() {
         if (!extras.HasTextures)
             return;
         string? Path(string sampler) => extras.Textures.TryGetValue(sampler, out var v) ? v : null;
+        // each 2D texture bound with the remaster's replacement for its ID, when there is one
+        Texture? Bound(string param, string sampler, Texture? t) => RemasterTextures.Bind(s, param, TextureId(extras, sampler), t);
         if (Path("TextureSampler") is { } t0p && ClassicTexture(t0p) is Texture2D t0)
-            Variants.SetParameter(s, "tex0", t0);
+            Variants.SetParameter(s, "tex0", Bound("tex0", "TextureSampler", t0));
         if (Path("TextureSampler1") is { } t1p && ClassicTexture(t1p) is Texture2D t1)
-            Variants.SetParameter(s, "tex1", t1);
+            Variants.SetParameter(s, "tex1", Bound("tex1", "TextureSampler1", t1));
         // the material names no cube map (its sampler is bound outside the material): the map's
         // own reflection cube map (bsil00 has one, reflection3, the one its water reflects)
         var cubePath = Path("CubeMapSampler") ?? MapCube(texDir);
@@ -924,11 +945,18 @@ void fragment() {
             && Path("NormalMap2Sampler") is { } n2p && ClassicTexture(n2p) is { } n2)
         {
             Variants.SetParameter(s, "cube", cube);
-            Variants.SetParameter(s, "nml1", n1);
-            Variants.SetParameter(s, "nml2", n2);
+            Variants.SetParameter(s, "nml1", Bound("nml1", "NormalMapSampler", n1));
+            Variants.SetParameter(s, "nml2", Bound("nml2", "NormalMap2Sampler", n2));
             s.SetShaderParameter(Variants.Name("has_cube"), true);
         }
     }
+
+    /// <summary>Metadata on a map material: its render modes and defines (<c>modes|define,define</c>), for <see cref="RemasterLook"/>.</summary>
+    public const string MapShaderMeta = "ffx_map_shader";
+
+    /// <summary>The texture ID the import gives <paramref name="sampler"/> (<c>extras.ffx_texture_ids</c>; null: none).</summary>
+    private static string? TextureId(MaterialExtras extras, string sampler) =>
+        extras.TextureIds.TryGetValue(sampler, out var id) ? id : null;
 
     private static Color ToColor(float[] c) => new(c[0], c[1], c[2], c.Length > 3 ? c[3] : 1);
 

@@ -341,8 +341,11 @@ public partial class GameHost : Node
 
     // ---- input -----------------------------------------------------------------------------
 
-    /// <summary>gd-ffx's own keys (never the game's): the FPS overlay, the options, fullscreen, the debug overlay.</summary>
+    /// <summary>gd-ffx's own keys (never the game's): the FPS overlay, the options, fullscreen, the debug overlay; and <see cref="RemasterKey"/>.</summary>
     public const Key FpsKey = Key.F9, OptionsKey = Key.F10, FullscreenKey = Key.F11, DebugKey = Key.F12;
+
+    /// <summary>The remaster's compare key: classic and remastered look in turn (<see cref="Remaster.RenderPaths.Toggle"/>; StateView3D takes it).</summary>
+    public const Key RemasterKey = Key.F7;
 
     /// <summary>
     /// A screen of gd-ffx's own that takes the keyboard and mouse while it is open (the ESC
@@ -424,7 +427,7 @@ public partial class GameHost : Node
         switch (e)
         {
             // gd-ffx's own keys stay Godot's (the views take them); F1 to F4 are the game's boosters
-            case InputEventKey k when k.PhysicalKeycode is FpsKey or OptionsKey or FullscreenKey or DebugKey:
+            case InputEventKey k when k.PhysicalKeycode is FpsKey or OptionsKey or FullscreenKey or DebugKey or RemasterKey:
                 break;
             // a screen of gd-ffx's own has the input: the game gets none
             case InputEventKey or InputEventMouse when Captured:

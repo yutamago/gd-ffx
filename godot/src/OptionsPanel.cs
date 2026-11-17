@@ -16,7 +16,7 @@ namespace GdFfx;
 /// </summary>
 public partial class OptionsPanel : VBoxContainer
 {
-    /// <summary>The controls by setting: <c>preset</c>, <c>window</c>, <c>scale</c>, <c>upscaler</c>, <c>msaa</c>, <c>aa</c>, <c>taa</c>, <c>vsync</c>, <c>fps</c>, <c>glow</c>, <c>volume</c>, <c>speed</c>, <c>fps_overlay</c>.</summary>
+    /// <summary>The controls by setting: <c>preset</c>, <c>window</c>, <c>scale</c>, <c>upscaler</c>, <c>msaa</c>, <c>aa</c>, <c>taa</c>, <c>vsync</c>, <c>fps</c>, <c>glow</c>, <c>volume</c>, <c>speed</c>, <c>fps_overlay</c>, <c>render_path</c>.</summary>
     public Dictionary<string, Control> Controls { get; } = new();
 
     private bool _filling;
@@ -57,14 +57,21 @@ public partial class OptionsPanel : VBoxContainer
             UserSettings.Speeds.Select(s => $"x{s.ToString("0.##", CultureInfo.InvariantCulture)}").ToArray(),
             u => Nearest(UserSettings.Speeds.Select(s => (float)s).ToArray(), (float)u.Speed), (u, i) => u.Speed = UserSettings.Speeds[i]);
         Check(grid, "fps_overlay", "FPS overlay (F9)", u => u.FpsOverlay, (u, on) => u.FpsOverlay = on);
+        Choice(grid, "render_path", "Render path (F7 compares)", ["As each map says", "Classic everywhere", "Remastered everywhere"],
+            u => Math.Max(0, Array.IndexOf(Remaster.RenderPaths.Choices, u.RenderPath)), (u, i) =>
+            {
+                u.RenderPath = Remaster.RenderPaths.Choices[i];
+                Remaster.RenderPaths.Set(null);
+            });
         var buttons = new HBoxContainer();
         var defaults = new Button { Name = "Defaults", Text = "Defaults" };
         defaults.Pressed += () =>
         {
             var d = UserSettings.Defaults();
             var u = UserSettings.Current;
-            (u.WindowMode, u.Scale3D, u.Upscaler, u.Msaa, u.ScreenAA, u.Taa, u.VSync, u.MaxFps, u.Glow, u.Quality, u.Volume, u.Speed, u.FpsOverlay) =
-                (d.WindowMode, d.Scale3D, d.Upscaler, d.Msaa, d.ScreenAA, d.Taa, d.VSync, d.MaxFps, d.Glow, d.Quality, d.Volume, d.Speed, d.FpsOverlay);
+            (u.WindowMode, u.Scale3D, u.Upscaler, u.Msaa, u.ScreenAA, u.Taa, u.VSync, u.MaxFps, u.Glow, u.Quality, u.Volume, u.Speed, u.FpsOverlay, u.RenderPath) =
+                (d.WindowMode, d.Scale3D, d.Upscaler, d.Msaa, d.ScreenAA, d.Taa, d.VSync, d.MaxFps, d.Glow, d.Quality, d.Volume, d.Speed, d.FpsOverlay, d.RenderPath);
+            Remaster.RenderPaths.Set(null);
             Changed();
         };
         buttons.AddChild(defaults);
