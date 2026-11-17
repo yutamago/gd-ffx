@@ -8,7 +8,8 @@
 # (any save gives godot.png; the score only means something against a reference of that spot)
 # FFX_SHOT_ARGS: more arguments for the check, e.g. "--walk=up:6" (the map check walks
 # first) or "--shots=4" (Besaid: four pictures 0.1 s apart, godot.png, godot-1.png, ...;
-# with --walk on another save: three during the walk, evenly spaced, and godot.png after it)
+# with --walk on another save: three during the walk, evenly spaced, and godot.png after it;
+# without, on another save: godot-1.png, ... 0.1 s apart, then godot.png)
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 ref="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"

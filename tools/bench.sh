@@ -10,7 +10,8 @@
 #   FFX_GAME_DIR=<game folder> tools/bench.sh [SCENE...] [-- GODOT_ARGS...]
 #
 # SCENE: besaid (save 7), besaid-walk (save 7, walking off the beach),
-# lchb (save 22, 13 models), battle (save 7, battle 3,0,0); default: besaid
+# lchb (save 22, 13 models), battle (save 7, battle 3,0,0), battle-cloth (save 12, battle
+# 34,0,0: three characters with cloth); default: besaid
 # lchb battle. Logs in $BENCH_OUT (default /tmp/gd-ffx-bench), removed with
 # the documents unless BENCH_KEEP=1.
 #
@@ -54,6 +55,8 @@ for scene in "${scenes[@]}"; do
         besaid-walk) args=(--devsave=7 --bench-walk) ;;
         lchb) args=(--devsave=22) ;;
         battle) args=(--devsave=7 --battle=3,0,0) ;;
+        # Tidus, Yuna and Lulu: 38 cloth segments, about 1,400 simulated vertices
+        battle-cloth) args=(--devsave=12 --battle=34,0,0) ;;
         *) echo "bench: unknown scene $scene" >&2; exit 2 ;;
     esac
     echo "== $scene"
