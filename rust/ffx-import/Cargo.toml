@@ -20,6 +20,8 @@ serde_json.workspace = true
 # the Flash movies' art (flash.rs): Ruffle's SWF reader (MIT OR Apache-2.0), zlib
 swf = { version = "0.3.0", default-features = false, features = ["flate2"] }
 flate2 = "1.1.11"
+# their JPEG bitmaps (MIT OR Apache-2.0)
+jpeg-decoder = { version = "0.3.2", default-features = false }
 
 [lints]
 workspace = true

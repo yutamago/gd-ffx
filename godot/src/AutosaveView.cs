@@ -74,6 +74,8 @@ public partial class AutosaveView : Control
             Frame = 0;
         }
         QueueRedraw();
+        if (Frame == 30)
+            FlashScreens.Shot("autosave");
     }
 
     public override void _Draw()

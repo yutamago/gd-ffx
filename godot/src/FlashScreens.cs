@@ -106,6 +106,22 @@ public static class FlashScreens
     }
 
     /// <summary>
+    /// A picture of the screen into <c>--shot-dir</c> as <c>NAME.png</c> (under a renderer, not
+    /// headless), once a name: the native screens' moments for <c>tools/ux-shots.sh</c>.
+    /// </summary>
+    public static void Shot(string name)
+    {
+        if (GameSettings.Arg("shot-dir") is not { Length: > 0 } dir || DisplayServer.GetName() == "headless" || !_shots.Add(name))
+            return;
+        System.IO.Directory.CreateDirectory(dir);
+        var file = System.IO.Path.Combine(dir, name + ".png");
+        (Engine.GetMainLoop() as SceneTree)?.Root.GetViewport().GetTexture().GetImage().SavePng(file);
+        GD.Print($"ffx: picture {file}");
+    }
+
+    private static readonly HashSet<string> _shots = new();
+
+    /// <summary>
     /// The movie check (<c>--check-flash</c>): every movie the game opened and every one it drew,
     /// and whether each has a native counterpart; fails on one without.
     /// </summary>

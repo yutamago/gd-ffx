@@ -909,6 +909,7 @@ dependencies = [
  "ffx-text",
  "ffx-vbf",
  "flate2",
+ "jpeg-decoder",
  "serde_json",
  "swf 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]

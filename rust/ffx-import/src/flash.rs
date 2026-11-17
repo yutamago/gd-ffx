@@ -650,6 +650,62 @@ fn bitmap(b: &swf::DefineBitsLossless) -> Option<Image> {
     })
 }
 
+/// A JPEG bitmap (`DefineBits` with the movie's `JPEGTables`, `DefineBitsJPEG2`,
+/// `DefineBitsJPEG3` with its zlib alpha plane) as RGBA.
+fn jpeg(tables: Option<&[u8]>, data: &[u8], alpha: Option<&[u8]>) -> Option<Image> {
+    // an erroneous leading EOI+SOI (FF D9 FF D8) some writers put first
+    let data = if data.starts_with(&[0xff, 0xd9, 0xff, 0xd8]) {
+        &data[2..]
+    } else {
+        data
+    };
+    let mut bytes = Vec::with_capacity(data.len() + tables.map_or(0, <[u8]>::len));
+    match tables {
+        // the tables' stream (SOI .. EOI) then the image's without its SOI
+        Some(t) if t.len() > 4 => {
+            let t = t.strip_suffix(&[0xff, 0xd9][..]).unwrap_or(t);
+            bytes.extend_from_slice(t);
+            bytes.extend_from_slice(data.strip_prefix(&[0xff, 0xd8][..]).unwrap_or(data));
+        }
+        _ => bytes.extend_from_slice(data),
+    }
+    let mut d = jpeg_decoder::Decoder::new(&bytes[..]);
+    let px = d.decode().ok()?;
+    let info = d.info()?;
+    let (w, h) = (u32::from(info.width), u32::from(info.height));
+    let n = (w * h) as usize;
+    let mut rgba = Vec::with_capacity(n * 4);
+    match info.pixel_format {
+        jpeg_decoder::PixelFormat::RGB24 => {
+            for p in px.as_chunks::<3>().0.iter().take(n) {
+                rgba.extend_from_slice(&[p[0], p[1], p[2], 255]);
+            }
+        }
+        jpeg_decoder::PixelFormat::L8 => {
+            for &l in px.iter().take(n) {
+                rgba.extend_from_slice(&[l, l, l, 255]);
+            }
+        }
+        _ => return None,
+    }
+    if let Some(a) = alpha.filter(|a| !a.is_empty()) {
+        let mut z = Vec::new();
+        if flate2::read::ZlibDecoder::new(a).read_to_end(&mut z).is_ok() && z.len() >= n {
+            for (i, &al) in z.iter().take(n).enumerate() {
+                // the colour planes are premultiplied by the alpha
+                let p = &mut rgba[i * 4..i * 4 + 4];
+                let u = unpremultiply([p[0], p[1], p[2], al]);
+                p.copy_from_slice(&u);
+            }
+        }
+    }
+    (rgba.len() == n * 4).then_some(Image {
+        width: w,
+        height: h,
+        rgba,
+    })
+}
+
 /// SWF's lossless alpha bitmaps are premultiplied.
 fn unpremultiply(p: [u8; 4]) -> [u8; 4] {
     let a = p[3];
@@ -673,8 +729,25 @@ impl Movie {
         let stage = header.stage_size();
         let mut chars = HashMap::new();
         let mut classes = HashMap::new();
+        let mut tables: Option<&[u8]> = None;
         for t in &parsed.tags {
             match t {
+                swf::Tag::JpegTables(j) => tables = Some(j),
+                swf::Tag::DefineBits { id, jpeg_data } => {
+                    if let Some(img) = jpeg(tables, jpeg_data, None) {
+                        chars.insert(*id, Character::Bitmap(img));
+                    }
+                }
+                swf::Tag::DefineBitsJpeg2 { id, jpeg_data } => {
+                    if let Some(img) = jpeg(None, jpeg_data, None) {
+                        chars.insert(*id, Character::Bitmap(img));
+                    }
+                }
+                swf::Tag::DefineBitsJpeg3(j) => {
+                    if let Some(img) = jpeg(None, j.data, Some(j.alpha_data)) {
+                        chars.insert(j.id, Character::Bitmap(img));
+                    }
+                }
                 swf::Tag::DefineShape(s) => {
                     let mut fills: Vec<Fill> = s.styles.fill_styles.iter().map(fill_of).collect();
                     let mut lines: Vec<(f64, Fill)> = s

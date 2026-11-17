@@ -160,13 +160,9 @@ public partial class SaveLoadView : Control
     private void Band(Rect2 r)
     {
         // dark at the left, fading out to the right
-        const int steps = 24;
-        for (int i = 0; i < steps; i++)
-        {
-            float a = BandColour.A * (1f - i / (float)steps * 0.85f);
-            var part = new Rect2(r.Position.X + r.Size.X * i / steps, r.Position.Y, r.Size.X / steps + 1, r.Size.Y);
-            DrawRect(part, new Color(BandColour.R, BandColour.G, BandColour.B, a));
-        }
+        var c0 = BandColour;
+        var c1 = new Color(BandColour, BandColour.A * 0.15f);
+        DrawPolygon([r.Position, r.Position + new Vector2(r.Size.X, 0), r.End, r.Position + new Vector2(0, r.Size.Y)], [c0, c1, c1, c0]);
     }
 
     private void CursorAt(Vector2 tip)

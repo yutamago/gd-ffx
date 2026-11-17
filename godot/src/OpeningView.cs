@@ -143,6 +143,11 @@ public partial class OpeningView : Control
         }
         Visible = true;
         QueueRedraw();
+        // pictures (--shot-dir): the logo held, the notice shown
+        if (Frame == 60)
+            FlashScreens.Shot("opening-logo");
+        if (Frame == 200)
+            FlashScreens.Shot("opening-notice");
         var notice = Frame >= 156;
         _text.Visible = notice;
         _cover.Visible = notice;
