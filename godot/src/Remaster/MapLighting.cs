@@ -90,8 +90,11 @@ public partial class MapLighting : Resource
     [Export(PropertyHint.Range, "0,1,0.05")] public float KeyWarmth { get; set; } = 0.35f;
     [Export(PropertyHint.Range, "0,16,0.01")] public float KeyEnergy { get; set; } = 2.0f;
     [Export] public bool KeyShadows { get; set; } = true;
-    /// <summary>The sun's apparent size in degrees (soft shadows).</summary>
-    [Export(PropertyHint.Range, "0,10,0.1")] public float KeyAngularSize { get; set; } = 1.5f;
+    /// <summary>
+    /// The sun's apparent size in degrees: above 0, soft shadows by Godot's PCSS (costly: 0 by
+    /// default; the GPU check lost the D3D12 device on an Intel Arc with 1.5 and the other R3 costs).
+    /// </summary>
+    [Export(PropertyHint.Range, "0,10,0.1")] public float KeyAngularSize { get; set; }
 
     // ---- the ambient (the sky's fill) -------------------------------------------------------
 

@@ -354,7 +354,7 @@ reads it; a classic map never does.
 
 | Group | Fields | Default |
 |---|---|---|
-| Key light | `KeyMode` (Game: the game's direction, `Look.lights[0]` turned as the characters' shader turns it; Custom: `KeyDirection`; Off), `KeyColourMode` (Game: the game's colour kept by `KeyGameTint`, warmed by `KeyWarmth`; Custom: `KeyColour`), `KeyEnergy` (times the game's level against Besaid's daylight one), `KeyShadows`, `KeyAngularSize` | Game, Game, tint 0.2, warmth 0.35, 2.0, shadows, 1.5° |
+| Key light | `KeyMode` (Game: the game's direction, `Look.lights[0]` turned as the characters' shader turns it; Custom: `KeyDirection`; Off), `KeyColourMode` (Game: the game's colour kept by `KeyGameTint`, warmed by `KeyWarmth`; Custom: `KeyColour`), `KeyEnergy` (times the game's level against Besaid's daylight one), `KeyShadows`, `KeyAngularSize` | Game, Game, tint 0.2, warmth 0.35, 2.0, shadows, 0° (above 0: soft shadows by Godot's PCSS, costly) |
 | Ambient | `AmbientMode` (Game: the map's and characters' ambient, its hue kept by `AmbientGameTint`; Custom; Off), `AmbientColour`, `AmbientEnergy` (times the game's level), `AmbientSkyContribution`; `VertexLight` (the game's baked vertex light kept, 0..1), `BlendedParts` (Classic, Lit) | Game, tint 0, 0.65, 0; vertex light 1, blended classic |
 | Fog | `FogMode` (Game: the game's colour, near, far, curve and limit as Godot's depth fog; Custom; Off), `FogColour`, `FogDensity`, `FogBegin`, `FogEnd`, `FogCurve` | Game |
 | Volumetric fog | `VolumetricFog`, `VolumetricDensity`, `VolumetricAlbedo`, `VolumetricEmission`, `VolumetricAnisotropy`, `VolumetricLength` | off |
@@ -458,7 +458,7 @@ what a remastered map's lighting costs:
 | GI | the map's | VoxelGI only | none |
 | volumetric fog | the map's (128 x 96 froxels) | the map's (64 x 48) | off |
 | SSAO / SSIL / SSR | the map's | SSAO | none |
-| shadows | 4 splits, 4096, 3,000 units | 2 splits, 2048, 2,000 | 2 splits, 2048, 1,200 |
+| shadows | 4 splits, the project's atlas and filter, 3,000 units | 2 splits, 2048, 2,000 | 2 splits, 2048, 1,200 |
 
 The Deck preset sets low. Compatibility draws no GI, volumetric fog or
 screen-space effects whatever the quality; its lit shaders light the game's

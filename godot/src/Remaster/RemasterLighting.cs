@@ -259,11 +259,28 @@ public sealed partial class RemasterLighting : Node3D
         RenderingServer.GlobalShaderParameterSet(Variants.Name("ffx_linear_out"), 0f);
         RenderingServer.GlobalShaderParameterSet(Variants.Name("ffx_vertex_light"), 0.5f);
         RenderingServer.GlobalShaderParameterSet(Variants.Name("ffx_lit_gamma"), 0f);
-        // the project's shadow settings again (the quality changed them)
-        RenderingServer.DirectionalShadowAtlasSetSize(
-            ProjectSettings.GetSetting("rendering/lights_and_shadows/directional_shadow/size", 4096).AsInt32(), true);
-        RenderingServer.DirectionalSoftShadowFilterSetQuality((RenderingServer.ShadowQuality)
-            ProjectSettings.GetSetting("rendering/lights_and_shadows/directional_shadow/soft_shadow_filter_quality", 2).AsInt32());
+        // the project's shadow settings again (a lower quality changed them)
+        SetShadows(ProjectShadows);
+    }
+
+    /// <summary>The project's directional shadow atlas size and soft filter.</summary>
+    private static (int Size, RenderingServer.ShadowQuality Filter) ProjectShadows =>
+        (ProjectSettings.GetSetting("rendering/lights_and_shadows/directional_shadow/size", 4096).AsInt32(),
+         (RenderingServer.ShadowQuality)ProjectSettings.GetSetting("rendering/lights_and_shadows/directional_shadow/soft_shadow_filter_quality", 2).AsInt32());
+
+    private static (int Size, RenderingServer.ShadowQuality Filter)? _shadows;
+
+    /// <summary>Sets the directional shadow atlas and filter when they differ from what is set (a new atlas is a reallocation).</summary>
+    private static void SetShadows((int Size, RenderingServer.ShadowQuality Filter) want)
+    {
+        if (_shadows == want || _shadows == null && want == ProjectShadows)
+        {
+            _shadows = want;
+            return;
+        }
+        _shadows = want;
+        RenderingServer.DirectionalShadowAtlasSetSize(want.Size, true);
+        RenderingServer.DirectionalSoftShadowFilterSetQuality(want.Filter);
     }
 
     private static Color Raw(Vector3 c) => new(Mathf.Clamp(c.X, 0, 1), Mathf.Clamp(c.Y, 0, 1), Mathf.Clamp(c.Z, 0, 1));
@@ -472,7 +489,7 @@ public sealed partial class RemasterLighting : Node3D
         e.VolumetricFogAnisotropy = m.VolumetricAnisotropy;
         e.VolumetricFogLength = m.VolumetricLength;
         e.VolumetricFogSkyAffect = 0f;
-        if (fwd)
+        if (e.VolumetricFogEnabled)
             RenderingServer.EnvironmentSetVolumetricFogVolumeSize(q == "high" ? 128 : 64, q == "high" ? 96 : 48);
         var gi = EffectiveGi(m.GiMode);
         e.SdfgiEnabled = gi == GiMode.Sdfgi;
@@ -492,13 +509,8 @@ public sealed partial class RemasterLighting : Node3D
         sun.DirectionalShadowMaxDistance = q switch { "low" => 1200f, "medium" => 2000f, _ => 3000f };
         if (ExternalSun == null)
             _sun.LightAngularDistance = m.KeyAngularSize;
-        RenderingServer.DirectionalShadowAtlasSetSize(q == "high" ? 4096 : 2048, true);
-        RenderingServer.DirectionalSoftShadowFilterSetQuality(q switch
-        {
-            "low" => RenderingServer.ShadowQuality.SoftVeryLow,
-            "medium" => RenderingServer.ShadowQuality.SoftLow,
-            _ => RenderingServer.ShadowQuality.SoftMedium,
-        });
+        // the atlas and its filter: the project's at high; smaller below (set only when they change)
+        SetShadows(q == "high" ? ProjectShadows : (2048, q == "low" ? RenderingServer.ShadowQuality.SoftVeryLow : RenderingServer.ShadowQuality.SoftLow));
         if (_map != null)
             SetClassicSky(_map, !m.SkyHideClassic);
         RenderingServer.GlobalShaderParameterSet(Variants.Name("ffx_vertex_light"), Mathf.Clamp(m.VertexLight, 0, 1));
