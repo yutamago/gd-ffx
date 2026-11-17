@@ -165,34 +165,27 @@ public partial class BattleHudView : Control
             PoppedKills++;
     }
 
-    /// <summary>The game's frame table (<c>g_BtlNumberFrames</c>, 0x00c424b0 in FFX.exe).</summary>
-    public const long FramesAddress = 0x00c424b0;
-
     /// <summary>
-    /// The rows of the game's frame table, read once from the running game: by a character's age
-    /// less one less its place, an x and a y offset (signed, PS2 pixels; a loss bounces by them)
-    /// and an alpha (0x80 opaque), as <c>MsNumberDrawProcess</c> reads them. Without a game, rows
-    /// that stay put, opaque.
+    /// The rows of the game's frame table (<c>g_BtlNumberFrames</c>, API 13's
+    /// <c>Effects.number_frames</c>, listed while numbers are on screen), kept from the first
+    /// snapshot that lists them: by a character's age less one less its place, an x and a y
+    /// offset (signed, PS2 pixels; a loss bounces by them) and an alpha (0x80 opaque), as
+    /// <c>MsNumberDrawProcess</c> reads them. Until then, rows that stay put, opaque.
     /// </summary>
-    private (sbyte X, sbyte Y, byte Alpha)[]? _frames;
+    private (short X, short Y, byte Alpha)[]? _frames;
 
-    private (sbyte X, sbyte Y, byte Alpha) Frame(int row)
+    private void KeepFrames(GdFfx.Api.Snapshot s)
     {
-        if (_frames == null && GameHost.Instance?.Game is { } game)
-        {
-            var b = game.Peek(FramesAddress, 3 * FrameRows);
-            if (b.Length == 3 * FrameRows)
-            {
-                _frames = new (sbyte, sbyte, byte)[FrameRows];
-                for (int i = 0; i < FrameRows; i++)
-                    _frames[i] = ((sbyte)b[3 * i], (sbyte)b[3 * i + 1], b[3 * i + 2]);
-            }
-        }
-        return _frames != null && row >= 0 && row < FrameRows ? _frames[row] : ((sbyte)0, (sbyte)0, (byte)0x80);
+        if (_frames != null || s.Effects.NumberFrames.Count == 0)
+            return;
+        var rows = s.Effects.NumberFrames;
+        _frames = new (short, short, byte)[rows.Count];
+        for (int i = 0; i < rows.Count; i++)
+            _frames[i] = (rows[i].X, rows[i].Y, rows[i].Alpha);
     }
 
-    /// <summary>Rows of the frame table: a number's life (30) and a little more.</summary>
-    public const int FrameRows = 32;
+    private (short X, short Y, byte Alpha) Frame(int row) =>
+        _frames != null && row >= 0 && row < _frames.Length ? _frames[row] : ((short)0, (short)0, (byte)0x80);
 
     /// <summary>
     /// The game's own damage numbers (API 12's <c>Effects.numbers</c>): each pops once, the first
@@ -208,6 +201,7 @@ public partial class BattleHudView : Control
         if (s != null && s.World.Battle && s.Update != _lastUpdate)
         {
             _lastUpdate = s.Update;
+            KeepFrames(s);
             foreach (var p in _pops)
                 p.Seen = false;
             foreach (var n in s.Effects.Numbers)

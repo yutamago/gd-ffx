@@ -17,8 +17,7 @@ namespace GdFfx;
 /// (<c>freecamera.swf</c>) and time stop (<c>time_stop.swf</c>) get a badge with the movie's
 /// own icon while on: the game asks its icon panel for them (icons 8 and 9), which the original
 /// refuses (<c>IconPanel_showIcon</c> takes only 0..6), so these two are gd-ffx's; their state is
-/// read from the free camera (<c>0x00ccc830</c>: <c>+0</c> the capture, <c>+0x338</c> the time
-/// stop) through <see cref="FfxGame.Peek"/> until the state API carries it. gd-ffx's debugging
+/// API 13's <c>Snapshot.free_camera</c> (<c>free</c>, <c>time_stop</c>). gd-ffx's debugging
 /// speed (the options, <c>--speed=</c>) gets a badge too while it is not 1.
 /// </summary>
 public partial class BoosterView : Control
@@ -29,11 +28,6 @@ public partial class BoosterView : Control
     private double _toastAge = double.MaxValue;
     private readonly Dictionary<string, (PanelContainer Panel, Label Label)> _badge = new();
     private readonly Dictionary<string, ImageTexture?> _icons = new();
-    private double _cameraAt = -1;
-    private (bool Free, bool Stop) _camera;
-
-    /// <summary>The free camera's singleton (<c>FreeCamera</c>, 0x344 bytes).</summary>
-    public const long FreeCameraInstance = 0x00ccc830;
 
     /// <summary>Seconds a toast stays.</summary>
     public const double ToastTime = 2.5;
@@ -54,21 +48,6 @@ public partial class BoosterView : Control
         _toastText = Panels.Text("", 20, null, MessageView.UiFont);
         _toast.AddChild(_toastText);
         AddChild(_toast);
-    }
-
-    /// <summary>The free camera's capture and time stop, as <c>FreeCamera_handleInput</c> reads them (4 times a second).</summary>
-    private (bool Free, bool Stop) Camera(FfxGame game, double now)
-    {
-        if (now - _cameraAt < 0.25)
-            return _camera;
-        _cameraAt = now;
-        var p = game.Peek(FreeCameraInstance, 4);
-        uint cam = p.Length == 4 ? System.BitConverter.ToUInt32(p) : 0;
-        if (cam == 0)
-            return _camera = (false, false);
-        var capture = game.Peek(cam, 4);
-        var stop = game.Peek(cam + 0x338, 1);
-        return _camera = (capture.Length == 4 && System.BitConverter.ToUInt32(capture) != 0, stop.Length == 1 && stop[0] != 0);
     }
 
     /// <summary>A movie's icon (its first bitmap), cached.</summary>
@@ -112,9 +91,9 @@ public partial class BoosterView : Control
             Toasts.Add(text.Replace('\n', ' '));
         }
         string? iconOf(string key) => key switch { "freecamera" => "freecamera.swf", "timestop" => "time_stop.swf", _ => null };
-        if (host?.Game is { } g && s != null)
+        if (s != null)
         {
-            var (free, stop) = Camera(g, Time.GetTicksMsec() / 1000.0);
+            var (free, stop) = (s.FreeCamera.Free, s.FreeCamera.TimeStop);
             if (free)
                 want.Add(("freecamera", "Free camera", new Color(0.6f, 1f, 0.6f), false));
             if (stop)

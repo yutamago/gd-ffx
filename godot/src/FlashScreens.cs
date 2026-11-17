@@ -52,6 +52,13 @@ public static class FlashScreens
     /// <summary>The save and load list as the game set it up.</summary>
     public static readonly SaveLoadState SaveLoad = new();
 
+    /// <summary>
+    /// The last message the ESC menu's movie was asked to show (<c>escmenu.swf</c>'s
+    /// <c>showPopUpStd(text)</c>: <c>FFEscMenu_onParameterButtonClicked</c>'s refusal), null
+    /// before any.
+    /// </summary>
+    public static string? EscMessage { get; private set; }
+
     /// <summary>Autosave prompts the game opened so far (<c>chocobo.swf</c>).</summary>
     public static int AutosavePrompts { get; private set; }
 
@@ -67,9 +74,7 @@ public static class FlashScreens
     /// <summary>Takes the game's movie calls and, twice a second, its movies.</summary>
     public static void Poll(FfxGame game, double now)
     {
-        if (game.FlashCallsPending() > 0)
-            foreach (var c in game.FlashCalls())
-                Take(c);
+        TakeCalls(game);
         if (now - _moviesAt >= 0.5)
         {
             _moviesAt = now;
@@ -85,6 +90,14 @@ public static class FlashScreens
                     AutosavePrompts++;
             }
         }
+    }
+
+    /// <summary>Takes the game's movie calls made since the last time.</summary>
+    public static void TakeCalls(FfxGame game)
+    {
+        if (game.FlashCallsPending() > 0)
+            foreach (var c in game.FlashCalls())
+                Take(c);
     }
 
     private static void Take(FlashCall c)
@@ -103,6 +116,8 @@ public static class FlashScreens
         }
         else if (c.Movie.StartsWith("saveload"))
             SaveLoad.Apply(c);
+        else if (c.Movie == "escmenu.swf" && c.Function == "showPopUpStd")
+            EscMessage = c.Arg(0);
     }
 
     /// <summary>

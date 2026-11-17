@@ -940,8 +940,9 @@ the game gets from `ViewProjection2` (traced only as the main camera's).
   battler, colour, word and value, so a skipped snapshot loses nothing), over
   the battler's body, and follows the game's timing: its characters show
   lowest digit first, one an update (place `k` from age `k + 1`); a loss
-  bounces by the game's own frame table (`g_BtlNumberFrames`, read from the
-  running game with `FfxGame.Peek`, not kept in gd-ffx), a heal (green)
+  bounces by the game's own frame table (`g_BtlNumberFrames`, API 13's
+  `Effects.number_frames`, listed while numbers are on screen and kept from
+  the first snapshot that lists them; not kept in gd-ffx), a heal (green)
   rises by half its age, the Overkill word by its age, in PS2 pixels; the
   last 5 updates of its life (30) fade, and it leaves when the game drops
   it. The words: `0x3a` MP and `0x3d` Overkill from their callers; `0x3b`,
@@ -1185,7 +1186,8 @@ on Tidus's Cheer).
   operation is irreversible.@el@Do you want to use this function?", 0x2ca
   Yes, 0x2cb No) and sets its answer `FFEscMenu_onDebugFill_006fc970` at
   `g_FFEscMenu + 0x10c`; else the movie's `showPopUpStd("Function not
-  Available now!")` (English in every language, read from the game). The
+  Available now!")` (English in every language; `PauseView` shows the text
+  of that call, taken by the Flash wrapper: `FlashScreens.EscMessage`). The
   wrapper reports after each update whether that answer waits (`+0x10c`),
   the row, and, while the menu is open, the page's enable condition
   (`setEnableChangePara`, computed with the game's `getScenerioFlag` and
@@ -1361,11 +1363,12 @@ asked by nobody. The same function also plays the tips 0x2ed/0x2ee ("Free
 Camera On/Off") and 0x2f3/0x2f4 ("Time Stop On/Off"), which the tips box
 shows. gd-ffx shows the two icons as badges with the movies' own bitmaps
 while the free camera (`0x00ccc830`, `FreeCamera_FreeCamera` makes it on
-first use) has them on, read through `FfxGame.Peek` (a stopgap: the
-game-state API lacks them; it needs the singleton's `+0` capture counter,
-`u32`, and `+0x338` time stop, `u8`). What turns the free camera on in a
-retail build was not found (nothing writes `+0x338` in the ported code
-looked at); no check reaches it.
+first use) has them on: API 13's `Snapshot.free_camera` (`free`, the
+singleton's `+0` capture counter; `time_stop`, its `+0x338`;
+`pause_freeze`, `+0x33c`, which the pause sets). No key turns them on in
+the PC build: `Input_BuildPadMap` pushes their pad bits (0x40000,
+0x100000) with no settings word (ffx-rust's docs/state-api.md, API 13);
+no check reaches them.
 
 **The check** (`--check-flash`, any self-check; `tools/sweep-devsaves.sh`
 passes it): at the end the movies the game opened and showed are listed
@@ -1391,9 +1394,10 @@ else an inventory slot of `g_Equipment`); the game names it with
 record, chosen when the gear is made) and `+4` (its character), string
 `character` of that record in the kernel's `w_name.bin`, or `7 +
 character` (the hiragana form, blank in the Japanese table) with the
-config's hiragana bit (save `+0x3d0c` bit 3). The state API carries the
-ids only, so `FfxGame.gear_record` reads the record from the game's
-memory now (`rust/ffx-gd/src/state.rs`, `gear`), -1 for one not in use
+config's hiragana bit (save `+0x3d0c` bit 3). The state API gives each
+record (API 11's `BattleEnd.gear_spoils`; API 13's
+`PartyMember.weapon_gear` for the party's weapons): `FfxGame.GearRecord`
+packs its `w_name` record, character and kana bit, -1 for one not in use
 (the game's weapon page skips it), and `FfxGame.weapon_name` names it
 (`ffx-import`'s `weapon_name`; `ffx-import wname <lang> [kana]` lists the
 table). The Japanese table orders some records' names differently from
