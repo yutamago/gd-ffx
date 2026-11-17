@@ -251,6 +251,20 @@ public partial class GameHost : Node
         if (_battle is { } b && _devsave == 0 && View.Current is { World.PlayerControl: true, World.Battle: false } f2
             && f2.Update > 60)
         {
+            // --party=HEX (8 bytes, e.g. 01000405ff020306): the battle party first, as ffx-rust's
+            // cloth-probe --party does (a back-line character into the battle)
+            if (GameSettings.Arg("party") is { Length: 16 } hex)
+            {
+                try
+                {
+                    var party = System.Convert.FromHexString(hex);
+                    GD.Print(Game.SetBattleParty(party) ? $"ffx: battle party {hex}" : "ffx: --party not written");
+                }
+                catch (System.FormatException)
+                {
+                    GD.PrintErr("ffx: --party=HEX (8 bytes)");
+                }
+            }
             if (Game.RequestBattle(b.Field, b.Group, b.Formation))
                 _requests++;
             GD.Print($"ffx: battle {b.Field},{b.Group},{b.Formation} asked");

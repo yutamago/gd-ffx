@@ -128,10 +128,14 @@ public sealed class ClothView
         public required Mesh3D[] Meshes;
     }
 
-    /// <summary>A cloth mesh: its node, its cloth vertices in all, its cloth surfaces, the base set last.</summary>
+    /// <summary>
+    /// A cloth mesh: its node, its instance in the model (the import's <c>ffx_instance</c>; -1
+    /// unknown: any), its cloth vertices in all, its cloth surfaces, the base set last.
+    /// </summary>
     public sealed class Mesh3D
     {
         public required MeshInstance3D Node;
+        public required int Instance;
         public required int Vertices;
         public required ClothSurface[] Surfaces;
         public float Base = -1f;
@@ -139,7 +143,8 @@ public sealed class ClothView
 
     /// <summary>
     /// The cloth meshes of a character's model (null: none), on attaching it (main thread): their
-    /// bases back to -1 (a model kept from another character keeps the last one it had).
+    /// bases back to -1 (a model kept from another character keeps the last one it had). Skinned
+    /// models and rigid ones (a weapon's parts: w012's ribbon is its instance 1) alike.
     /// </summary>
     public static Model? Of(Node3D model)
     {
@@ -152,6 +157,7 @@ public sealed class ClothView
                 (list ??= new()).Add(new Mesh3D
                 {
                     Node = mi,
+                    Instance = MeshExtras.Of(m).Instance is { } inst ? (int)inst : -1,
                     Vertices = (int)m.GetMeta(Variants.Name(MetaVertices)).AsInt64(),
                     Surfaces = s,
                 });
@@ -215,10 +221,12 @@ public sealed class ClothView
             return Valid;
         }
 
-        public int Find(int actor, int model, int piece, int vertices)
+        /// <summary>The segment of <paramref name="actor"/>'s instance <paramref name="instance"/> (-1: any) drawn by a surface (model, piece, vertex count); -1 none.</summary>
+        public int Find(int actor, int instance, int model, int piece, int vertices)
         {
             for (int i = 0; i < Segs.Count; i++)
-                if (Segs[i] is var s && s.Actor == actor && s.Model == model && s.Piece == piece && s.Vertices == vertices)
+                if (Segs[i] is var s && s.Actor == actor && (instance < 0 || s.Instance == instance)
+                    && s.Model == model && s.Piece == piece && s.Vertices == vertices)
                     return i;
             return -1;
         }
@@ -303,10 +311,10 @@ public sealed class ClothView
     private int _next;
 
     /// <summary>What the last rebuild placed (for the checks and the overlay).</summary>
-    public readonly record struct Stats(int Characters, int Segments, int Vertices, int Weighted, int Moving, float MostMoved, int Unmatched)
+    public readonly record struct Stats(int Characters, int Segments, int Vertices, int Weighted, int Moving, float MostMoved, int Unmatched, int OnWeapons)
     {
         public override string ToString() =>
-            $"{Characters} character(s), {Segments} segment(s), {Vertices} vertices ({Weighted} simulated, {Moving} moving relative to their character, at most {MostMoved:F3} units an update), {Unmatched} segment(s) without a surface";
+            $"{Characters} character(s), {Segments} segment(s) ({OnWeapons} on weapons), {Vertices} vertices ({Weighted} simulated, {Moving} moving relative to their character, at most {MostMoved:F3} units an update), {Unmatched} segment(s) without a surface";
     }
 
     public Stats Shown { get; private set; }
@@ -316,16 +324,16 @@ public sealed class ClothView
     public int Fetched { get; private set; }
 
     /// <summary>Segments of a shown character's frame matched by no surface of its model, once each (logged).</summary>
-    private readonly HashSet<(string, int, int, int)> _unmatchedLogged = new();
+    private readonly HashSet<(string, int, int, int, int)> _unmatchedLogged = new();
 
-    private int _chars, _segs, _verts, _weighted, _moving, _unmatched;
+    private int _chars, _segs, _verts, _weighted, _moving, _unmatched, _weapons;
     private float _most;
 
     /// <summary>Starts a rebuild (before the characters' <see cref="Place"/>).</summary>
     public void Begin()
     {
         _next = 0;
-        _chars = _segs = _verts = _weighted = _moving = _unmatched = 0;
+        _chars = _segs = _verts = _weighted = _moving = _unmatched = _weapons = 0;
         _most = 0;
     }
 
@@ -349,9 +357,10 @@ public sealed class ClothView
     /// rebuild: each mesh with a surface in the current frame gets its range of texels (the previous
     /// frame's positions, or the current ones again where it has none; weight 0 where no segment
     /// matched) and its base; the others -1 (skinned only). <paramref name="root"/>,
-    /// <paramref name="prevRoot"/>: the character's root in the two snapshots (the movement check).
+    /// <paramref name="prevRoot"/>: the character's root in the two snapshots (the movement check);
+    /// <paramref name="weapon"/>: a weapon (kind 4, counted apart).
     /// </summary>
-    public void Place(ushort slot, string name, Model model, Transform3D root, Transform3D? prevRoot)
+    public void Place(ushort slot, string name, Model model, Transform3D root, Transform3D? prevRoot, bool weapon = false)
     {
         // the current update's frame not there yet: the previous one alone (Refresh)
         var cur = _cur ?? _prev;
@@ -366,7 +375,7 @@ public sealed class ClothView
                 bool placed = false;
                 foreach (var s in m.Surfaces)
                 {
-                    int ci = cur.Find(slot, s.Model, s.Piece, s.Count);
+                    int ci = cur.Find(slot, m.Instance, s.Model, s.Piece, s.Count);
                     if (ci < 0)
                         continue;
                     if (!placed)
@@ -376,9 +385,11 @@ public sealed class ClothView
                         Texels.Slice(8 * start, 8 * m.Vertices).Clear();
                         _next = start + m.Vertices;
                     }
-                    int pi = prevFrame?.Find(slot, s.Model, s.Piece, s.Count) ?? -1;
+                    int pi = prevFrame?.Find(slot, m.Instance, s.Model, s.Piece, s.Count) ?? -1;
                     Write(cur, cur.Segs[ci], pi >= 0 ? prevFrame : null, pi >= 0 ? prevFrame!.Segs[pi] : default, start + s.First, root, prevRoot);
                     _segs++;
+                    if (weapon)
+                        _weapons++;
                 }
                 if (placed)
                 {
@@ -397,7 +408,7 @@ public sealed class ClothView
         // the frame's segments of this character that found no surface (logged once a kind)
         if (cur != null)
             foreach (var s in cur.Segs)
-                if (s.Actor == slot && !Matches(model, s) && _unmatchedLogged.Add((name, s.Model, s.Piece, s.Vertices)))
+                if (s.Actor == slot && !Matches(model, s) && _unmatchedLogged.Add((name, s.Instance, s.Model, s.Piece, s.Vertices)))
                 {
                     _unmatched++;
                     GD.PrintErr($"ffx cloth: {name}#{slot}: segment of PS2 model {s.Model} piece {s.Piece} ({s.Vertices} vertices, instance {s.Instance}) matches no surface");
@@ -407,9 +418,10 @@ public sealed class ClothView
     private static bool Matches(Model model, Seg s)
     {
         foreach (var m in model.Meshes)
-            foreach (var c in m.Surfaces)
-                if (c.Model == s.Model && c.Piece == s.Piece && c.Count == s.Vertices)
-                    return true;
+            if (m.Instance < 0 || m.Instance == s.Instance)
+                foreach (var c in m.Surfaces)
+                    if (c.Model == s.Model && c.Piece == s.Piece && c.Count == s.Vertices)
+                        return true;
         return false;
     }
 
@@ -457,7 +469,7 @@ public sealed class ClothView
     /// <summary>Ends a rebuild: the texels go to the texture (made, or made again larger, here).</summary>
     public void Upload()
     {
-        Shown = new Stats(_chars, _segs, _verts, _weighted, _moving, _most, _unmatched);
+        Shown = new Stats(_chars, _segs, _verts, _weighted, _moving, _most, _unmatched, _weapons);
         if (_moving > 0)
             MovingUpdates++;
         if (_next == 0 || _rows == 0)

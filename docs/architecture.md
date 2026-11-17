@@ -409,7 +409,11 @@ walking up 25 s (`--walk=up:25`) 12 of 19; in neither, nor in the walk off
 the beach (save 7), is a character culled or skipped while the old test
 showed it. A playtester's upside-down character inside a cliff there is
 not explained by this yet. `--walk=KEYS:SECONDS` makes the map check walk
-before its picture (`FFX_SHOT_ARGS="--walk=up:25" tools/compare-shot.sh`).
+before its picture (`FFX_SHOT_ARGS="--walk=up:25" tools/compare-shot.sh`);
+legs joined by commas are walked in turn (`--walk=up:4,left+up:3`). The
+walk's clock runs only on a shown map 3 s after it came: a map change
+releases the keys until the next map has settled, then the walk goes on
+with what is left (the log: `walking KEYS for S s (at T s, LEVEL)`).
 
 ## Cloth (G5)
 
@@ -446,9 +450,21 @@ weights[k])`; so does gd-ffx.
   by rows, never shrunk): two texels a vertex number, the previous and the
   current update's position and weight. A mesh's place is its instance's
   `ffx_cloth_base` (an instance uniform; -1 when the frame has none of its
-  segments: skinned only). A segment is matched by (actor, model, piece,
-  vertex count); a segment of a shown character that matches no surface is
-  logged once. A vertex the previous frame lacks gets the current one twice.
+  segments: skinned only). A segment is matched by (actor, instance, model,
+  piece, vertex count), the instance being the capture's place in the
+  character's instance list and the mesh's `extras.ffx_instance` (the
+  import's mesh per instance); a segment of a shown character that matches
+  no surface is logged once.
+- **Weapons.** A weapon is a character of its own (kind 4, `w...`, bound to
+  its holder by `Actor.parent`), with a cloth record of its own: Yuna's
+  staff `w012` has two instances, the shaft (0) and the bead strings (1,
+  model 1 piece 0, 168 vertices, 156 simulated), and the capture reports
+  them as its own actor's instance 1. Weapons are rigid parts without a
+  skin (`RigidParts`); their cloth meshes are taken like a skinned
+  model's (`ClothView.Of` on every posed model), and the shader's
+  "skinned" position is then the part's own (`MODEL_MATRIX`, which the
+  game's element places). Of the cached weapons, `w001`, `w011`, `w012`
+  and `w101` have cloth. A vertex the previous frame lacks gets the current one twice.
   The frame of update `n` is captured in the render after update `n`; were it
   not there yet when snapshot `n` shows, the previous update's cloth is drawn
   at alpha 1 until it comes (where the bones are at the interval's start).
@@ -468,8 +484,12 @@ Tidus: 5 segments, 198 vertices, 104 simulated, all 104 moving relative to him
 each update, at most 0.014 units an update standing still (ffx-rust's probe
 found the same); save 29 (Luca's stadium), `c105`: 2 segments, 181 vertices,
 117 simulated, up to 0.62 units an update; save 12 in battle 34 (its own party:
-Tidus, Yuna, Lulu): 38 segments, 1,991 vertices, 1,433 simulated, all moving,
-no segment without a surface. The sweep of the 110 developer saves
+Tidus, Yuna, Lulu): 39 segments (1 on a weapon, Yuna's staff `w012`), 2,159
+vertices, 1,589 simulated, all moving, no segment without a surface (before
+the weapons' cloth: 38, 1,991, 1,433, the staff's beads stiff); with
+ffx-rust's probe's party (`--party=01000405ff020306`: Yuna, Tidus, Wakka) 4
+characters, 27 segments (1 on a weapon), 1,840 vertices, 1,200 simulated:
+ffx-rust's `cloth-probe` numbers. The sweep of the 110 developer saves
 (`tools/sweep-devsaves.sh`): all pass, every save shows characters with
 cloth (1 to 9 of them), all moving, no segment without a surface. Offscreen (Compatibility, `FFX_CLOTH_DEBUG=1`):
 Tidus's hood, jacket hem and shorts green (on the skin, as anchors and short
@@ -480,14 +500,17 @@ detached. The cost: 0.008 ms a frame on average in that battle (p99 0.45 ms;
 the texture rebuilt 30 times a second), nothing allocated a frame (the bench's
 `Cloth` section; docs/running.md, "Benchmark").
 
+Offscreen, the staff close up (`--look-at-actor=w012 --shots=6`, save 12,
+battle 34): its two bead strings hang from the collar under its head and
+swing from picture to picture, joined to it; tinted, the right string green
+(near the stored pose), the left one red (hanging 2 units and more away from
+it).
+
 Under Forward+ (Vulkan on Mesa's lavapipe, offscreen under Xvfb:
 `VK_ICD_FILENAMES=.../lvp_icd.json`, `--rendering-driver vulkan`) the tinted
 picture of Tidus is the same as under Compatibility.
 
-Not yet: the cloth's normals (lit as skinned); D3D12 and a real GPU not run; a cloth instance of another
-model than the character's own (ffx-rust saw Wakka's `w012` as instance 1 of
-his record, with ffx-rust's `--party`, which gd-ffx has not) would be logged
-as matching no surface and stay skinned.
+Not yet: the cloth's normals (lit as skinned); D3D12 and a real GPU not run.
 
 ## Map transitions (G5)
 

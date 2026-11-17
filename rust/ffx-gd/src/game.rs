@@ -968,6 +968,25 @@ impl FfxGame {
         true
     }
 
+    /// Writes the battle party (`g_SaveInParty`, `0x011307e8`, the 8 bytes
+    /// `MsGetSaveInParty` reads: a party index each, 0xff an empty place)
+    /// before a battle is asked for, as ffx-rust's `cloth-probe --party`
+    /// does: for the checks (`--party=HEX` with `--battle`), to bring a
+    /// character the save keeps in the back line into the battle. False when
+    /// the game has not booted or `party` is not 8 bytes.
+    #[func]
+    fn set_battle_party(&mut self, party: PackedByteArray) -> bool {
+        const SAVE_IN_PARTY: u32 = 0x0113_07e8;
+        let Some(shared) = self.run.as_ref().and_then(Run::shared) else {
+            return false;
+        };
+        if party.len() != 8 {
+            return false;
+        }
+        shared.arena().write_bytes(SAVE_IN_PARTY, party.as_slice());
+        true
+    }
+
     /// Asks the game to load developer save `n` (1..=110, from the
     /// player's archive) at its next frame boundary. False when the game
     /// has not booted. `request_results` reports the outcome.
