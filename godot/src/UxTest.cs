@@ -16,7 +16,13 @@ namespace GdFfx;
 /// <item>the ESC menu: Esc opens the game's PC menu (<c>Menus.esc_menu</c>) and the native
 /// ESC menu shows its entries; System setting opens the options overlay, which changes the
 /// frame cap (applied and saved), the glow and the game's speed (x2: the updates come about
-/// twice as often, which F9's FPS overlay shows); Esc closes it, Esc again resumes the game;</item>
+/// twice as often, which F9's FPS overlay shows); Esc closes it; under the menu play halts (the
+/// event clock and the characters' motions stand still) and the view's shader clock is held, as
+/// the original's picture stands still;</item>
+/// <item>Change parameters: the entry is enabled as the game's page enables it; its page shows
+/// the game's three rows; "MAX gil"'s Get brings the game's confirmation, No leaves the gil, Yes
+/// gives 999,999,999 (the game's <c>MsDebugFullGill</c>, through its own callbacks); Esc twice
+/// resumes the game;</item>
 /// <item>the boosters: F3 steps the encounter mode (the badge and the game's tip shown), F1
 /// the speed-up, each pressed back to the start;</item>
 /// <item>the pause: Start (B) where the game pauses shows the pause screen (reported, not
@@ -46,7 +52,7 @@ public sealed class UxTest : ITest
     private enum Phase
     {
         Boot, Settle, ChoiceOpen, ChoiceDown, ChoiceUp, ChoiceDown2, ChoicePick, EscOpen, EscMenu, Options, OptionsClosed,
-        Resumed, Speed, F3, F3Back, F1, F1Back, Pause, Unpause, Done,
+        ParamsOpen, ParamsConfirm, ParamsNo, ParamsConfirm2, ParamsYes, ParamsBack, Resumed, Speed, F3, F3Back, F1, F1Back, Pause, Unpause, Done,
     }
 
     private Phase _phase = Phase.Boot;
@@ -59,6 +65,8 @@ public sealed class UxTest : ITest
     private double _speedAt;
     private uint _escUpdate;
     private double _escTime;
+    private (uint EventFrame, uint PlayTime, float Motions, float GlobalTime, float ViewTime) _escHeld;
+    private uint _gilBefore;
     private double _x1At = -1, _x1Rate;
     private uint _x1Update;
 
@@ -221,6 +229,7 @@ public sealed class UxTest : ITest
                     Ok(GameHost.Instance?.Captured == true, "the ESC menu has the input (the game gets none)");
                     _escUpdate = s.Update;
                     _escTime = s.GameTime;
+                    _escHeld = Held(s, view);
                     ShotSoon("esc-menu");
                     Next(Phase.EscMenu);
                 }
@@ -231,7 +240,12 @@ public sealed class UxTest : ITest
                 if (!_menuKeys)
                 {
                     _menuKeys = true;
-                    _notes.Add($"{s.Update - _escUpdate} snapshot(s) in the 1 s under the game's ESC menu (game time {s.GameTime - _escTime:F2} s)");
+                    _notes.Add($"{s.Update - _escUpdate} snapshot(s) in the 1 s under the game's ESC menu (game time {s.GameTime - _escTime:F2} s: the game's clock, which the original's runs on too)");
+                    var held = Held(s, view);
+                    // the play time and GlobalTime are the game's wall-clock counters (Atel_PlayTimeUpdate
+                    // counts graphicGetTime): they run on as in the original, whose picture stands still
+                    Ok(held.EventFrame == _escHeld.EventFrame && held.Motions == _escHeld.Motions && held.ViewTime == _escHeld.ViewTime,
+                        $"play halts under the ESC menu: event frame {_escHeld.EventFrame} -> {held.EventFrame}, motion frames {_escHeld.Motions:F2} -> {held.Motions:F2}, the view's shader clock held {_escHeld.ViewTime:F3} -> {held.ViewTime:F3} (the game's GlobalTime {_escHeld.GlobalTime:F3} -> {held.GlobalTime:F3}, play time {_escHeld.PlayTime} -> {held.PlayTime} s: its wall-clock counters, as the original's)");
                     Press(Key.Down);
                     _keys.Add((Key.Enter, _t + 0.4, true));
                     _keys.Add((Key.Enter, _t + 0.55, false));
@@ -262,15 +276,92 @@ public sealed class UxTest : ITest
                 Select(p, "speed", System.Array.IndexOf(UserSettings.Speeds, 2.0));
                 Ok(System.Math.Abs(game.Speed - 2) < 1e-9, $"the game's speed set to x2 (the game's clock: x{game.Speed})");
                 Select(p, "fps", 0);
+                Ok(p.Focused == "preset", $"the options open with the focus on the first control, its caption lit ({p.Focused})");
+                // the keyboard (or a pad's D-pad: the same ui_down action) moves the focus
+                Press(Key.Down);
                 _phaseT = 1.0;
                 break;
             }
-            case Phase.Options when _phaseT > 1.5:
+            case Phase.Options when _phaseT > 1.5 && !_focusShot:
+            {
+                var p = ov.Panel;
+                Ok(p.Focused == "window", $"Down moves the focus to the next control, its caption lit ({p.Focused})");
+                ((Control)p.Controls["fps_overlay"]).GrabFocus();
+                Ok(p.Focused == "fps_overlay", "an unchecked box with the focus: framed in gold, its caption lit");
+                _focusShot = true;
+                ShotSoon("options-focus");
+                break;
+            }
+            case Phase.Options when _phaseT > 2.2:
                 Press(Key.Escape);
                 Next(Phase.OptionsClosed);
                 break;
             case Phase.OptionsClosed when _phaseT > 0.6:
                 Ok(!ov.IsOpen && pv.MenuOpen && pv.PageName == "Home", $"Esc closes the options, back on the ESC menu ({pv.PageName})");
+                Ok(pv.Esc is { Seen: true, Open: true, Parameters: true }, $"the game's page enables Change parameters here ({pv.Esc})");
+                // from System setting (row 1) down to Change parameters (row 3)
+                Press(Key.Down);
+                _keys.Add((Key.Down, _t + 0.3, true));
+                _keys.Add((Key.Down, _t + 0.45, false));
+                _keys.Add((Key.Enter, _t + 0.7, true));
+                _keys.Add((Key.Enter, _t + 0.85, false));
+                _gilBefore = s.Save.Gil;
+                Next(Phase.ParamsOpen);
+                break;
+            case Phase.ParamsOpen when _phaseT > 1.2:
+                Ok(pv.PageName == "Parameters" && pv.Shown.Count == 3 && pv.Shown[0].StartsWith("▶ "),
+                    $"Change parameters opens its page: {pv.Title} [{string.Join(" | ", pv.Shown)}]");
+                ShotSoon("parameters");
+                // MAX gil (row 2), Get
+                Press(Key.Down);
+                _keys.Add((Key.Down, _t + 0.3, true));
+                _keys.Add((Key.Down, _t + 0.45, false));
+                _keys.Add((Key.Enter, _t + 0.7, true));
+                _keys.Add((Key.Enter, _t + 0.85, false));
+                Next(Phase.ParamsConfirm);
+                break;
+            case Phase.ParamsConfirm:
+                if (pv.PageName == "Confirm" && _phaseT > 1.0)
+                {
+                    Ok(pv.Esc.PopUp && pv.Esc.Row == 2 && pv.Shown.Count == 2 && pv.Shown[1].StartsWith("▶ "),
+                        $"MAX gil's Get: the game set up its confirmation (row {pv.Esc.Row}, pop-up {pv.Esc.PopUp}): [{string.Join(" | ", pv.Shown)}], the cursor on No");
+                    ShotSoon("parameters-confirm");
+                    _keys.Add((Key.Enter, _t + 0.6, true));
+                    _keys.Add((Key.Enter, _t + 0.75, false));
+                    Next(Phase.ParamsNo);
+                }
+                else if (_phaseT > 5)
+                    return Finish(false, $"no confirmation for MAX gil (page {pv.PageName}, note \"{pv.Note}\", {pv.Esc})");
+                break;
+            case Phase.ParamsNo when _phaseT > 1.6:
+                Ok(pv.PageName == "Parameters" && !pv.Esc.PopUp && s.Save.Gil == _gilBefore,
+                    $"No: back on the page, the game's pop-up answered, the gil unchanged ({_gilBefore} -> {s.Save.Gil})");
+                Press(Key.Enter);
+                Next(Phase.ParamsConfirm2);
+                break;
+            case Phase.ParamsConfirm2:
+                if (pv.PageName == "Confirm" && _phaseT > 0.8)
+                {
+                    Press(Key.Up);
+                    _keys.Add((Key.Enter, _t + 0.4, true));
+                    _keys.Add((Key.Enter, _t + 0.55, false));
+                    Next(Phase.ParamsYes);
+                }
+                else if (_phaseT > 5)
+                    return Finish(false, $"no second confirmation (page {pv.PageName}, note \"{pv.Note}\")");
+                break;
+            case Phase.ParamsYes:
+                if (s.Save.Gil == 999_999_999 && pv.PageName == "Parameters" && _phaseT > 0.8)
+                {
+                    Ok(true, $"Yes: the game's MsDebugFullGill ran: gil {_gilBefore} -> {s.Save.Gil}");
+                    Press(Key.Escape);
+                    Next(Phase.ParamsBack);
+                }
+                else if (_phaseT > 5)
+                    return Finish(false, $"Yes did not give the gil (gil {s.Save.Gil}, page {pv.PageName}, note \"{pv.Note}\", {pv.Esc})");
+                break;
+            case Phase.ParamsBack when _phaseT > 0.6:
+                Ok(pv.PageName == "Home" && pv.Shown[3].StartsWith("▶ "), $"Esc: back on the home page at Change parameters [{string.Join(" | ", pv.Shown)}]");
                 Press(Key.Escape);
                 Next(Phase.Resumed);
                 break;
@@ -376,7 +467,11 @@ public sealed class UxTest : ITest
         return null;
     }
 
-    private bool _picked, _menuKeys;
+    private bool _picked, _menuKeys, _focusShot;
+
+    /// <summary>What moves while the game plays: the event clock, the play time, the characters' motion frames, the game's and the view's shader clock.</summary>
+    private static (uint EventFrame, uint PlayTime, float Motions, float GlobalTime, float ViewTime) Held(Snapshot s, StateView3D view) =>
+        (s.World.EventFrame, s.Save.PlayTime, s.Actors.Sum(a => a.MotionFrame), s.Look.GlobalTime, view.GlobalTime);
 
     /// <summary>The marked row of a choice line (<see cref="MessageView.Choices"/>), -1 none.</summary>
     private static int Marked(string line)
