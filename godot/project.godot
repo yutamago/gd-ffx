@@ -30,11 +30,14 @@ GameHost="*res://src/GameHost.cs"
 window/size/viewport_width=1280
 window/size/viewport_height=720
 window/stretch/mode="canvas_items"
-window/stretch/aspect="keep"
 
 [dotnet]
 
 project/assembly_name="gd-ffx"
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/ffx_remaster/plugin.cfg")
 
 [ffx]
 

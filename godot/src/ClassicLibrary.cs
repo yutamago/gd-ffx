@@ -156,12 +156,18 @@ public sealed class ClassicLibrary
     {
         var doc = new GltfDocument();
         var state = new GltfState();
+        // in the editor (the remaster plugin) the images kept in memory: its default writes them
+        // beside the .glb, into the classic cache, and imports them
+        if (Engine.IsEditorHint())
+            state.HandleBinaryImageMode = GltfState.HandleBinaryImageModeEnum.EmbedAsUncompressed;
         if (doc.AppendFromFile(path, state, ForceDisableMeshCompression) != Error.Ok)
         {
             GD.PrintErr($"ffx: cannot load {path}");
             return null;
         }
         var scene = doc.GenerateScene(state) as Node3D;
+        if (scene != null && Engine.IsEditorHint())
+            EditorMeshes(scene);
         // the import's extras read once from the JSON (GltfExtras: no Godot variant a value)
         if (scene != null && GltfExtras.Read(ProjectSettings.GlobalizePath(path)) is { } extras)
         {
@@ -173,6 +179,32 @@ public sealed class ClassicLibrary
             ClothView.Prepare(state, extras, scene);
         }
         return scene;
+    }
+
+    /// <summary>
+    /// In the editor (the remaster plugin) Godot's glTF loader leaves each mesh an
+    /// <see cref="ImporterMeshInstance3D"/> (its scene importer turns them into mesh instances
+    /// later): they become the <see cref="MeshInstance3D"/>s the game gets, same name, place and children.
+    /// </summary>
+    private static void EditorMeshes(Node n)
+    {
+        for (int i = 0, k = n.GetChildCount(); i < k; i++)
+            EditorMeshes(n.GetChild(i));
+        if (n is not ImporterMeshInstance3D imi)
+            return;
+        var mi = new MeshInstance3D
+        {
+            Name = imi.Name,
+            Transform = imi.Transform,
+            Visible = imi.Visible,
+            Mesh = imi.Mesh?.GetMesh(),
+            Skin = imi.Skin,
+            Skeleton = imi.SkeletonPath,
+            Layers = imi.LayerMask,
+            CastShadow = imi.CastShadow,
+        };
+        imi.ReplaceBy(mi, true);
+        imi.Free();
     }
 
     /// <summary>

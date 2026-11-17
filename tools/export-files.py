@@ -16,7 +16,8 @@ package (Unicorn, behind dev-unicorn) and --allow-gpl is not given.
 
 `check` fails (exit 1) when the export in DIR (PLATFORM linux or windows)
 misses one of its files (the program, the .NET data folder, the extension,
-the licences), holds game files by name or imported classic content, or
+the licences), holds game files by name or imported classic content, holds
+the remaster editor (its addon, its map edit scenes, its C# code), or
 holds a path or name of this machine (the home folder; the Linux user name
 and the Windows one, %USERNAME% from cmd.exe on WSL, as whole words; any
 /home/<name>/, /mnt/c/Users/<name>/ or \Users\<name>\ path: in ASCII or
@@ -45,6 +46,10 @@ GAME = re.compile(r"(?i)(\.vbf$|^ffx(-2)?\.exe$|^magic_\d+\.dll$|^fmod|^iggy|^st
 # classic content imported from the player's copy (user://classic; a stale
 # res://classic/ is excluded by export_presets.cfg)
 CLASSIC = re.compile(rb"classic/[\x21-\x7e]{1,200}\.(glb|scn|res|png|ctex)")
+# the remaster editor (godot/addons/ffx_remaster, its map edit scenes): editor
+# only, excluded by export_presets.cfg and compiled only with TOOLS (the
+# project settings still name its plugin.cfg, which the game ignores)
+EDITOR = re.compile(rb"addons/ffx_remaster/\w+\.(?:cs|uid|tscn)\b|GdFfx\.RemasterEditor|remaster/edit/[\x21-\x7e]{1,80}\.tscn")
 # strings Unicorn's C code leaves in a library that links it
 UNICORN_MARKS = (b"UC_IGNORE_REG_BREAK", b"unicorn-engine")
 EXPECTED = {
@@ -269,6 +274,8 @@ def check(root, platform, dev):
                 at = m.group().replace(b"\x00", b"")[:60].decode(errors="replace")
                 problems.append(f"{what} in {rel} at {m.start():#x}: {at!r}")
                 break
+        if f.suffix != ".so" and EDITOR.search(data):
+            problems.append(f"the remaster editor in {rel}: {EDITOR.search(data).group().decode(errors='replace')}")
         if f.suffix not in (".dll", ".so") and f.name.startswith("gd-ffx") and CLASSIC.search(data):
             problems.append(f"imported classic content in {rel}: {CLASSIC.search(data).group().decode()}")
     lib = root / LIBRARY[platform]

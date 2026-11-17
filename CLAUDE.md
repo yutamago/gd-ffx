@@ -3,7 +3,9 @@
 Godot 4 (.NET/C#) frontend for ffx-rust. Plan: ffx-rust's `docs/godot-plan.md`;
 here: `docs/architecture.md`, `docs/building.md`, `docs/running.md`,
 `docs/exporting.md`, `docs/launcher.md` (the main scene; skipped with
-`--game-dir`, `FFX_GAME_DIR`, `--devsave`, `--selftest*`, `--no-launcher`).
+`--game-dir`, `FFX_GAME_DIR`, `--devsave`, `--selftest*`, `--no-launcher`),
+`docs/remaster-plan.md`, `docs/remaster-editor.md` (the editor plugin,
+`godot/addons/ffx_remaster`).
 
 ## Rules
 
@@ -53,6 +55,7 @@ FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/bench.sh [besaid besaid-walk lchb bat
 # any check: --check-flash (every Flash movie the game opened/showed has a native screen); --flash-log
 FFX_GAME_DIR=... tools/ux-shots.sh OUT_DIR                 # G5: offscreen pictures of the native screens (Xvfb)
 FFX_GAME_DIR=... FFX_SHOT_TEST="--selftest-overrides --selftest-timeout=90 [--no-overrides]" tools/compare-shot.sh - OUT_DIR  # R1: the overrides' after (before) picture
+FFX_GAME_DIR=... tools/remaster-editor-check.sh [OUT_DIR]   # R1: the editor plugin headless on Besaid beach (open, move, hide, remove, replace, add, undo, save, reopen, status), then the game on save 7 with what it saved, then R1a's example round trip (FFX_EDITOR_SHOT=1: under Xvfb, pictures); rm OUT_DIR after
 (cd godot && godot --headless --path . -- --selftest-saves --no-game)  # G4: the save list reader (no game)
 (cd godot && godot --headless --path . -- --selftest-mods --no-game)   # G6: mod packs, load order, registry, overrides layered over packs (no game)
 (cd godot && godot --headless --path . -- --selftest-launcher --no-game)   # G6: the launcher (no game; fake folders in /tmp)

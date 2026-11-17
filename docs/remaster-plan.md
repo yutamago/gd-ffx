@@ -94,24 +94,49 @@ R1a, the foundation without the editor, is done:
   the map; the catalogue entry's derived and hand-set status. Checks:
   `--selftest-overrides --devsave=7`, the layering in `--selftest-mods`.
 
-Open for R1b, the editor plugin (`godot/addons/ffx_remaster`):
+R1b, the editor plugin (`godot/addons/ffx_remaster`; docs/remaster-editor.md),
+is done:
 
-- the dock: the map browser over `MapCatalogue` (search, areas, status,
-  thumbnails; the catalogue needs the archive open in the editor, so the
-  plugin starts `ffx-gd`'s classic importer there);
-- "open": an editable scene of the classic map (imported, scaled by 10,
-  every part a node named and tagged by its ID, a segment as its own node
-  so it can be picked), the current overrides applied and shown as edits;
-- edits by Godot's gizmos and inspector turned into `PartOverride`s (a
-  move into an offset relative to the file's placement, a delete into
-  `Remove`, a hidden node into `Hidden`, a dropped scene onto a part into
-  `Replace`, a new node into `additions.tscn` with its anchor), one undo
-  step each; save writes `overrides.tres` and `additions.tscn`; the status
-  and notes in the inspector;
+- **The archive in the editor**: the extension's classic functions without
+  booting the game (`FfxGame` is a tool class), the folder from the editor
+  setting `ffx_remaster/game_dir` or the game's order, the game's classic
+  cache.
+- **The map browser dock**: the catalogue by area, search (names in every
+  language, level, event, map number), names in a chosen language, each
+  map's effective status and marks (overrides, additions, remade, PBR),
+  only the maps the project changes; status, render path and notes per map
+  (one undo step, written into its overrides).
+- **Open a map**: an edit scene (`res://remaster/edit/<level>.tscn`, the root
+  and the level only, not in git, not exported) that builds the classic
+  import in render space, every part a node tagged by its ID, every
+  instance's segments as nodes of their own, the classic materials, the
+  project's overrides and additions applied; the dock's parts list with
+  marks (changed only); the part's inspector section (ID, kind, source,
+  textures, its edits, revert, replace, remove).
+- **Editing**: Godot's gizmos, inspector, eye and Delete, the plugin's
+  remove, revert, replace, notes and add (primitives and lights at a part,
+  or any node dropped under a part or the map), one undo step each; save
+  (the dock or Ctrl+S) diffs the scene against the classic placement into
+  `overrides.tres` and `additions.tscn`, text in a stable order (a save
+  without an edit changes no byte), never classic content.
+- **Play from the editor**: the project run at a developer save on the map
+  (`classic_dev_saves`; else one in its area: the game has no jump to a map).
+- **Checks**: `tools/remaster-editor-check.sh`: the editor headless (or under
+  Xvfb with pictures) driving the plugin on Besaid beach (catalogue, open,
+  move, hide, remove, replace, add, undo/redo, save, reopen, status, play
+  plan), the game on developer save 7 applying what the editor saved
+  (`--selftest-saved-overrides`: each edit where the editor showed it), and a
+  round trip of R1a's hand-written example.
+
+Open after R1b:
+
+- the packs' layers shown in the editor (it edits the project's layer);
+- thumbnails in the browser (rendered offscreen, cached in `user://`);
+- opening 2D-layer maps and remade maps' own scenes;
 - a project index (`res://remaster/project.tres`) if per-map files are not
   enough (statuses without overrides, thumbnails);
-- play from the editor: start the game at the map (a developer save there,
-  or a jump) with the edits live;
+- a jump to any map (the game has none): play starts at developer saves only;
+- the script-moved objects where the game puts them and their morphs (R5);
 - the render path is stored but not used until R2.
 
 ## Beyond the milestones

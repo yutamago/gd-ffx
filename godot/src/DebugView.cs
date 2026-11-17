@@ -72,6 +72,8 @@ public partial class DebugView : Control
             _test = new MapTest(timeout, GameSettings.Arg("shot"));
         else if (GameSettings.Flag("selftest-besaid"))
             _test = new BesaidTest(timeout, GameSettings.Arg("shot"));
+        else if (GameSettings.Flag("selftest-saved-overrides"))
+            _test = new Remaster.SavedOverridesTest(timeout);
         else if (GameSettings.Flag("selftest-overrides"))
             _test = new Remaster.OverridesTest(timeout, GameSettings.Arg("shot"));
         else if (GameSettings.Flag("selftest-remake-map"))

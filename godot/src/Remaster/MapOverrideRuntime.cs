@@ -177,11 +177,29 @@ public sealed class MapOverrideRuntime
     /// <summary>Surface <paramref name="surface"/> of <paramref name="mi"/> as a child of its own (see the class).</summary>
     private void SplitOff(string id, MeshInstance3D mi, int surface)
     {
-        if (mi.Mesh is not ArrayMesh src || surface >= src.GetSurfaceCount())
+        if (SplitSurface(mi, surface, id) is not { } part)
         {
             Unknown.Add(id);
             return;
         }
+        mi.SetSurfaceOverrideMaterial(surface, NoDraw);
+        Index.Nodes[id] = part;
+        SplitParts[id] = part;
+        Split++;
+    }
+
+    /// <summary>
+    /// A new child <see cref="MeshInstance3D"/> of <paramref name="mi"/> (named <c>Part&lt;k&gt;</c>,
+    /// at its origin) that draws surface <paramref name="surface"/> alone: its arrays, morph
+    /// targets, material and drawn material, the mesh's extras but the instance number (so the
+    /// game's object index skips it), tagged with part ID <paramref name="id"/>. The instance's
+    /// own surface is left as it is (the game makes it draw nothing, the remaster editor drops
+    /// the instance's mesh). Null when <paramref name="mi"/> has no such surface.
+    /// </summary>
+    public static MeshInstance3D? SplitSurface(MeshInstance3D mi, int surface, string id)
+    {
+        if (mi.Mesh is not ArrayMesh src || surface >= src.GetSurfaceCount())
+            return null;
         var mesh = new ArrayMesh { BlendShapeMode = src.BlendShapeMode };
         for (int b = 0; b < src.GetBlendShapeCount(); b++)
             mesh.AddBlendShape(src.GetBlendShapeName(b));
@@ -209,10 +227,7 @@ public sealed class MapOverrideRuntime
         PartIds.SetString(part, PartIds.Part, id);
         PartIds.SetStrings(part, PartIds.Parts, [id]);
         mi.AddChild(part);
-        mi.SetSurfaceOverrideMaterial(surface, NoDraw);
-        Index.Nodes[id] = part;
-        SplitParts[id] = part;
-        Split++;
+        return part;
     }
 
     private static readonly Godot.Collections.Dictionary NoLods = new();
