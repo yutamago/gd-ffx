@@ -863,7 +863,12 @@ the game gets from `ViewProjection2` (traced only as the main camera's).
   pictures above are the same (the flare's rings are faint), so this is a
   guard rather than the cause of what the playtester saw; where the values
   come from (an array slot the capture reads that the game did not fill,
-  or the game's own) is for ffx-rust's capture.
+  or the game's own) is for ffx-rust's capture. Over the 110 developer
+  saves' map checks (2026-11-17) 94 saves show such draws, nearly all
+  `0xcdcdcdcd` on every vertex (save 29, Luca's stadium: one kind of
+  battle-effect particle quad, 10,300 draws in the check, drawn straight,
+  where the colour clamps to nothing anyway); save 7's picture with and
+  without them differs only where things move.
 
   An
   untextured shader samples nothing, whatever name the segment holds; the
