@@ -147,15 +147,16 @@ public partial class StateView3D : Node3D
             return;
         var view = host.View;
         var t0 = Perf.Start();
-        if (view.Camera() is { } cam)
+        var cam = view.Camera();
+        if (cam is { } c)
         {
-            _camera.GlobalTransform = cam.Transform;
-            _camera.Fov = Mathf.RadToDeg(cam.FovY);
-            _camera.Far = Mathf.Clamp(cam.Far, 100f, 20000f);
+            _camera.GlobalTransform = c.Transform;
+            _camera.Far = Mathf.Clamp(c.Far, 100f, 20000f);
+            GameProjection.Apply(_camera, c, _mapLevel.Length > 0);
             // the game's screen shake (Effects.ShakeX/Y, in the PS2 screen's pixels, 448 high):
             // as the same share of the view at a subject 100 units away
             var fx = view.Current?.Effects;
-            float unit = 2f * Mathf.Tan(Mathf.DegToRad(_camera.Fov) / 2f) * 100f / 448f;
+            float unit = 2f * Mathf.Tan(c.FovY / 2f) * 100f / 448f;
             _camera.HOffset = (fx?.ShakeX ?? 0f) * unit;
             _camera.VOffset = -(fx?.ShakeY ?? 0f) * unit;
         }
@@ -180,7 +181,7 @@ public partial class StateView3D : Node3D
         // the scrolling UVs' and the water's clock, every frame (between snapshots too)
         GlobalTime = ClassicMaterials.SetTime(view.Previous, view.Current, view.Alpha);
         UpdateMap(host.Classic, view.Current);
-        _layers.Tick(view.Current, view.Current?.World.Map ?? -1, _camera.Far);
+        _layers.Tick(view.Current, view.Current?.World.Map ?? -1, _camera.Far, cam);
         Perf.End(Perf.Section.View3D, t0);
         t0 = Perf.Start();
         UpdateObjects(view);

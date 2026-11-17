@@ -234,22 +234,43 @@ public sealed class GameStateView
 
     // ---- interpolation --------------------------------------------------------
 
+    /// <summary>
+    /// The camera this frame: its transform, vertical field of view and far plane, its own
+    /// aspect (16/9 on 3D maps, the PS2's 4/3 in the 2D-background rooms), and the screen
+    /// adjustment the game puts on its projection (docs/architecture.md, "The camera's
+    /// projection"): the shift, added to the projected x and y, then, when
+    /// <see cref="Squeezed"/>, y times 4/3 plus <see cref="OffsetY"/>. <see cref="Pan"/> is
+    /// the window's pan b alone, the 2D layers' window (<see cref="MapLayers"/>).
+    /// </summary>
+    public readonly record struct CameraFrame(Transform3D Transform, float FovY, float Far, float Aspect,
+        bool Squeezed, Vector2 Shift, float Pan, float OffsetY);
+
     /// <summary>The camera this frame, interpolated (null without one).</summary>
-    public (Transform3D Transform, float FovY, float Far)? Camera()
+    public CameraFrame? Camera()
     {
         var c = Current?.Camera;
         if (c is not { Valid: true })
             return null;
         var t = CameraTransform(c.World);
         var fov = c.FovY;
+        var shift = new Vector2(c.ShiftX, c.ShiftY);
+        float pan = c.Pan, offset = c.OffsetY;
         var p = Previous?.Camera;
         if (p is { Valid: true } && !Cut)
         {
             var pt = CameraTransform(p.World);
             t = pt.InterpolateWith(t, Alpha);
             fov = Mathf.Lerp(p.FovY, fov, Alpha);
+            // the window follows the player (the pan) and sways on the ship (the shift): moved
+            // between updates as the camera and the characters are, so they stay together
+            shift = new Vector2(p.ShiftX, p.ShiftY).Lerp(shift, Alpha);
+            if (p.Squeezed == c.Squeezed)
+            {
+                pan = Mathf.Lerp(p.Pan, pan, Alpha);
+                offset = Mathf.Lerp(p.OffsetY, offset, Alpha);
+            }
         }
-        return (t, fov, c.Far * Scale);
+        return new CameraFrame(t, fov, c.Far * Scale, c.Aspect, c.Squeezed, shift, pan, offset);
     }
 
     /// <summary>

@@ -456,7 +456,8 @@ some only that (`ptkl14`, `mihn03`, `guad01`, `kami01`, `maca01`, `bvyt04`,
   shift (scene `+0xfa34`, `+0xfa38`); not squeezed while scene `+0xf9c7`
   or `g_PhyreScene3D` is set. The depth is the main camera's (Godot's
   projection, the game's camera) at view distance 10 z, so the characters,
-  drawn as before with the game's camera, go behind nearer layers. The
+  drawn with the game's camera and its screen adjustment ("The camera's
+  projection" below), go behind nearer layers. The
   colour is the texture x the vertex colour, as it is (no fog, no tone
   curve). The blend comes from the material's effect variant (its switches,
   read from the archive by `FfxGame.ClassicEffectSwitches`; all ten
@@ -478,12 +479,17 @@ some only that (`ptkl14`, `mihn03`, `guad01`, `kami01`, `maca01`, `bvyt04`,
   (`squeezed`: not while `+0xf9c7` or `g_PhyreScene3D` is set), and whether
   the pass runs (`drawn`: the 2D level loaded and the pass not switched off;
   bsil00's one layer, at depth 0.01, is not drawn). Before API 10 these were
-  read from the game's memory with `FfxGame.Peek`. The map check
-  (`--selftest-map`) reports `2D layers shown/loaded (scene, pan)`.
+  read from the game's memory with `FfxGame.Peek`. Since API 11 the window's
+  pan, shift and squeeze are taken from `Camera` (the same scene fields),
+  interpolated between updates with the camera (`GameStateView.Camera`), so
+  the layers and the characters move together; `Layers` is the fallback
+  without a camera. The map check
+  (`--selftest-map`) reports `2D layers shown/loaded (scene, pan)` and the
+  camera's projection.
 
 Measured (`tools/compare-shot.sh`, Xvfb): developer save 52 (kami01) against
-the game's screenshot of kami0100 (another moment of the same room) 11.9/255
-(before: 101.7, a black screen); the picture lines up with the game's (the
+the game's screenshot of kami0100 (another moment of the same room) 11.9/255,
+11.2 with the camera's projection (before: 101.7, a black screen); the picture lines up with the game's (the
 counter, the walls, the floor), the characters on it; the back door is open
 because the game hides its closed layer at that moment of the save (the
 shown flags). Saves 14
@@ -656,6 +662,59 @@ the message boxes' text is 24 (`MessageView.FontSize`), 36 px at 1080
 lines, the game's glyph height. The game is told the window's own size
 (`DisplayServer.WindowGetSize`, its `WM_SIZE`; the viewport's visible rect
 is the 1280 x 720 base), sent again whenever it changes.
+
+## The camera's projection (G5)
+
+The game's main view-projection (`PhyreScene_getViewProjectionMatrix`;
+ffx-rust's docs/state-api.md, API 11, "The camera's adjustment", and
+render.md) is the camera's perspective (vertical field of view `fov_y`, its
+own aspect `a`) times the screen shift, then, when squeezed, the 2D window's
+adjustment (`PhyreScene_GetScreenAdjustedView`). In clip space:
+`x' = x + shift_x w`, `y' = (y + shift_y w) 4/3 + offset_y w` with
+`offset_y = 1/3 - 2 (map_pan + pan)` (squeezed; else `y + shift_y w`). On
+3D maps `a` is 16/9 and nothing is squeezed. In the 2D-background rooms
+(`g_PhyreScene3D` clear) the camera keeps the PS2's 4/3 on the 16:9 target:
+the PS2 picture is stretched by 4/3 across the window, and the squeeze picks
+336 of its 448 rows, panned with the player (`pan`). That is the 2D layers'
+window ("The 2D layers"), so the characters must get the same squeeze or
+they slide over the picture while it pans: before, Godot's camera had only
+`fov_y` with the viewport's 16:9, so in the S.S. Liki's corridor (save 12)
+and kami01 (save 52) the characters were smaller than the room and stood at
+the wrong height on it.
+
+`GameProjection.Apply` sets it on the Godot camera. The adjustment is an
+off-centre frustum, which Godot's `Frustum` projection can express (it has no
+custom matrix): at the near plane n, `2 n tan(fov_y / 2) / k` high (k = 4/3
+squeezed, else 1), offset by minus the clip offsets times half its width
+and height. Godot takes the width from the viewport's aspect, 16:9 (the
+window's bars: "The window"), which is the game's horizontal scale exactly
+when `a = 16/9 / k`: the 3D maps and the 2D rooms. A camera with no offset
+and no squeeze keeps Godot's plain `Perspective` (Besaid's picture is the
+same as before: 11.6 against the original, 11.8 before). Another pairing
+keeps the height and the offsets, takes the view's width, and is logged
+(`ffx: camera aspect ...`) and counted (the map check's `mismatched`) while
+a map is shown. Before one (the opening's movie, the loads) the scene is
+16/9 and squeezed, with nothing 3D drawn; that is not counted. The sweep
+(2026-11-17) has no other pairing: 19 saves are 2D rooms (4/3, squeezed),
+91 are 3D (16/9, not squeezed; Besaid's village, `bsvr02`, saves 8 and 9,
+is one of them), 0 mismatched frames on a map.
+`GameStateView.Camera` interpolates the shift, the pan and the offset
+between updates as it does the camera's transform (the ship's sway,
+`shift_y`, moves a few thousandths an update). `DistortionView`'s clean
+camera copies the whole projection (`GameProjection.Copy`).
+
+Measured (Xvfb, `tools/compare-shot.sh`, `--walk=up:3 --shots=4`: pictures
+during the walk): save 12 (`slik04`, 4/3, squeezed, pan 0.295, offset
+-0.262 on the map check's last frame): before, the sailors at the far end
+of the corridor were off the picture and the near one stood in the middle
+of the floor, small; now the far ones stand on the painted floor by the
+doors and the near one's feet are on the carpet, at the room's scale,
+through the walk. Save 35 (`mihn03`, `--walk=down:3`): the window scrolls
+as the player walks (pan 0.260 to 0.139) and the characters go with it
+(the seated man stays on his stool, the shopkeepers behind the counter).
+Save 52 (`kami01`, pan 0.275, offset -0.217): 11.2 against
+the game's screenshot (11.9 before), the shopkeeper behind the counter and
+Tidus on the mat as in the game's.
 
 ## Native UI (G4)
 
