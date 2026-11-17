@@ -35,6 +35,7 @@ public partial class FfxGame : RefCounted
         public static readonly StringName key_input = "key_input";
         public static readonly StringName last_error = "last_error";
         public static readonly StringName loc_text = "loc_text";
+        public static readonly StringName loc_text_utf8 = "loc_text_utf8";
         public static readonly StringName mouse_exited = "mouse_exited";
         public static readonly StringName mouse_input = "mouse_input";
         public static readonly StringName peek = "peek";
@@ -45,6 +46,8 @@ public partial class FfxGame : RefCounted
         public static readonly StringName runtime_texture = "runtime_texture";
         public static readonly StringName scan_input = "scan_input";
         public static readonly StringName set_focus = "set_focus";
+        public static readonly StringName set_speed = "set_speed";
+        public static readonly StringName speed = "speed";
         public static readonly StringName set_window = "set_window";
         public static readonly StringName snapshot_update = "snapshot_update";
         public static readonly StringName snapshots = "snapshots";
@@ -126,6 +129,17 @@ public partial class FfxGame : RefCounted
 
     /// <summary>Line <paramref name="index"/> of the remaster's localisation kit in <paramref name="language"/>, decoded; empty without the archive.</summary>
     public string LocText(int index, string language) => Node.Call(M.loc_text, index, language).AsString();
+
+    /// <summary>
+    /// Line <paramref name="index"/> of the localisation kit as UTF-8: the lines the game hands
+    /// its Flash pages and tips (the Esc menu's entries, the boosters' tips), which the kit
+    /// stores as UTF-8, not in the game's encoding (<see cref="LocText"/>).
+    /// </summary>
+    public string LocTextUtf8(int index, string language) => Node.Call(M.loc_text_utf8, index, language).AsString();
+
+    /// <summary>A Flash or tip line for display (<see cref="LocTextUtf8"/>): its tags (<c>{..}</c>, <c>@el@</c> line breaks) made plain; "" without the archive.</summary>
+    public string FlashText(int index, string language) =>
+        MessageView.Clean(LocTextUtf8(index, language).Replace("@el@", " ").Replace("\n", " "));
 
     /// <summary>A developer's look at <paramref name="len"/> bytes of game memory (read only; empty while no game runs).</summary>
     public byte[] Peek(long address, int len) => Node.Call(M.peek, address, len).AsByteArray();
@@ -216,6 +230,16 @@ public partial class FfxGame : RefCounted
         Node.Call(M.set_window, size, screen, origin);
 
     public void SetFocus(bool focused) => Node.Call(M.set_focus, focused);
+
+    /// <summary>
+    /// The game's speed on the real clock, for debugging (0.25 .. 8, ffx-host's
+    /// <c>Clock::set_speed</c>): before <see cref="Start"/> for the boot, then at once; returns
+    /// the speed in use.
+    /// </summary>
+    public double SetSpeed(double speed) => Node.Call(M.set_speed, speed).AsDouble();
+
+    /// <summary>The game's speed (<see cref="SetSpeed"/>; 1 unless set).</summary>
+    public double Speed => Node.Call(M.speed).AsDouble();
 }
 
 /// <summary>Bytes the extension holds, copied out into buffers kept by C#.</summary>

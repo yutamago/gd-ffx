@@ -105,6 +105,13 @@ public partial class GameHost : Node
         {
             return Fail(e.Message);
         }
+        // --language=CODE: the game's language written into the sandbox's GameSetting.ini first
+        if (GameSettings.Arg("language") is { Length: > 0 } language
+            && GameSettings.SetGameLanguage(documents, language) is { } langError)
+            GD.PrintErr($"ffx: --language={language}: {langError}");
+        // the game's speed (the options' or --speed=), from the boot on
+        if (UserSettings.Current.Speed != 1)
+            Game!.SetSpeed(UserSettings.Current.Speed);
         GD.Print($"ffx: booting the game from {gameDir} (documents: {documents})");
         if (!Game!.Start(gameDir, documents))
             return Fail(Game.LastError);
@@ -212,6 +219,7 @@ public partial class GameHost : Node
     public override void _Process(double delta)
     {
         CollectWhenLost(delta);
+        Taps(delta);
         // the worker threads' texture asks (answered "none" without a game)
         TextureFetcher.Poll(Game);
         if (Game == null)
@@ -285,21 +293,145 @@ public partial class GameHost : Node
         }
     }
 
+    // ---- input -----------------------------------------------------------------------------
+
+    /// <summary>gd-ffx's own keys (never the game's): the FPS overlay, the options, fullscreen, the debug overlay.</summary>
+    public const Key FpsKey = Key.F9, OptionsKey = Key.F10, FullscreenKey = Key.F11, DebugKey = Key.F12;
+
+    /// <summary>
+    /// A screen of gd-ffx's own that takes the keyboard and mouse while it is open (the ESC
+    /// menu, the options): the game gets none of it, and the keys it held are let go.
+    /// </summary>
+    public bool Captured => _captors.Count > 0;
+
+    private readonly System.Collections.Generic.HashSet<object> _captors = new();
+
+    /// <summary>Takes (or gives back) the input for <paramref name="who"/> (<see cref="Captured"/>).</summary>
+    public void Capture(object who, bool on)
+    {
+        bool was = Captured;
+        if (on)
+            _captors.Add(who);
+        else
+            _captors.Remove(who);
+        if (!was && Captured)
+            ReleaseHeld();
+    }
+
+    /// <summary>The scan codes the game holds down from Godot's keys (let go when a screen captures).</summary>
+    private readonly System.Collections.Generic.HashSet<int> _held = new();
+
+    private void ReleaseHeld()
+    {
+        if (Game == null)
+            return;
+        foreach (var scan in _held)
+            Game.ScanInput(scan, false);
+        _held.Clear();
+    }
+
+    /// <summary>A key tap for the game: pressed, held, let go (<see cref="Tap"/>).</summary>
+    private readonly System.Collections.Generic.List<(int Scan, double Release)> _taps = new();
+    private double _clock;
+
+    /// <summary>The DirectInput scan codes of the keys gd-ffx taps for the game.</summary>
+    public const int ScanEsc = 0x01, ScanF1 = 0x3b, ScanF2 = 0x3c, ScanF3 = 0x3d, ScanF4 = 0x3e;
+
+    /// <summary>
+    /// Taps key <paramref name="scan"/> for the game (pressed now, let go after
+    /// <paramref name="hold"/> seconds: the game reads its keyboard once an update, 30 a
+    /// second, so a press and release in one Godot frame would be missed). Not while the key is
+    /// being tapped already.
+    /// </summary>
+    public void Tap(int scan, double hold = 0.1)
+    {
+        if (Game == null || _taps.Exists(t => t.Scan == scan))
+            return;
+        Game.ScanInput(scan, true);
+        _taps.Add((scan, _clock + hold));
+    }
+
+    private void Taps(double delta)
+    {
+        _clock += delta;
+        for (int i = _taps.Count - 1; i >= 0; i--)
+            if (_clock >= _taps[i].Release)
+            {
+                Game?.ScanInput(_taps[i].Scan, false);
+                _taps.RemoveAt(i);
+            }
+    }
+
     public override void _Input(InputEvent e)
     {
+        if (e is InputEventKey { Pressed: true, Echo: false } fk && fk.PhysicalKeycode == FullscreenKey)
+        {
+            var u = UserSettings.Current;
+            u.WindowMode = u.WindowMode == "windowed" ? "fullscreen" : "windowed";
+            u.Apply();
+            u.Save();
+            GetViewport().SetInputAsHandled();
+            return;
+        }
         if (Game == null || !InputToGame)
             return;
         switch (e)
         {
-            case InputEventKey k when k.PhysicalKeycode == Key.F1:
-                // the debug overlay's key stays Godot's
+            // gd-ffx's own keys stay Godot's (the views take them); F1 to F4 are the game's boosters
+            case InputEventKey k when k.PhysicalKeycode is FpsKey or OptionsKey or FullscreenKey or DebugKey:
+                break;
+            // a screen of gd-ffx's own has the input: the game gets none
+            case InputEventKey or InputEventMouse when Captured:
                 break;
             case InputEventKey k when Game.KeyInput(k):
+                if (!k.Echo && ScanCodes.Of(k.PhysicalKeycode, k.Location) is int scan)
+                {
+                    if (k.Pressed)
+                        _held.Add(scan);
+                    else
+                        _held.Remove(scan);
+                }
                 GetViewport().SetInputAsHandled();
                 break;
             case InputEventMouse:
                 Game.MouseInput(e);
                 break;
         }
+    }
+}
+
+/// <summary>Godot's physical keys as DirectInput scan codes, as the extension maps them (<c>rust/ffx-gd/src/keys.rs</c>), for the keys gd-ffx lets go of.</summary>
+public static class ScanCodes
+{
+    /// <summary>The scan code of <paramref name="key"/>, or null for a key not tracked (then it is not let go early).</summary>
+    public static int? Of(Key key, KeyLocation location)
+    {
+        bool right = location == KeyLocation.Right;
+        if (key >= Key.A && key <= Key.Z)
+            return new byte[] { 0x1e, 0x30, 0x2e, 0x20, 0x12, 0x21, 0x22, 0x23, 0x17, 0x24, 0x25, 0x26, 0x32, 0x31,
+                0x18, 0x19, 0x10, 0x13, 0x1f, 0x14, 0x16, 0x2f, 0x11, 0x2d, 0x15, 0x2c }[key - Key.A];
+        if (key >= Key.F1 && key <= Key.F10)
+            return 0x3b + (int)(key - Key.F1);
+        return key switch
+        {
+            Key.Escape => 0x01,
+            Key.Backspace => 0x0e,
+            Key.Tab => 0x0f,
+            Key.Enter => 0x1c,
+            Key.Space => 0x39,
+            Key.Ctrl => right ? 0x9d : 0x1d,
+            Key.Shift => right ? 0x36 : 0x2a,
+            Key.Alt => right ? 0xb8 : 0x38,
+            Key.Up => 0xc8,
+            Key.Down => 0xd0,
+            Key.Left => 0xcb,
+            Key.Right => 0xcd,
+            Key.Pageup => 0xc9,
+            Key.Pagedown => 0xd1,
+            Key.Home => 0xc7,
+            Key.End => 0xcf,
+            Key.KpEnter => 0x9c,
+            _ => null,
+        };
     }
 }

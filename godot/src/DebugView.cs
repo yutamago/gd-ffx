@@ -6,7 +6,7 @@ using Godot;
 namespace GdFfx;
 
 /// <summary>
-/// The debug overlay (F1 shows or hides it): the game's live state from
+/// The debug overlay (F12 shows or hides it; F1 to F4 are the game's boosters): the game's live state from
 /// <see cref="GameHost"/> and the game-state API's newest snapshot.
 ///
 /// With <c>--selftest</c> on the command line (after <c>--</c>) it runs
@@ -43,7 +43,7 @@ public partial class DebugView : Control
         AddChild(panel);
         var box = new VBoxContainer();
         panel.AddChild(box);
-        var title = new Label { Text = "gd-ffx: ffx-rust inside Godot (F1: hide)" };
+        var title = new Label { Text = "gd-ffx: ffx-rust inside Godot (F12: hide)" };
         title.AddThemeFontSizeOverride("font_size", 18);
         box.AddChild(title);
         _label = new Label();
@@ -52,7 +52,8 @@ public partial class DebugView : Control
         box.AddChild(_label);
         var help = new Label
         {
-            Text = "Keys as on the original: B Start, arrows, C/Enter confirm, X/Backspace cancel, V menu, Esc PC menu.",
+            Text = "Keys as on the original: B Start, arrows, C/Enter confirm, X/Backspace cancel, V menu, Esc PC menu, F1-F4 boosters.\n"
+                + "gd-ffx: F9 FPS overlay, F10 options, F11 fullscreen, F12 this overlay.",
         };
         help.AddThemeColorOverride("font_color", new Color(0.6f, 0.65f, 0.7f));
         help.AddThemeFontSizeOverride("font_size", 12);
@@ -79,11 +80,13 @@ public partial class DebugView : Control
             _test = new BattleTest(timeout, GameSettings.Arg("shot"));
         else if (GameSettings.Flag("selftest-message"))
             _test = new MessageTest(timeout, GameSettings.Arg("shot"));
+        else if (GameSettings.Flag("selftest-ux"))
+            _test = new UxTest(timeout, GameSettings.Arg("shot-dir"));
     }
 
     public override void _UnhandledInput(InputEvent e)
     {
-        if (e is InputEventKey { Pressed: true, Echo: false, PhysicalKeycode: Key.F1 })
+        if (e is InputEventKey { Pressed: true, Echo: false, PhysicalKeycode: GameHost.DebugKey })
             Visible = !Visible;
     }
 
@@ -687,6 +690,8 @@ public sealed class BattleTest : ITest
     private double _total;
     private double _seen = -1;
     private string _first = "";
+    private string _target = "", _btLine = "";
+    private bool _targetClosed;
     /// <summary>The effect this battle starts first (seen in the deck's battle 3,0,0), remade by the example.</summary>
     public const string RemadeId = "50001800";
     private double _tap;
@@ -712,7 +717,9 @@ public sealed class BattleTest : ITest
                 + $"models {view3d?.Posed.Models}, menu [{string.Join(", ", menu?.Shown ?? [])}]");
         if (_attacked.Length > 0 && c != null)
             return Results(c, root, delta);
-        if (c == null || menu == null || view3d == null || hud == null || !c.World.Battle || menu.Shown.Count < 2
+        if (_first.Length > 0 && c != null && menu != null)
+            Target(c, menu, root);
+        if (c == null || menu == null || view3d == null || hud == null || !c.World.Battle || (menu.Shown.Count < 2 && _first.Length == 0)
             || view3d.MapLevel != c.World.Level || view3d.Posed.Models < 2 || hud.Shown.Count == 0 || hud.Order.Length == 0)
             return null;
         if (_seen < 0)
@@ -732,9 +739,10 @@ public sealed class BattleTest : ITest
         }
         var effects = root?.FindChild("EffectView", true, false) as EffectView;
         // Attack: confirm (Enter) tapped until a damage number pops
-        if (hud.Popped > 0)
+        // the target chosen (the selection seen, then closed by the confirm), and a damage number
+        if (_target.Length > 0 && _targetClosed && hud.Popped > 0)
         {
-            var attacked = $"{_first}; {hud.Popped} damage number(s) popped; {effects?.Started ?? 0} effect(s) started "
+            var attacked = $"{_first}; {_target}; {hud.Popped} damage number(s) popped; {effects?.Started ?? 0} effect(s) started "
                 + $"({effects?.RemadeStarted ?? 0} remade as {RemadeId}); effect draws by pass [{string.Join(", ", EffectDrawView.PassDraws)}], "
                 + $"{EffectDrawView.FadeFrames} frame(s) with a screen fade";
             if (!GameSettings.Flag("to-results"))
@@ -752,6 +760,34 @@ public sealed class BattleTest : ITest
             Tap(!_down);
         }
         return null;
+    }
+
+    /// <summary>
+    /// The first confirm (Attack) opens the target selection: the native menu names the target
+    /// and hands point at it (API 11's <c>Menus.battle_target</c>); traced on each change.
+    /// </summary>
+    private void Target(GdFfx.Api.Snapshot c, BattleMenuView menu, Window? root)
+    {
+        var bt = c.Menus.BattleTarget;
+        var popped = (root?.FindChild("BattleHudView", true, false) as BattleHudView)?.Popped ?? -1;
+        var btLine = $"popped {popped}; open {bt.Open} kind {bt.Kind} chr 0x{bt.Character:x} mask 0x{bt.Mask:x} cursor {bt.Cursor}/{bt.Count} side {bt.Side} hands {bt.Hands.Count}; depth {c.Menus.BattleDepth}; shown [{menu.TargetShown}] hands drawn {menu.HandsShown}";
+        if (btLine != _btLine)
+        {
+            _btLine = btLine;
+            GD.Print($"ffx selftest: battle target: {btLine}");
+        }
+        if (_target.Length > 0 && !bt.Open)
+            _targetClosed = true;
+        if (_target.Length > 0 || menu.TargetShown.Length == 0 || !bt.Open || menu.HandsShown == 0)
+            return;
+        _target = $"the target selection: {menu.TargetShown} (character 0x{bt.Character:x}, mask 0x{bt.Mask:x}, side {bt.Side}); menu [{string.Join(" | ", menu.Shown)}]";
+        GD.Print($"ffx selftest: {_target}");
+        if (shot != null && DisplayServer.GetName() != "headless")
+        {
+            var file = shot[..^4] + "-target.png";
+            root!.GetViewport().GetTexture().GetImage().SavePng(file);
+            GD.Print($"ffx selftest: picture {file}");
+        }
     }
 
     private string _attacked = "";

@@ -1,4 +1,4 @@
-[gd_scene load_steps=12 format=3]
+[gd_scene load_steps=16 format=3]
 
 [ext_resource type="Script" path="res://src/StateView3D.cs" id="1_view"]
 [ext_resource type="Script" path="res://src/DebugView.cs" id="2_debug"]
@@ -11,6 +11,10 @@
 [ext_resource type="Script" path="res://src/DistortionView.cs" id="9_dist"]
 [ext_resource type="Script" path="res://src/ScreenFadeView.cs" id="10_fade"]
 [ext_resource type="Script" path="res://src/BattleEndView.cs" id="11_end"]
+[ext_resource type="Script" path="res://src/BoosterView.cs" id="12_boost"]
+[ext_resource type="Script" path="res://src/FpsView.cs" id="13_fps"]
+[ext_resource type="Script" path="res://src/PauseView.cs" id="14_pause"]
+[ext_resource type="Script" path="res://src/OptionsView.cs" id="15_opt"]
 
 [node name="Main" type="Node"]
 
@@ -105,6 +109,46 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 script = ExtResource("11_end")
+
+[node name="BoosterView" type="Control" parent="Overlay"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("12_boost")
+
+[node name="FpsView" type="Control" parent="Overlay"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("13_fps")
+
+[node name="PauseView" type="Control" parent="Overlay"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("14_pause")
+
+[node name="OptionsView" type="Control" parent="Overlay"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("15_opt")
 
 [node name="DebugView" type="Control" parent="Overlay"]
 layout_mode = 3

@@ -169,6 +169,17 @@ impl Classic {
         self.decode(language, &text)
     }
 
+    /// Line `index` of the localisation kit in `language` as UTF-8 text: the
+    /// lines the game hands its Flash pages and tips (the Esc menu's, the
+    /// boosters' tips: `IggyValueSetStringUTF8RS`) are stored as UTF-8,
+    /// not in the game's encoding (invalid bytes replaced).
+    #[must_use]
+    pub fn loc_text_utf8(&self, language: &str, index: u32) -> Option<String> {
+        let open = lock(&self.open).clone()?;
+        let text = open.importer.loc_text(language, index)?;
+        Some(String::from_utf8_lossy(&text).into_owned())
+    }
+
     /// A material texture's face as PNG (`ffx_import::Importer::texture_png`).
     #[must_use]
     pub fn texture_png(&self, path: &str, face: usize) -> Option<Vec<u8>> {

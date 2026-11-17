@@ -17,14 +17,14 @@ public partial class MessageView : Control
     /// <summary>The PS2 screen the windows are placed on.</summary>
     private static readonly Vector2 Ps2Screen = new(512, 448);
 
-    private readonly Dictionary<int, (PanelContainer Panel, Label Label)> _windows = new();
+    private readonly Dictionary<int, (PanelContainer Panel, Label Label, MenuList Options)> _windows = new();
     private readonly Dictionary<(int Window, string Bytes), string> _decoded = new();
 
     /// <summary>
     /// The system's UI font with fallbacks for Japanese, Korean and Chinese (the
     /// game's text in those languages); Godot's default font has no CJK glyphs.
     /// </summary>
-    private static readonly SystemFont Font = new()
+    public static readonly SystemFont UiFont = new()
     {
         FontNames =
         [
@@ -43,7 +43,7 @@ public partial class MessageView : Control
         MouseFilter = MouseFilterEnum.Ignore;
         // the system font found and loaded now, with the scene, not at the first message (a
         // 20 to 45 ms frame)
-        Font.GetStringSize("Ag", HorizontalAlignment.Left, -1, 22);
+        UiFont.GetStringSize("Ag", HorizontalAlignment.Left, -1, 22);
     }
 
     /// <summary>The ffx-text code of the API's language number (<c>TOGetFFXLang</c>).</summary>
@@ -59,6 +59,24 @@ public partial class MessageView : Control
         10 => "ch",
         _ => "us",
     };
+
+    /// <summary>
+    /// A window's text split for display: the lines above the options, the options (the last
+    /// <paramref name="options"/> lines, when the window lays out a choice: <paramref name="choice"/>
+    /// 0 or more) and the option the cursor is on.
+    /// </summary>
+    public static (string Body, List<string> Options, int Cursor) Layout(string text, int options, int choice)
+    {
+        var lines = new List<string>(text.Split('\n'));
+        if (choice < 0 || options <= 0 || options > lines.Count)
+            return (text, new List<string>(), -1);
+        int first = lines.Count - options;
+        var rows = lines.GetRange(first, options).ConvertAll(l => l.Trim());
+        return (string.Join("\n", lines.GetRange(0, first)).TrimEnd('\n', ' '), rows, choice < options ? choice : -1);
+    }
+
+    /// <summary>The choices shown now: the window, its options and the row marked (for tests).</summary>
+    public List<string> Choices { get; } = new();
 
     /// <summary>The decoded text for display: the game's control codes (<c>{..}</c>) left out.</summary>
     public static string Clean(string text) =>
@@ -76,6 +94,7 @@ public partial class MessageView : Control
         var host = GameHost.Instance;
         var s = host?.View.Current;
         Shown.Clear();
+        Choices.Clear();
         var open = new HashSet<int>();
         if (host?.Game != null && s != null)
         {
@@ -95,6 +114,8 @@ public partial class MessageView : Control
                 }
                 Show(m, text);
                 Shown.Add(text);
+                if (_windows.TryGetValue(m.Window, out var win) && win.Options.Visible)
+                    Choices.Add($"window {m.Window}: {string.Join(" | ", win.Options.Shown)} (choice {m.Choice}, picked {m.Picked})");
             }
         }
         foreach (var w in new List<int>(_windows.Keys))
@@ -119,24 +140,26 @@ public partial class MessageView : Control
                 ContentMarginLeft = 18, ContentMarginRight = 18, ContentMarginTop = 10, ContentMarginBottom = 10,
             });
             var label = new Label();
-            label.AddThemeFontOverride("font", Font);
+            label.AddThemeFontOverride("font", UiFont);
             label.AddThemeFontSizeOverride("font_size", 22);
             label.AddThemeColorOverride("font_shadow_color", new Color(0, 0, 0, 0.8f));
-            panel.AddChild(label);
+            var options = new MenuList(22, UiFont) { Visible = false };
+            var box = new VBoxContainer { MouseFilter = MouseFilterEnum.Ignore };
+            box.AddChild(label);
+            box.AddChild(options);
+            panel.AddChild(box);
             AddChild(panel);
-            w = (panel, label);
+            w = (panel, label, options);
             _windows[m.Window] = w;
         }
-        // a choice: the last (flags >> 8) lines are the options
-        var lines = new List<string>(text.Split('\n'));
-        int options = m.Flags >> 8;
-        if (m.Choice >= 0 && options > 0 && options <= lines.Count)
-        {
-            int first = lines.Count - options;
-            for (int i = first; i < lines.Count; i++)
-                lines[i] = (i - first == m.Choice ? "▶ " : "   ") + lines[i];
-        }
-        Ui.SetText(w.Label, string.Join("\n", lines));
+        // a choice: the last (flags >> 8) lines are the options, drawn as a list with the
+        // cursor (API 11's live Message.choice) on its row
+        var (body, rows, cursor) = Layout(text, m.Flags >> 8, m.Choice);
+        Ui.SetText(w.Label, body);
+        w.Label.Visible = body.Length > 0;
+        w.Options.Visible = rows.Count > 0;
+        if (rows.Count > 0)
+            w.Options.SetRows(rows, cursor);
         // the window's place: x its centre, y its bottom edge on the PS2 screen
         var view = GetViewportRect().Size;
         var size = w.Panel.GetCombinedMinimumSize();
