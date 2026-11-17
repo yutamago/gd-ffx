@@ -199,8 +199,11 @@ public partial class StateView3D : Node3D
                 ApplyGlow(look);
             }
         }
-        // the scrolling UVs' and the water's clock, every frame (between snapshots too)
-        GlobalTime = ClassicMaterials.SetTime(view.Previous, view.Current, view.Alpha);
+        // the scrolling UVs' and the water's clock, every frame (between snapshots too); held
+        // under the game's ESC menu, whose picture the original freezes (afterGraphicSync stops
+        // swapping) while the game's GlobalTime runs on (docs/architecture.md, "The ESC menu")
+        if (view.Current?.Menus.EscMenu != true || GlobalTime < 0)
+            GlobalTime = ClassicMaterials.SetTime(view.Previous, view.Current, view.Alpha);
         UpdateMap(host.Classic, view.Current);
         _prefetch.Tick(host.Classic, host.Game, view.Current, _mapLevel, _parked?.Level ?? "", ObjectIndex);
         _layers.Tick(view.Current, view.Current?.World.Map ?? -1, _camera.Far, cam);
