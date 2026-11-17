@@ -258,6 +258,12 @@ public sealed partial class RemasterLighting : Node3D
         LinearOut = 0f;
         RenderingServer.GlobalShaderParameterSet(Variants.Name("ffx_linear_out"), 0f);
         RenderingServer.GlobalShaderParameterSet(Variants.Name("ffx_vertex_light"), 0.5f);
+        RenderingServer.GlobalShaderParameterSet(Variants.Name("ffx_lit_gamma"), 0f);
+        // the project's shadow settings again (the quality changed them)
+        RenderingServer.DirectionalShadowAtlasSetSize(
+            ProjectSettings.GetSetting("rendering/lights_and_shadows/directional_shadow/size", 4096).AsInt32(), true);
+        RenderingServer.DirectionalSoftShadowFilterSetQuality((RenderingServer.ShadowQuality)
+            ProjectSettings.GetSetting("rendering/lights_and_shadows/directional_shadow/soft_shadow_filter_quality", 2).AsInt32());
     }
 
     private static Color Raw(Vector3 c) => new(Mathf.Clamp(c.X, 0, 1), Mathf.Clamp(c.Y, 0, 1), Mathf.Clamp(c.Z, 0, 1));

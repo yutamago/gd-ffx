@@ -168,7 +168,10 @@ Per map, keyed by its level (`bsil00`):
 - `res://remaster/maps/<level>/overrides.tres`: a `MapOverrides` resource
   (`godot/src/Remaster/MapOverrides.cs`);
 - `res://remaster/maps/<level>/additions.tscn` (optional): nodes to add
-  (or the resource's `Additions` scene).
+  (or the resource's `Additions` scene);
+- `res://remaster/maps/<level>/lighting.tres` (optional, R3): the map's
+  remastered lighting, a `MapLighting` (docs/remaster-editor.md, "Lighting");
+  it layers per file (the last layer's wins), not per field.
 
 `MapOverrides`: `Level` (informational: the folder decides), `Status`
 (`Original`, `InProgress`, `Remastered`, `Approved`), `RenderPath`
