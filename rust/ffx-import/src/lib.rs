@@ -24,6 +24,8 @@ use serde_json::{Value, json};
 pub mod effect;
 pub mod exits;
 pub mod flash;
+pub mod ids;
+pub mod maps;
 pub mod morph;
 
 /// The version of what the importer writes into a `.glb`
@@ -40,8 +42,10 @@ pub mod morph;
 /// bindings put an input on another `TEXCOORD_n` than its material's
 /// `ffx_texcoords` says gets its attributes re-pointed to match
 /// ([`align_texcoords`]). 5: a character's cloth segments (`ffx_cloth` and
-/// a vertex number attribute, [`add_cloth`]).
-pub const FORMAT: u64 = 5;
+/// a vertex number attribute, [`add_cloth`]). 6: stable part IDs
+/// ([`ids`], [`add_ids`]): `ffx_id` on the nodes, meshes and primitives,
+/// `ffx_texture_ids` on the materials, `asset.extras.ffx_model`.
+pub const FORMAT: u64 = 6;
 
 /// The game places a 3D map's instances at the file's node worlds times
 /// this (`PhyreScene_doOnFieldMapAssetLoaded`; ffx-rust's
@@ -147,6 +151,8 @@ pub struct Importer {
     events: std::sync::OnceLock<Vec<String>>,
     /// Flash movies parsed so far ([`Importer::flash_movie`]), by name.
     flash: std::sync::Mutex<HashMap<String, Option<std::sync::Arc<flash::Movie>>>>,
+    /// The map catalogue's table ([`Importer::map_table`]), read once.
+    maps: std::sync::OnceLock<std::sync::Arc<maps::Table>>,
 }
 
 impl std::fmt::Debug for Importer {
@@ -173,6 +179,7 @@ impl Importer {
             effects: std::sync::Mutex::default(),
             events: std::sync::OnceLock::new(),
             flash: std::sync::Mutex::default(),
+            maps: std::sync::OnceLock::new(),
         })
     }
 
@@ -478,6 +485,17 @@ impl Importer {
             .clone()
     }
 
+    /// The stable part IDs ([`ids::ModelIds`]) of the model at `path`.
+    ///
+    /// # Errors
+    /// When the model is missing or does not parse.
+    pub fn model_ids(&self, path: &str) -> Result<ids::ModelIds> {
+        let bytes = self.read(path)?;
+        let model =
+            ffx_phyre::Model::parse(&bytes).map_err(|e| Error::Model(format!("{path}: {e}")))?;
+        Ok(ids::ModelIds::of(path, &model))
+    }
+
     /// The model at `path` as a glTF binary with its base colour textures
     /// embedded (PNG), as stored (no axis change: see the module's doc),
     /// with gd-ffx's extras ([`Importer::add_extras`]).
@@ -517,12 +535,14 @@ impl Importer {
         // the segment contexts' stream bindings (which UV set a water
         // shader's TEXCOORD4/6/7 read): only a map cluster has them
         let scene = ffx_scene::map::MapModel::parse(bytes).ok();
+        let part_ids = ids::ModelIds::of(path, &model);
         edit_glb(&glb, |doc, bin| {
             self.add_extras(&model, scene.as_ref(), &tags, doc);
             add_morph_targets(&model, &morphs, doc, bin);
             add_color_morph_streams(&model, doc, bin);
             add_model_ids(&model_ids, doc);
             add_cloth(&cloth, doc, bin);
+            add_ids(&model, &part_ids, doc);
         })
         .ok_or_else(|| Error::Model(format!("{path}: bad glTF from the export")))
     }
@@ -1183,6 +1203,103 @@ fn add_morph_targets(
     }
 }
 
+/// The stable part IDs ([`ids`]) into the export's JSON: `extras.ffx_id` on
+/// glTF node 0 (the model), on each `PNode`'s node (glTF node `1 + n`), on
+/// each instance's mesh and its node (the instance, `#<node>/*`) and on each
+/// primitive (its part, `#<node>/<k>`: `k` the segment's place in the
+/// instance's list); `extras.ffx_texture_ids` on each material (sampler to
+/// texture ID); `asset.extras.ffx_model`. Run after [`Importer::add_extras`]
+/// (which finds each mesh's instance, `ffx_instance`).
+fn add_ids(model: &ffx_phyre::Model, part_ids: &ids::ModelIds, doc: &mut Value) {
+    if let Some(mats) = doc.get_mut("materials").and_then(Value::as_array_mut) {
+        for (m, src) in mats.iter_mut().zip(&model.materials) {
+            if src.textures.is_empty() {
+                continue;
+            }
+            if !m["extras"].is_object() {
+                m["extras"] = json!({});
+            }
+            let texture_ids: serde_json::Map<String, Value> = src
+                .textures
+                .iter()
+                .map(|t| (t.sampler.clone(), json!(ids::texture_id(&t.path))))
+                .collect();
+            m["extras"]["ffx_texture_ids"] = Value::Object(texture_ids);
+        }
+    }
+    let mut mesh_ids: Vec<Option<String>> = Vec::new();
+    if let Some(meshes) = doc.get_mut("meshes").and_then(Value::as_array_mut) {
+        for mesh in meshes.iter_mut() {
+            // the mesh of a model without instances holds every segment once
+            let instance = if model.instances.is_empty() {
+                Some(0)
+            } else {
+                mesh["extras"]["ffx_instance"]
+                    .as_u64()
+                    .and_then(|i| usize::try_from(i).ok())
+            };
+            let Some(i) = instance.filter(|&i| i < part_ids.instances.len()) else {
+                mesh_ids.push(None);
+                continue;
+            };
+            let id = part_ids.instances[i].clone();
+            if !mesh["extras"].is_object() {
+                mesh["extras"] = json!({});
+            }
+            mesh["extras"]["ffx_id"] = json!(id);
+            mesh_ids.push(Some(id));
+            let segments: Vec<usize> = model
+                .instances
+                .get(i)
+                .map(|inst| inst.segments.iter().map(|&(s, _)| s).collect())
+                .unwrap_or_default();
+            let mut used = vec![false; segments.len()];
+            for p in mesh["primitives"].as_array_mut().into_iter().flatten() {
+                let Some(s) = p["extras"]["ffx_segment"]
+                    .as_u64()
+                    .and_then(|s| usize::try_from(s).ok())
+                else {
+                    continue;
+                };
+                let k = if model.instances.is_empty() {
+                    Some(s)
+                } else {
+                    let k = (0..segments.len()).find(|&k| !used[k] && segments[k] == s);
+                    if let Some(k) = k {
+                        used[k] = true;
+                    }
+                    k
+                };
+                if let Some(part) = k.and_then(|k| part_ids.parts[i].get(k)) {
+                    p["extras"]["ffx_id"] = json!(part);
+                }
+            }
+        }
+    }
+    if let Some(nodes) = doc.get_mut("nodes").and_then(Value::as_array_mut) {
+        for (j, node) in nodes.iter_mut().enumerate() {
+            let id = if j == 0 {
+                Some(part_ids.model.clone())
+            } else if let Some(m) = node.get("mesh").and_then(Value::as_u64) {
+                usize::try_from(m)
+                    .ok()
+                    .and_then(|m| mesh_ids.get(m).cloned().flatten())
+            } else {
+                part_ids.nodes.get(j - 1).cloned()
+            };
+            if let Some(id) = id {
+                if !node["extras"].is_object() {
+                    node["extras"] = json!({});
+                }
+                node["extras"]["ffx_id"] = json!(id);
+            }
+        }
+    }
+    if doc["asset"]["extras"].is_object() {
+        doc["asset"]["extras"]["ffx_model"] = json!(part_ids.model);
+    }
+}
+
 /// Each `PMeshSegment`'s model id (`+0x18`, a word; the segments are
 /// `0x6c` bytes): the model a character's unskinned mesh belongs to,
 /// which `graphicCharacterInstanceSetWorldMatrixByMdlID` (`0x0063c430`)
@@ -1685,6 +1802,90 @@ mod tests {
                 ("MeshNode2Shape".to_owned(), json!(2))
             ]
         );
+    }
+
+    /// On the player's game (skips without `FFX_GAME_DIR`): Besaid beach's
+    /// stable part IDs on the glTF nodes, meshes, primitives and materials,
+    /// the same on a second export.
+    #[test]
+    fn exports_stable_part_ids() {
+        let Some(dir) = std::env::var_os("FFX_GAME_DIR") else {
+            eprintln!("FFX_GAME_DIR is not set; skipping");
+            return;
+        };
+        let imp = Importer::open(Path::new(&dir)).unwrap();
+        let path = imp.map_model("/map/bsil/bsil00/").unwrap();
+        let model = "x:/ffx_data/gamedata/ps3data/map/bsil/bsil00/mdl/d3d11/bsil00.dae.phyre";
+        let doc = glb_json(&imp.model_glb(&path).unwrap());
+        assert_eq!(doc["asset"]["extras"]["ffx_model"], model);
+        assert_eq!(doc["nodes"][0]["extras"]["ffx_id"], model);
+        // a bird (object 18): an instance without a node of its own
+        let bird = doc["meshes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["name"] == "FBXASC0498_0Shape")
+            .unwrap();
+        assert_eq!(
+            bird["extras"]["ffx_id"],
+            format!("{model}#FBXASC0498_0Shape/*")
+        );
+        assert_eq!(
+            bird["primitives"][0]["extras"]["ffx_id"],
+            format!("{model}#FBXASC0498_0Shape/0")
+        );
+        // every mesh, its node and every primitive has an ID; parts are unique
+        let mut parts = std::collections::HashSet::new();
+        for (m, mesh) in doc["meshes"].as_array().unwrap().iter().enumerate() {
+            let id = mesh["extras"]["ffx_id"].as_str().unwrap();
+            assert!(
+                id.starts_with(&format!("{model}#")) && id.ends_with("/*"),
+                "{id}"
+            );
+            let node = doc["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|n| n["mesh"] == m)
+                .unwrap();
+            assert_eq!(node["extras"]["ffx_id"], id);
+            for p in mesh["primitives"].as_array().unwrap() {
+                let part = p["extras"]["ffx_id"].as_str().unwrap();
+                assert_eq!(ids::instance_of(part).as_deref(), Some(id));
+                assert!(parts.insert(part.to_owned()), "{part} twice");
+            }
+        }
+        assert!(parts.len() > 100, "{} parts", parts.len());
+        // the textures by their archive path
+        let tex = doc["materials"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find_map(|m| m["extras"]["ffx_texture_ids"]["TextureSampler"].as_str())
+            .unwrap();
+        assert!(
+            tex.starts_with("x:/ffx_data/gamedata/ps3data/map/bsil/bsil00/tex/d3d11/")
+                && tex.ends_with(".dds.phyre"),
+            "{tex}"
+        );
+        assert!(imp.has(&tex[3..]), "{tex} is in the archive");
+        // a second export: the same IDs
+        let again = glb_json(&imp.model_glb(&path).unwrap());
+        let ids_of = |d: &Value| -> Vec<Value> {
+            d["meshes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .flat_map(|m| {
+                    m["primitives"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|p| p["extras"]["ffx_id"].clone())
+                })
+                .collect()
+        };
+        assert_eq!(ids_of(&doc), ids_of(&again));
     }
 
     /// On the player's game (skips without `FFX_GAME_DIR`): the opening's

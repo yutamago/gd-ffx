@@ -10,6 +10,8 @@
 //! ffx-import --game-dir DIR effects <path or level>...   # its materials' effect variants: switches, pass states, inputs
 //! ffx-import --game-dir DIR effect [--wgsl [PASS]] <id>  # one variant (PS3Data/Shaders/X.fx#MD5); --wgsl: its programs as WGSL
 //! ffx-import --game-dir DIR morphs <path or level>...    # its morphing instances (`all`: a census of every map model)
+//! ffx-import --game-dir DIR maps [--json] [LANG...]      # the map catalogue: levels, events, map numbers, places, areas
+//! ffx-import --game-dir DIR parts <path or level>...     # a model's stable part IDs: nodes, instances, parts
 //! ```
 //!
 //! `--game-dir` defaults to `FFX_GAME_DIR`. Only reads the game; writes only
@@ -88,7 +90,7 @@ fn main() -> ExitCode {
             "chr" => imp.import_character(n, &out),
             other => {
                 eprintln!(
-                    "unknown command {other} (map, map2d, chr, devsaves, list, cat, loc, wname, devnames, model)"
+                    "unknown command {other} (map, map2d, chr, devsaves, list, cat, loc, wname, devnames, model, maps, parts)"
                 );
                 return ExitCode::FAILURE;
             }
@@ -486,6 +488,8 @@ fn inspect(imp: &ffx_import::Importer, what: &str, names: &[String]) -> Option<E
         "devnames" => each(names, |n| devnames(imp, n)),
         "exits" => each(names, |n| exits(imp, n)),
         "flash" => flash(imp, names),
+        "maps" => maps(imp, names),
+        "parts" => each(names, |n| parts(imp, n)),
         _ => return None,
     })
 }
@@ -689,4 +693,111 @@ fn devnames(imp: &ffx_import::Importer, n: &str) -> bool {
 fn parse_num(s: &str) -> Option<u32> {
     s.strip_prefix("0x")
         .map_or_else(|| s.parse().ok(), |h| u32::from_str_radix(h, 16).ok())
+}
+
+/// `maps [--json] [LANG...]`: the map catalogue (docs/importer.md, "The map
+/// catalogue"), with place names in the languages given (default all); as
+/// JSON with `--json`, else one line a level and the counts.
+fn maps(imp: &ffx_import::Importer, names: &[String]) -> ExitCode {
+    let as_json = names.iter().any(|n| n == "--json");
+    let langs: Vec<&str> = names
+        .iter()
+        .filter(|n| *n != "--json")
+        .map(String::as_str)
+        .collect();
+    let started = std::time::Instant::now();
+    let c = imp.map_catalogue(&langs);
+    if as_json {
+        println!("{c:#}");
+        return ExitCode::SUCCESS;
+    }
+    let lang = c["languages"][0].as_str().unwrap_or("us").to_owned();
+    let levels = c["levels"].as_array().map_or(&[][..], Vec::as_slice);
+    for l in levels {
+        let events: Vec<String> = l["events"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|e| {
+                format!(
+                    "{}:{:#x}",
+                    e["name"].as_str().unwrap_or("?"),
+                    e["map"].as_u64().unwrap_or(0)
+                )
+            })
+            .collect();
+        println!(
+            "{:<6} {:<10} {:<6} {:<5} {} [{}] {}",
+            l["kind"].as_str().unwrap_or("?"),
+            l["key"].as_str().unwrap_or("?"),
+            l["area"].as_str().unwrap_or("?"),
+            match (l["model_3d"].is_string(), l["model_2d"].is_string()) {
+                (true, true) => "3d+2d",
+                (true, false) => "3d",
+                (false, true) => "2d",
+                (false, false) => "-",
+            },
+            l["place"][lang.as_str()].as_str().unwrap_or("-"),
+            events.join(" "),
+            l["level"].as_str().unwrap_or("?"),
+        );
+    }
+    let count = |kind: &str| levels.iter().filter(|l| l["kind"] == kind).count();
+    let events: usize = levels
+        .iter()
+        .map(|l| l["events"].as_array().map_or(0, Vec::len))
+        .sum();
+    let mut reasons: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    for s in c["skipped"].as_array().into_iter().flatten() {
+        *reasons
+            .entry(s["reason"].as_str().unwrap_or("?").to_owned())
+            .or_default() += 1;
+    }
+    println!(
+        "{} levels: {} field ({events} events), {} battle; {} areas; {} events in eventid.bin, skipped {:?}; {:.2} s",
+        levels.len(),
+        count("field"),
+        count("battle"),
+        c["areas"].as_array().map_or(0, Vec::len),
+        c["events"],
+        reasons,
+        started.elapsed().as_secs_f64(),
+    );
+    ExitCode::SUCCESS
+}
+
+/// `parts <path or level>`: the model's stable part IDs (docs/importer.md,
+/// "Stable part IDs"): the model, its nodes, each instance and its parts.
+fn parts(imp: &ffx_import::Importer, name: &str) -> bool {
+    let path = if name.contains(".dae.phyre") {
+        name.to_string()
+    } else if let Some(p) = imp
+        .map_model(name)
+        .or_else(|| imp.map_layers_model(name))
+        .or_else(|| ffx_import::character_model_path(name).filter(|p| imp.has(p)))
+    {
+        p
+    } else {
+        eprintln!("{name}: not a model, level or character");
+        return false;
+    };
+    match imp.model_ids(&path) {
+        Ok(ids) => {
+            println!("model {}", ids.model);
+            for n in &ids.nodes {
+                println!("node {n}");
+            }
+            for (i, (inst, parts)) in ids.instances.iter().zip(&ids.parts).enumerate() {
+                println!("instance {i} {inst}");
+                for p in parts {
+                    println!("  part {p}");
+                }
+            }
+            true
+        }
+        Err(e) => {
+            eprintln!("{name}: {e}");
+            false
+        }
+    }
 }

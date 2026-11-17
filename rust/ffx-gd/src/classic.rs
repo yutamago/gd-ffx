@@ -275,6 +275,17 @@ impl Classic {
         })
     }
 
+    /// The map catalogue (`ffx_import::Importer::map_catalogue`) as JSON,
+    /// with place names in `languages` (empty: all eight); `None` without
+    /// the archive. The first call reads every event script (a few tenths
+    /// of a second); later ones reuse that.
+    #[must_use]
+    pub fn map_catalogue(&self, languages: &[&str]) -> Option<String> {
+        lock(&self.open)
+            .clone()
+            .map(|o| o.importer.map_catalogue(languages).to_string())
+    }
+
     /// Whether the archive is open.
     #[must_use]
     pub fn is_open(&self) -> bool {
