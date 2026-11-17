@@ -42,15 +42,6 @@ public static class MapStore
         return res;
     }
 
-    /// <summary>Forgets the held resources (null: all), so the next <see cref="Find"/> reads the file again.</summary>
-    public static void Forget(string? key = null)
-    {
-        if (key == null)
-            Held.Clear();
-        else
-            Held.Remove(key);
-    }
-
     /// <summary><paramref name="key"/>'s overrides, a new empty one when the project has none (not written until <see cref="Write"/>).</summary>
     public static MapOverrides GetOrNew(string key)
     {

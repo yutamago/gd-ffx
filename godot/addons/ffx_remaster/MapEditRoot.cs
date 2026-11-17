@@ -214,7 +214,7 @@ public partial class MapEditRoot : Node3D
         Built = true;
         Status = $"{Key}: {Parts.Count} parts ({Time.GetTicksMsec() - t0} ms)";
         GD.Print($"ffx remaster: opened {Level} for editing: {Parts.Count} parts, {CountAdded()} added node(s), "
-            + $"{Foreign.Count} entr(ies) for IDs not on the map ({Time.GetTicksMsec() - t0} ms)");
+            + $"{Foreign.Count} entr(ies) for IDs not on the map, {UnknownAnchors} anchor(s) not on it ({Time.GetTicksMsec() - t0} ms)");
         RemasterPlugin.Instance?.MapBuilt(this);
     }
 

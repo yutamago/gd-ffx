@@ -122,9 +122,5 @@ public sealed class EditorClassic
 }
 
 /// <summary>How "Play" starts the game at a map: developer save <see cref="Save"/> (0: none), every save on it, whether it is on the map itself.</summary>
-public sealed record PlayPlan(int Save, IReadOnlyList<int> Saves, bool OnMap, string Note)
-{
-    /// <summary>The game's command line for the run (after <c>--</c>).</summary>
-    public string Arguments => Save > 0 ? $"--devsave={Save}" : "";
-}
+public sealed record PlayPlan(int Save, IReadOnlyList<int> Saves, bool OnMap, string Note);
 #endif
