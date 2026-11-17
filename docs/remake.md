@@ -153,8 +153,8 @@ A remade scene replaces a whole map. Overrides edit a map part by part:
 the classic import, keyed by its stable part IDs (docs/importer.md,
 "Stable part IDs"), or a remade map's nodes tagged with `ffx_part` the same
 way. They are Godot resources and scenes, made in Godot's editor (the
-remaster plugin, docs/remaster-plan.md R1b, writes them; by hand for now)
-and diffable in git. They hold IDs and original work only, never the
+remaster plugin writes them: docs/remaster-editor.md; or by hand) and
+diffable in git. They hold IDs and original work only, never the
 game's content.
 
 ### The files

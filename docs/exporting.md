@@ -38,7 +38,9 @@ export: the game folder stays user-set (`--game-dir=`, `FFX_GAME_DIR`, or
 `ffx/game/game_dir` in an `override.cfg` beside the program;
 docs/running.md), and the classic content is imported on the player's machine
 into Godot's user data folder (`user://classic`). `export_presets.cfg` also
-excludes a stale `res://classic/` folder.
+excludes a stale `res://classic/` folder, the remaster editor
+(`addons/`, editor only: its C# is compiled only with `TOOLS`) and its map
+edit scenes (`remaster/edit/`; docs/remaster-editor.md).
 
 The Linux export needs glibc 2.34 or newer, which the Steam Deck's SteamOS 3
 has. It hasn't been tried on a Deck yet. Run it headless like the editor
@@ -69,7 +71,7 @@ First, it refuses to export when `godot/` holds files git doesn't track
 (`git status --ignored`). The presets pack every resource under `godot/`,
 so an untracked or ignored file would end up in the export. Only Godot's
 `.godot/`, the generated `.sln`, a `.uid` file holding nothing but a uid,
-and `classic/` (which the presets exclude) are allowed.
+`classic/` and `remaster/edit/` (which the presets exclude) are allowed.
 
 Then, for each platform:
 
@@ -88,6 +90,8 @@ Then, for each platform:
    - the files above are there;
    - there are no game files by name (archives, `.bin`, `.dat`, sound banks,
      saves, ...) and no imported classic content;
+   - the remaster editor is not in it (its scripts, its map edit scenes, its
+     `GdFfx.RemasterEditor` code in the assembly);
    - nothing of the build machine appears, in ASCII or UTF-16 and
      case-insensitively: the home folder, the Linux user name or the Windows
      one (`%USERNAME%` via `cmd.exe` on WSL) as whole words, and any user
