@@ -166,6 +166,8 @@ public sealed class ClassicLibrary
         if (scene != null && GltfExtras.Read(ProjectSettings.GlobalizePath(path)) is { } extras)
         {
             MarkMeshes(state, extras);
+            // the stable part IDs as metadata (before the materials are swapped: the mesh's own keep the texture IDs)
+            Remaster.PartIds.Mark(state, extras, scene);
             ClassicMaterials.Apply(state, extras, scene, texDir);
             // a character's cloth surfaces: their own materials, moved by the game's cloth (ClothView)
             ClothView.Prepare(state, extras, scene);

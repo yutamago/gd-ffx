@@ -24,6 +24,9 @@ public sealed record Content(string Kind, string Id, string Path, bool Remade, N
     /// <summary>What the caller's <c>prepare</c> made of a classic scene on the worker thread (null none).</summary>
     public object? Prepared { get; init; }
 
+    /// <summary>A map's overrides applied to it (docs/remake.md, "Overrides"; null: none).</summary>
+    public Remaster.MapOverrideRuntime? Overrides { get; init; }
+
     /// <summary>
     /// Whether the game poses this character's skeleton: classic always; a remade one unless
     /// its root has the metadata <c>ffx_posed</c> = false (docs/remake.md).
@@ -46,7 +49,10 @@ public static class ContentResolver
     /// game's materials made): on the main thread a map took 0.3 to 0.5 s, a character 10 ms,
     /// each a frame's hitch. Keyed by kind, id and the caller's <c>ticket</c>.
     /// </summary>
-    private static readonly Dictionary<(string Kind, string Id, int Ticket), System.Threading.Tasks.Task<(Node3D? Node, object? Prepared)>> Loading = new();
+    private static readonly Dictionary<(string Kind, string Id, int Ticket), System.Threading.Tasks.Task<Loaded>> Loading = new();
+
+    /// <summary>A classic scene loaded on a worker: the node, the caller's <c>prepare</c>'s result, the map's overrides applied.</summary>
+    private readonly record struct Loaded(Node3D? Node, object? Prepared, Remaster.MapOverrideRuntime? Overrides);
 
     /// <summary>
     /// The content for <paramref name="kind"/> and <paramref name="id"/>, loaded: the remade
@@ -64,7 +70,11 @@ public static class ContentResolver
         if (RemakeRegistry.Find(kind, id) is { } scene && !Failed.Contains((kind, id, scene)))
         {
             if (LoadRemade(kind, id, scene) is { } node)
-                return new Content(kind, id, scene, true, Tag(node, kind, id, scene, true));
+            {
+                var ov = kind == "map" && Remaster.RemasterOverrides.For(id) is { } merged
+                    ? Remaster.MapOverrideRuntime.Apply(node, merged, 1f) : null;
+                return new Content(kind, id, scene, true, Tag(node, kind, id, scene, true)) { Overrides = ov };
+            }
             Failed.Add((kind, id, scene));
             GD.PrintErr($"ffx: remake: {kind} {id}: {scene} did not load; classic instead");
         }
@@ -76,23 +86,31 @@ public static class ContentResolver
             if (!task.IsCompleted)
                 return null;
             Loading.Remove(key);
-            var (node, prepared) = task.IsCompletedSuccessfully ? task.Result : (null, null);
+            var (node, prepared, overrides) = task.IsCompletedSuccessfully ? task.Result : default;
             if (task.Exception is { } e)
                 GD.PrintErr($"ffx: classic {kind} {id}: {e.InnerException?.Message ?? e.Message}");
-            return new Content(kind, id, path, false, node == null ? null : Tag(node, kind, id, path, false)) { Prepared = prepared };
+            return new Content(kind, id, path, false, node == null ? null : Tag(node, kind, id, path, false))
+            {
+                Prepared = prepared,
+                Overrides = overrides,
+            };
         }
         return null;
     }
 
-    private static System.Threading.Tasks.Task<(Node3D? Node, object? Prepared)> Begin(string kind, string id, string path,
+    private static System.Threading.Tasks.Task<Loaded> Begin(string kind, string id, string path,
         System.Func<Node3D, object?>? prepare)
     {
         // a map's own textures (its cube maps) are in PS3Data/<level>tex/
         var texDir = kind == "map" && id.StartsWith('/') && id.EndsWith('/') ? $"PS3Data{id}tex/" : null;
+        // a map's overrides merged here (main thread: they load resources), applied on the worker
+        var merged = kind == "map" ? Remaster.RemasterOverrides.For(id) : null;
         return Background.Run(() => GcTrace.Load($"{kind} {id}", () =>
         {
             var n = ClassicLibrary.Load(path, texDir);
-            return (n, n != null && prepare != null ? prepare(n) : null);
+            // before prepare (the view's object index): a split part is not an object's mesh
+            var ov = n != null && merged != null ? Remaster.MapOverrideRuntime.Apply(n, merged, ClassicLibrary.MapScale) : null;
+            return new Loaded(n, n != null && prepare != null ? prepare(n) : null, ov);
         }));
     }
 

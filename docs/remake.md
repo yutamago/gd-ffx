@@ -147,6 +147,132 @@ Project → Export → a preset with "Export selected resources" →
 `PCKPacker` (in a script) builds one without an export preset, as the self
 test does. Never put files of the game or the classic cache into a pack.
 
+## Overrides (R1)
+
+A remade scene replaces a whole map. Overrides edit a map part by part:
+the classic import, keyed by its stable part IDs (docs/importer.md,
+"Stable part IDs"), or a remade map's nodes tagged with `ffx_part` the same
+way. They are Godot resources and scenes, made in Godot's editor (the
+remaster plugin, docs/remaster-plan.md R1b, writes them; by hand for now)
+and diffable in git. They hold IDs and original work only, never the
+game's content.
+
+### The files
+
+Per map, keyed by its level (`bsil00`):
+
+- `res://remaster/maps/<level>/overrides.tres`: a `MapOverrides` resource
+  (`godot/src/Remaster/MapOverrides.cs`);
+- `res://remaster/maps/<level>/additions.tscn` (optional): nodes to add
+  (or the resource's `Additions` scene).
+
+`MapOverrides`: `Level` (informational: the folder decides), `Status`
+(`Original`, `InProgress`, `Remastered`, `Approved`), `RenderPath`
+(`Classic`, `Remastered`: read by R2), `Notes`, `Parts` (an array of
+`PartOverride`), `Additions`. A `PartOverride` (`PartOverride.cs`) edits one
+part by `Id`; every operation has an `Unset`, so a layer says only what it
+changes:
+
+| Field | Values | Effect |
+|---|---|---|
+| `Id` | part ID | `#<node>/*` an instance, `#<node>/<k>` one segment, `#<node>` a node (relative to the map's classic 3D model), a full `x:/...` ID, or an added node's `x:level/<level>/+<layer>/<name>` |
+| `Remove` | `Remove`, `Keep` | the part is not drawn, nor anything under it; `Keep` undoes an earlier layer's removal |
+| `Visibility` | `Hidden`, `Shown` | hidden whatever the game says; `Shown` undoes an earlier layer's hiding (the game still shows and hides it) |
+| `TransformMode` + `Transform` | `Offset`, `Absolute`, `Game` | `Offset`: on top of the game's placement each frame, `W' = (B W.basis, W.origin + t)` (the transform's basis turns and scales about the part's origin in world axes; its origin moves it, in render units); `Absolute`: the world transform in render space; `Game` undoes an earlier layer's |
+| `Replace` + `Scene` | `Scene`, `Original` | the part is not drawn; the scene is, in the part's frame (its origin and axes, unscaled: render units), following the game's placement and visibility of the part; `Original` undoes an earlier layer's |
+| `Note` | text | why, what next |
+
+An added node is each child of the additions scene's root. Its metadata
+`ffx_anchor` (a part ID) puts it under that part, at the part's origin and
+axes in render units, following it (a bird the game flies); without one it
+sits under the map's root in render space. Its ID is
+`x:level/<level>/+<layer>/<name>` (the layer below), which a later layer
+can edit or remove like any part.
+
+Most classic map instances are placed by the file at the origin, their
+vertices already where they stand: their frame is render space, so a
+replacement or an added node is authored where the part is (open the
+classic import scaled by 10 as a reference, "Spaces" above). Script-moved
+objects (Besaid's birds) are placed by the game each frame and have their
+own frame.
+
+```
+[gd_resource type="Resource" script_class="MapOverrides" load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://src/Remaster/MapOverrides.cs" id="1"]
+[ext_resource type="Script" path="res://src/Remaster/PartOverride.cs" id="2"]
+
+[sub_resource type="Resource" id="up"]
+script = ExtResource("2")
+Id = "#FBXASC0492_0/*"
+TransformMode = 1
+Transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 20, 0)
+
+[resource]
+script = ExtResource("1")
+Level = "bsil00"
+Status = 1
+Parts = Array[ExtResource("2")]([SubResource("up")])
+```
+
+### Layers
+
+A map's overrides come from, in order:
+
+1. `res://remaster/maps/<level>/overrides.tres`, the project's (layer `base`);
+2. each mounted pack's `res://mods/<pack>/remaster/maps/<level>/overrides.tres`,
+   in load order ("Mod packs" above; layer = the pack's name), with its
+   `additions.tscn` beside it;
+3. files registered at run time (`RemasterOverrides.Register`; the checks).
+
+A later layer wins per part ID and per field: a pack can move a part
+another pack hid, and it stays hidden; a `Keep`, `Shown`, `Game` or
+`Original` undoes an earlier layer's edit. Every layer's added nodes are
+added. The status, render path and notes are the last layer's.
+`--no-overrides` turns them all off (the "before").
+`godot/src/Remaster/RemasterOverrides.cs` merges them, once per level
+(`Invalidate` to read again).
+
+### In the game
+
+`ContentResolver` applies a map's overrides when it builds the map's scene
+(`MapOverrideRuntime.Apply`): a classic map's on the loading worker, before
+the view's object index (maps loaded ahead and parked ones keep theirs),
+merged on the main thread when the load starts; a remade map's on the main
+thread. Nothing is freed, so the game's object index, the morphs and the 2D
+layers stay valid:
+
+- a removed part is hidden for good and its surfaces draw nothing (a
+  material whose vertices fall outside the clip volume: no pixels, no
+  shadow), the node stays;
+- a part ID of one segment (`#<node>/<k>`) with an edit is first split off:
+  the surface becomes a child `MeshInstance3D` of its instance (its arrays,
+  morph targets, materials; the object id kept, the instance number not, so
+  the game's object index skips it and its morph is driven as the
+  instance's), and the instance's surface draws nothing. The split part
+  follows its instance;
+- each frame `StateView3D` puts the edits on top of the game's placement of
+  its script-moved objects (`SceneObject` matrices, interpolated) and keeps
+  hidden parts hidden; the parts the game does not place keep their edits
+  relative to their parent; the holders of replacing and added nodes stay
+  at their anchor's origin and axes, unscaled.
+
+The log says what was applied, and every ID the map lacks:
+
+```
+ffx: overrides: bsil00: 5 part(s) over 1 layer(s): selftest (res://remaster/examples/bsil00/overrides.tres)
+ffx: overrides: bsil00 applied: 1 removed, 1 hidden, 2 moved, 1 replaced, 2 added (2 part(s) split off)
+```
+
+### Status
+
+The map catalogue's entry (docs/importer.md, "The map catalogue";
+`MapEntry.State()`) says per map whether it has overrides (any layer) and a
+remade scene (derived), its hand-set status, render path and notes (its
+overrides' last layer), and `Effective`: the hand-set status, but at least
+`InProgress` when the map has overrides or a remade scene.
+`RemasterOverrides.Levels()` lists the levels with overrides.
+
 ## Example and tests
 
 `res://remake/examples/stand_in_character.tscn` is a stand-in made of
@@ -170,6 +296,15 @@ units), so the game's walking (its own collision) keeps them on it. A real
 remade map does the same: it follows the ground the game walks on, which
 the classic import shows.
 
+`res://remaster/examples/bsil00/` is an override set for Besaid beach
+(Godot's shapes and part IDs only): it removes an instance
+(`#FBXASC0494_1/*`), hides one segment (`#polySurface32/0`, the far sea:
+split off), moves an instance up 20 units (`#FBXASC0492_0/*`) and a bird
+the game flies 40 (`#FBXASC0498_0Shape/*`), replaces a hut's thatch
+(`#polySurface4/0`) by a box (`replacement.tscn`), and adds a sphere above
+a hut and one on another bird (`additions.tscn`). It is outside
+`res://remaster/maps/`, so only the check registers it.
+
 ```bash
 cd godot
 # packs: load order, overrides, the convention, instantiation (no game needed)
@@ -178,6 +313,11 @@ godot --headless --path . -- --selftest-mods --no-game
 FFX_GAME_DIR=... godot --headless --path . -- --selftest-remake --devsave=7
 # Besaid beach drawn by the remade example; the player walks over it off the beach
 FFX_GAME_DIR=... godot --headless --path . -- --selftest-remake-map --devsave=7
+# the example overrides on Besaid beach (R1)
+FFX_GAME_DIR=... godot --headless --path . -- --selftest-overrides --devsave=7
+# its pictures, after and before (offscreen, Xvfb)
+FFX_GAME_DIR=... FFX_SHOT_TEST="--selftest-overrides --selftest-timeout=90" ../tools/compare-shot.sh - /tmp/ov-after
+FFX_GAME_DIR=... FFX_SHOT_TEST="--selftest-overrides --selftest-timeout=90 --no-overrides" ../tools/compare-shot.sh - /tmp/ov-before
 ```
 
 `--selftest-mods` reads load orders with disabled packs (and writes one
@@ -198,3 +338,16 @@ time, boots there and checks that the remade map is drawn (not the classic
 one, unscaled), that the player stands within 4 units of its sand, and
 walks the player off the beach to the next map as `--selftest-besaid` does
 (with `--shot=FILE.png` under a renderer, a picture first).
+`--selftest-overrides` registers the example overrides for Besaid beach,
+boots there and checks each edit in the running scene: the removed
+instance is hidden, draws nothing and is still the game's object; the
+hidden segment is split off and hidden while its instance's other surfaces
+still draw; the moved instance is the game's placement plus its offset;
+the replacement sits unscaled in its part's frame; the added nodes are at
+their anchors. Over two seconds the game flies the moved bird, which keeps
+its offset and goes on morphing, and the sphere added on the other bird
+follows it. Then the catalogue's entry: Besaid beach's place in English
+and Japanese, with overrides, status `InProgress`; another map without.
+`--selftest-mods` also layers overrides from two packs (per part and per
+field, the later pack winning). `--overrides-survey` lists the beach's
+instances on screen and the ones the game moves (for picking parts).

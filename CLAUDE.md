@@ -43,6 +43,7 @@ FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/bench.sh [besaid besaid-walk lchb bat
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-besaid --devsave=7)   # G2 check; G5: the walk's map change held, no stand-ins (--transition-shots=DIR under Xvfb); Tidus's cloth placed and moving
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-remake --devsave=7)  # G6: a remade c001 posed by the game
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-remake-map --devsave=7)  # G6: the remade Besaid beach example
+(cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-overrides --devsave=7)  # R1: Besaid's example overrides (remove, hide, move, replace, add) in the running game; the catalogue entry
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-menu --devsave=7)        # G4: the field menu panel (party, gil, time), then Items (--menu-screen=status|abilities|overdrive|sphere-grid|config)
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-battle --devsave=7 --battle=3,0,0)  # G3/G4: battle, HUD, attack, effects, a damage number per hit (--to-results: on to the results screen)
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-ux --devsave=7)   # G5: choice cursor, ESC menu (halt, Change parameters) + options, game speed, F1/F3 boosters, pause
@@ -50,8 +51,9 @@ FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/bench.sh [besaid besaid-walk lchb bat
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-load --documents=/tmp/gd-ffx-sl)  # G5: start-up opening, title, the load screen, load (after the save check; rm the folder after)
 # any check: --check-flash (every Flash movie the game opened/showed has a native screen); --flash-log
 FFX_GAME_DIR=... tools/ux-shots.sh OUT_DIR                 # G5: offscreen pictures of the native screens (Xvfb)
+FFX_GAME_DIR=... FFX_SHOT_TEST="--selftest-overrides --selftest-timeout=90 [--no-overrides]" tools/compare-shot.sh - OUT_DIR  # R1: the overrides' after (before) picture
 (cd godot && godot --headless --path . -- --selftest-saves --no-game)  # G4: the save list reader (no game)
-(cd godot && godot --headless --path . -- --selftest-mods --no-game)   # G6: mod packs, load order, registry (no game)
+(cd godot && godot --headless --path . -- --selftest-mods --no-game)   # G6: mod packs, load order, registry, overrides layered over packs (no game)
 (cd godot && godot --headless --path . -- --selftest-launcher --no-game)   # G6: the launcher (no game; fake folders in /tmp)
 (cd godot && dotnet build)
 (cd rust && cargo run -p ffx-state-cs)                    # regenerate the C# state bindings after an ffx-state change

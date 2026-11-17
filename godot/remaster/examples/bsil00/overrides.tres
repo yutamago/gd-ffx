@@ -1,0 +1,45 @@
+[gd_resource type="Resource" script_class="MapOverrides" load_steps=10 format=3]
+
+[ext_resource type="Script" path="res://src/Remaster/MapOverrides.cs" id="1_maps"]
+[ext_resource type="Script" path="res://src/Remaster/PartOverride.cs" id="2_part"]
+[ext_resource type="PackedScene" path="res://remaster/examples/bsil00/replacement.tscn" id="3_repl"]
+
+[sub_resource type="Resource" id="removed"]
+script = ExtResource("2_part")
+Id = "#FBXASC0494_1/*"
+Remove = 1
+Note = "An instance removed."
+
+[sub_resource type="Resource" id="hidden"]
+script = ExtResource("2_part")
+Id = "#polySurface32/0"
+Visibility = 1
+Note = "One part of an instance hidden: it is split off its instance."
+
+[sub_resource type="Resource" id="moved_static"]
+script = ExtResource("2_part")
+Id = "#FBXASC0492_0/*"
+TransformMode = 1
+Transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 20, 0)
+Note = "Moved up 20 units over the game's placement."
+
+[sub_resource type="Resource" id="moved_bird"]
+script = ExtResource("2_part")
+Id = "#FBXASC0498_0Shape/*"
+TransformMode = 1
+Transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 40, 0)
+Note = "A bird the game flies: 40 units above where the game has it."
+
+[sub_resource type="Resource" id="replaced"]
+script = ExtResource("2_part")
+Id = "#polySurface4/0"
+Replace = 1
+Scene = ExtResource("3_repl")
+Note = "A part replaced by a scene in the part's own space."
+
+[resource]
+script = ExtResource("1_maps")
+Level = "bsil00"
+Status = 1
+Notes = "The overrides check's example (--selftest-overrides): Godot's shapes only, no game data."
+Parts = Array[ExtResource("2_part")]([SubResource("removed"), SubResource("hidden"), SubResource("moved_static"), SubResource("moved_bird"), SubResource("replaced")])
