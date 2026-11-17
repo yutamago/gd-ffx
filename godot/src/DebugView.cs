@@ -553,7 +553,7 @@ public sealed class MapTest(double timeout, string? shot) : ITest
         }
         return Done(true, $"{(c.World.Battle ? "battle" : "field")} {c.World.Level} (map {c.World.Map:x}): {view.Posed.Models} models "
             + $"({view.Posed.PosedBones} bones), {view.ObjectsPlaced} objects ({view.ObjectsUnmatched} without a mesh), {view.Morphed.Meshes} morphing ({view.Morphed.Moved} with a weight), {fx?.Shown.Draws ?? 0} effect draws "
-            + $"({fx?.Shown.Textured ?? 0} textured), distortion {(dv?.Shown.On == true ? "on" : "off")}{Layers(view)}, {Characters(c)}, "
+            + $"({fx?.Shown.Textured ?? 0} textured, {fx?.MissingDraws ?? 0} without their texture), distortion {(dv?.Shown.On == true ? "on" : "off")}{Layers(view)}, {Characters(c)}, "
             + $"global time {view.GlobalTime:F2} s, at {_total:F0} s");
     }
 

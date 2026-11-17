@@ -94,29 +94,64 @@ public partial class EffectDrawView : MeshInstance3D
         /// <summary>The sampler's address modes, D3D11's numbers: 1 wrap, 2 mirror, 3 clamp, 4 border, 5 mirror once.</summary>
         public int AddressU { get; init; } = 1;
         public int AddressV { get; init; } = 1;
+        /// <summary>Whether the draw's shader samples its texture (<c>VSP_ENABLE_TEXTURE</c> of its <see cref="Shader"/> flags).</summary>
+        public bool Textured { get; init; } = true;
+        /// <summary>No depth test (<c>VSP_ZTEST_DISABLE</c>, 0x800: the lens flares, the guide map).</summary>
+        public bool NoDepthTest { get; init; }
+        /// <summary>Writes depth (<c>VSP_ZWRITE_ENABLE</c>, 0x40).</summary>
+        public bool DepthWrite { get; init; }
     }
 
     /// <summary>
-    /// What the game's VFX pixel shader writes (effects-draw.md "What each pixel shader writes"):
-    /// 0 <c>t·2v</c> (straight); 1 premultiplied, <c>a = t.a·2v.a</c>, <c>(a·min(t·2v, 1), a)</c>
-    /// (the textured families under <c>Transparent</c>, the subtract family 0x18 under both); 2 the untextured additive
-    /// <c>(2·v.a·v.rgb, v.a)</c> (0x2, 0x3); 3 <c>a = 2v.a</c>, <c>(a·v.rgb, a)</c> (0x0, 0x10).
+    /// The VSP flags of the shaders the game's <c>vfxShader_fx.txt</c> lists (each line's
+    /// <c>VSP_*</c> bits ORed; the bit values from the file's own comment block). A draw gets the
+    /// shader of its flags; flags not listed get the shader of their bit 8 alone
+    /// (<c>ClassDynamicGeometry_SetShader_006a4800</c>'s retry; effects-draw.md "Shaders").
+    /// </summary>
+    private static readonly HashSet<uint> ShaderFlags =
+    [
+        0x8, 0xa, 0x9, 0x1, 0xb, 0x0, 0x18, 0x28, 0x10, 0x20, 0x2, 0x48, 0x100048, 0x8048, 0x4a, 0x49, 0x4b,
+        0x40, 0x58, 0x68, 0x50, 0x42, 0x8a, 0x240, 0x248, 0x8248, 0x3, 0x19, 0x29, 0x408, 0x80a, 0x802, 0x11,
+        0x8b, 0x40000000, 0x808, 0x1000, 0x249, 0x848, 0x2848, 0x4000, 0x98, 0x20000000, 0x08000000,
+        0x10000000, 0x800a, 0x10000, 0x80b, 0x803, 0x400, 0x208, 0x01000008, 0x02000008, 0x02000000,
+        0x20248, 0x20008, 0x108, 0x40000, 0x80008, 0x80000000,
+    ];
+
+    /// <summary>The flags of the shader a draw with VSP flags <paramref name="flags"/> is drawn with (<see cref="ShaderFlags"/>).</summary>
+    public static uint Shader(uint flags) => ShaderFlags.Contains(flags) ? flags : flags & 0x8;
+
+    /// <summary>
+    /// What the game's VFX pixel shader writes (effects-draw.md "What each pixel shader writes"),
+    /// by the flags of the shader the draw gets (<see cref="Shader"/>): 0 <c>t·2v</c> (straight);
+    /// 1 premultiplied, <c>a = t.a·2v.a</c>, <c>(a·min(t·2v, 1), a)</c> (the textured families
+    /// under <c>Transparent</c>, the textured subtract family 0x18 under both); 2 the untextured
+    /// additive <c>(2·v.a·v.rgb, v.a)</c> (0x2, 0x3); 3 <c>a = 2v.a</c>, <c>(a·v.rgb, a)</c> (the
+    /// other untextured ones, 0x0, 0x10). The families not decoded (z-write, no z-test, clut, ...)
+    /// are taken as their decoded kin: textured or not, additive or not, subtract.
     /// </summary>
     public static int Form(uint flags, int technique)
     {
-        var family = flags & 0x7fffffff & ~0x1000u;
-        if (family is 0x2 or 0x3)
-            return 2;
-        if (family is 0x0 or 0x10)
-            return 3;
-        // the subtract family premultiplies in both techniques (effects-draw.md: "the same")
-        if (family is 0x18 || family is 0x8 or 0x9 or 0xa or 0xb && technique == TechTransparent)
+        var shader = Shader(flags);
+        if ((shader & 0x8) == 0)
+            return (shader & 0x2) != 0 ? 2 : 3;
+        if ((shader & 0x10) != 0 || technique == TechTransparent)
             return 1;
         return 0;
     }
 
     /// <summary>The look of a draw from its captured blend (its first shader pass), else from its flags.</summary>
-    public static Look LookOf(Draw d) => BlendLook(d) with { AddressU = d.AddressU, AddressV = d.AddressV };
+    public static Look LookOf(Draw d)
+    {
+        var shader = Shader(d.Flags);
+        return BlendLook(d) with
+        {
+            AddressU = d.AddressU,
+            AddressV = d.AddressV,
+            Textured = (shader & 0x8) != 0 || d.Texture == FrameBufferName,
+            NoDepthTest = (shader & 0x800) != 0,
+            DepthWrite = (shader & 0x40) != 0,
+        };
+    }
 
     private static Look BlendLook(Draw d)
     {
@@ -200,14 +235,20 @@ public partial class EffectDrawView : MeshInstance3D
     /// </summary>
     public const int Priority = 127;
 
-    private static readonly Shader[] Shaders =
-    [
-        Make("blend_mix"), Make("blend_add"), Make("blend_sub"), Make("blend_premul_alpha"),
-    ];
+    /// <summary>The shaders by blend (0 mix, 1 add, 2 subtract, 3 premultiplied), depth test off and depth write (made when first used).</summary>
+    private static readonly Shader?[] Shaders = new Shader?[16];
 
-    private static Shader Make(string blend) => new()
+    private static Shader ShaderOf(Look look)
     {
-        Code = "shader_type spatial;\nrender_mode unshaded, cull_disabled, depth_draw_never, " + blend + ";\n" + @"
+        int k = look.Blend * 4 + (look.NoDepthTest ? 1 : 0) + (look.DepthWrite ? 2 : 0);
+        return Shaders[k] ??= Make(look.Blend switch { 1 => "blend_add", 2 => "blend_sub", 3 => "blend_premul_alpha", _ => "blend_mix" }
+            + (look.DepthWrite ? ", depth_draw_always" : ", depth_draw_never")
+            + (look.NoDepthTest ? ", depth_test_disabled" : ""));
+    }
+
+    private static Shader Make(string modes) => new()
+    {
+        Code = "shader_type spatial;\nrender_mode unshaded, cull_disabled, " + modes + ";\n" + @"
 uniform sampler2D tex : filter_linear_mipmap, repeat_enable;
 uniform sampler2D tex_clamp : filter_linear_mipmap, repeat_disable;
 uniform bool flip_v = true;
@@ -423,10 +464,16 @@ void fragment() {
     private bool TryTex(string name, out Texture2D? t)
     {
         if (_textures.TryGetValue(name, out t))
-            return true;
+        {
+            // a texture not found is read again a few times (a second apart) before it is given up
+            if (t != null || !_failed.TryGetValue(name, out var f) || f.Tries >= ReadTries || Time.GetTicksMsec() < f.Next)
+                return true;
+            _textures.Remove(name);
+        }
         if (name.Length == 0 || name == "NoTexture")
         {
             _textures[name] = null;
+            _failed[name] = (ReadTries, 0);
             return true;
         }
         if (!_loading.TryGetValue(name, out var task))
@@ -441,8 +488,26 @@ void fragment() {
         var img = task.IsCompletedSuccessfully ? task.Result : null;
         t = img == null ? null : ImageTexture.CreateFromImage(img);
         _textures[name] = t;
+        if (t == null)
+        {
+            var tries = (_failed.TryGetValue(name, out var f) ? f.Tries : 0) + 1;
+            _failed[name] = (tries, Time.GetTicksMsec() + 1000);
+            if (tries == ReadTries && Missing.Add(name))
+                GD.Print($"ffx effects: texture \"{name}\" not found in the archive: its draws are not drawn");
+        }
+        else
+            _failed.Remove(name);
         return true;
     }
+
+    /// <summary>How often a texture that is not found is read before its draws are given up.</summary>
+    private const int ReadTries = 3;
+
+    /// <summary>Textures not found so far: the reads made and when the next may be.</summary>
+    private readonly Dictionary<string, (int Tries, ulong Next)> _failed = new();
+
+    /// <summary>The texture names no read found (logged once each; for tests).</summary>
+    public static HashSet<string> Missing { get; } = new();
 
     /// <summary>A run-time texture's image from the archive, with mipmaps (a worker thread).</summary>
     private static Image? ReadImage(string name)
@@ -454,14 +519,24 @@ void fragment() {
         return img;
     }
 
-    /// <summary>The material of a (texture, look), null while its texture is still being read.</summary>
+    /// <summary>
+    /// The material of a (texture, look), null while its texture is still being read or when a
+    /// textured shader's texture is not found (<see cref="Missing"/>: such a draw is not drawn, as
+    /// a flat quad of the vertex colour, the white boxes of the sun's glare, is never right).
+    /// </summary>
     private ShaderMaterial? Material(string texture, Look look)
     {
+        // an untextured shader samples nothing, whatever name the segment holds
+        if (!look.Textured)
+            texture = "";
         if (_materials.TryGetValue((texture, look), out var m))
             return m;
-        if (texture != FrameBufferName && !_textures.ContainsKey(texture) && !TryTex(texture, out _))
+        Texture2D? t = null;
+        if (look.Textured && texture != FrameBufferName && !TryTex(texture, out t))
             return null;
-        m = new ShaderMaterial { Shader = Shaders[look.Blend], RenderPriority = Priority };
+        if (look.Textured && texture != FrameBufferName && t == null)
+            return null;
+        m = new ShaderMaterial { Shader = ShaderOf(look), RenderPriority = Priority };
         m.SetShaderParameter("form", look.Form);
         m.SetShaderParameter("alpha_one", look.AlphaOne);
         m.SetShaderParameter("zero_colour", look.ZeroColour);
@@ -474,14 +549,19 @@ void fragment() {
             _materials[(texture, look)] = m;
             return m;
         }
-        if (!TryTex(texture, out var t))
-            return null;
         m.SetShaderParameter("textured", t != null);
         if (t != null)
             { m.SetShaderParameter("tex", t); m.SetShaderParameter("tex_clamp", t); }
         _materials[(texture, look)] = m;
         return m;
     }
+
+    /// <summary><c>FFX_EFFECT_LOG=1</c>: each kind of draw (flags, technique, texture, look) printed once.</summary>
+    private static readonly bool LogDraws = System.Environment.GetEnvironmentVariable("FFX_EFFECT_LOG") == "1";
+    private static readonly HashSet<(uint, int, string, Look)> Logged = new();
+
+    /// <summary>Draws of the last frame shown not drawn because their texture was not found (for tests).</summary>
+    public int MissingDraws { get; private set; }
 
     public override void _Process(double delta)
     {
@@ -559,6 +639,7 @@ void fragment() {
         if (frame == null || frame.Value.Draws.Count == 0)
         {
             HideParts(0);
+            MissingDraws = 0;
             Shown = (0, 0, s.Update);
             Textures.Clear();
             return;
@@ -577,6 +658,9 @@ void fragment() {
             if (d.IndexCount == 0 || d.Vertices == 0 || !Drawn(d.Pass))
                 continue;
             var look = LookOf(d);
+            if (LogDraws && Logged.Add((d.Flags, d.Technique, d.Texture, look)))
+                GD.Print($"ffx effects: flags 0x{d.Flags:x} (shader 0x{Shader(d.Flags):x}) technique {d.Technique} pass {d.Pass} key 0x{d.Key:x} "
+                    + $"texture \"{d.Texture}\" {look}, colour {geo.Colours[d.First]}");
             if (look.Skip)
                 continue;
             var k = (d.Texture, look);
@@ -592,7 +676,7 @@ void fragment() {
         }
         if (_arrays.Count != (int)Mesh.ArrayType.Max)
             _arrays.Resize((int)Mesh.ArrayType.Max);
-        int textured = 0, parts = 0;
+        int textured = 0, parts = 0, missing = 0;
         Textures.Clear();
         var surf = _surface;
         for (int gi = 0; gi < used; gi++)
@@ -617,7 +701,12 @@ void fragment() {
             if (surf.IndexCount == 0)
                 continue;
             if (Material(tex, look) is not { } mat)
-                continue; // its texture is still being read
+            {
+                // its texture is still being read, or not found (not drawn)
+                if (Missing.Contains(tex))
+                    missing += list.Count;
+                continue;
+            }
             // straight from the kept arrays into Godot's packed arrays (no array of the exact size made)
             // (the variants disposed once copied, no blend shapes or LODs made: Variants)
             Variants.Set(_arrays, (int)Mesh.ArrayType.Vertex, surf.Positions.AsSpan(0, surf.VertexCount));
@@ -637,6 +726,7 @@ void fragment() {
         }
         HideParts(parts);
         Parts = parts;
+        MissingDraws = missing;
         Shown = (frame.Value.Draws.Count, textured, s.Update);
     }
 
