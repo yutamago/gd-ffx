@@ -36,10 +36,10 @@ public partial class PartOverride : Resource
     /// <summary>Free text (why, what to do next).</summary>
     [Export(PropertyHint.MultilineText)] public string Note { get; set; } = "";
 
-    /// <summary>A copy (the scene shared).</summary>
+    /// <summary>A copy (the scene shared; the ID in its file kept, so a save keeps it).</summary>
     public PartOverride Copy() => new()
     {
         Id = Id, Remove = Remove, Visibility = Visibility, TransformMode = TransformMode, Transform = Transform,
-        Replace = Replace, Scene = Scene, Note = Note,
+        Replace = Replace, Scene = Scene, Note = Note, ResourceSceneUniqueId = ResourceSceneUniqueId,
     };
 }

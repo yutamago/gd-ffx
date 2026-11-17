@@ -141,26 +141,30 @@ public static class MapStore
     }
 
     /// <summary>
-    /// Fixed IDs in the text file at <paramref name="path"/>, so a save that changes nothing
-    /// changes no byte: the scripts <c>1</c> and <c>2</c>, each replacement scene
-    /// <c>s_&lt;hash of its path&gt;</c>, each part <c>p_&lt;hash of its ID&gt;</c>. (Godot keeps an
-    /// external resource's ID on that resource, per file that refers to it.)
+    /// Stable IDs in the text file at <paramref name="path"/>, so a save that changes nothing
+    /// changes no byte: the IDs the file already had (Godot keeps an external resource's ID on
+    /// that resource, per file that refers to it; a part's on the part), else fixed ones: the
+    /// scripts <c>1</c> and <c>2</c>, each replacement scene <c>s_&lt;hash of its path&gt;</c>,
+    /// each part <c>p_&lt;hash of its ID&gt;</c>.
     /// </summary>
     private static void StableIds(MapOverrides res, string path)
     {
-        if (res.GetScript().As<Script>() is { } a)
-            a.SetIdForPath(path, "1");
+        static void Ext(Resource? r, string path, string id)
+        {
+            if (r != null && r.GetIdForPath(path).Length == 0)
+                r.SetIdForPath(path, id);
+        }
+        Ext(res.GetScript().As<Script>(), path, "1");
         var seen = new HashSet<string>();
         foreach (var p in res.Parts)
         {
-            if (p.GetScript().As<Script>() is { } b)
-                b.SetIdForPath(path, "2");
-            var id = $"p_{Hash(p.Id)}";
+            Ext(p.GetScript().As<Script>(), path, "2");
+            var id = p.ResourceSceneUniqueId is { Length: > 0 } had ? had : $"p_{Hash(p.Id)}";
             while (!seen.Add(id))
                 id += "x";
             p.ResourceSceneUniqueId = id;
             if (p.Scene is { ResourcePath: { Length: > 0 } s })
-                p.Scene.SetIdForPath(path, $"s_{Hash(s)}");
+                Ext(p.Scene, path, $"s_{Hash(s)}");
         }
     }
 

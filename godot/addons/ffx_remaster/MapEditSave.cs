@@ -126,7 +126,7 @@ public static class MapEditSave
                 node.Name = name;
             var copy = (Node3D)node.Duplicate();
             copy.Name = name;
-            copy.Transform = root.Frame(anchor).AffineInverse() * node.GlobalTransform;
+            copy.Transform = Snap(root.Frame(anchor).AffineInverse() * node.GlobalTransform);
             if (anchor != null)
                 PartIds.SetString(copy, "ffx_anchor", anchor.Short(root.Model));
             scene.AddChild(copy);

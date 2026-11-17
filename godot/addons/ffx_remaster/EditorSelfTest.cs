@@ -44,6 +44,13 @@ public sealed class EditorSelfTest
     private int _frames;
     private bool _finished;
     private readonly Dictionary<string, Transform3D> _before = new();
+
+    /// <summary>
+    /// <c>--remaster-editor-roundtrip</c>: DIR already holds an override set for Besaid beach
+    /// (e.g. the R1a example's files): opened, its edits must show, and saved without an edit it
+    /// must say the same.
+    /// </summary>
+    private readonly bool _roundTrip = GameSettings.Flag("remaster-editor-roundtrip");
     private Transform3D _boxWorld;
 
     public EditorSelfTest(RemasterPlugin plugin)
@@ -147,6 +154,13 @@ public sealed class EditorSelfTest
                     return _phaseT > 150 ? $"the map did not open ({_plugin.Current?.Status ?? "no edit scene"})" : null;
                 if (root.Map == null)
                     return root.Status;
+                if (_roundTrip)
+                {
+                    if (RoundTrip(root) is { } rt)
+                        return rt;
+                    Next(Phase.Done);
+                    return null;
+                }
                 if (CheckBuilt(root) is { } bad)
                     return bad;
                 Next(Phase.Edit);
@@ -226,6 +240,75 @@ public sealed class EditorSelfTest
             return $"edits on a map without overrides: {root.Order.First(p => root.MarksOf(p) != PartMarks.None).Id}";
         _seen.Add($"bsil00 opened: {root.Order.Count} parts by ID ({instances} instances, {segments} segments as their own nodes)");
         return null;
+    }
+
+    private string? RoundTrip(MapEditRoot root)
+    {
+        var path = MapStore.PathOf(Key);
+        if (ResourceLoader.Load(path, "", ResourceLoader.CacheMode.Ignore) is not MapOverrides before)
+            return $"{path}: no overrides to open";
+        var addBefore = Additions(MapStore.AdditionsPathOf(Key));
+        // the file's edits shown as edits
+        foreach (var p in before.Parts)
+        {
+            if (!root.Parts.TryGetValue(Full(p.Id), out var info))
+                return $"{p.Id}: not on the map";
+            var want = PartMarks.None;
+            if (p.Remove == RemoveOp.Remove)
+                want |= PartMarks.Removed;
+            if (p.Visibility == VisibilityOp.Hidden)
+                want |= PartMarks.Hidden;
+            if (p.TransformMode is TransformOp.Offset or TransformOp.Absolute && p.Remove != RemoveOp.Remove)
+                want |= PartMarks.Moved;
+            if (p.Replace == ReplaceOp.Scene)
+                want |= PartMarks.Replaced;
+            if (p.Note.Length > 0)
+                want |= PartMarks.Noted;
+            if (root.MarksOf(info) != want)
+                return $"{p.Id}: shown as {root.MarksOf(info)}, the file says {want}";
+        }
+        var added = root.Added();
+        if (added.Count != addBefore.Count)
+            return $"{added.Count} added node(s) shown, the file has {addBefore.Count}";
+        foreach (var (node, anchor) in added)
+            if (!addBefore.TryGetValue(node.Name, out var a) || (anchor?.Short(root.Model) ?? "") != a.Anchor)
+                return $"{node.Name}: anchored to {anchor?.Short(root.Model)}";
+        int edits = root.Order.Count(p => root.MarksOf(p) != PartMarks.None);
+        // saved without an edit: the same entries and additions
+        if (_plugin.SaveMap(root) is not { Ok: true })
+            return "the save failed";
+        if (ResourceLoader.Load(path, "", ResourceLoader.CacheMode.Ignore) is not MapOverrides after)
+            return "the saved file does not read back";
+        static string Say(PartOverride p) =>
+            $"{p.Id} {p.Remove} {p.Visibility} {p.TransformMode} {p.Replace} {p.Scene?.ResourcePath} {p.Note}";
+        var a0 = before.Parts.OrderBy(p => p.Id, System.StringComparer.Ordinal).ToList();
+        var a1 = after.Parts.OrderBy(p => p.Id, System.StringComparer.Ordinal).ToList();
+        if (a0.Count != a1.Count)
+            return $"{a1.Count} entries saved, the file had {a0.Count}";
+        for (int i = 0; i < a0.Count; i++)
+            if (Say(a0[i]) != Say(a1[i]) || !a0[i].Transform.IsEqualApprox(a1[i].Transform))
+                return $"saved {Say(a1[i])} {a1[i].Transform}, the file had {Say(a0[i])} {a0[i].Transform}";
+        if (after.Status != before.Status || after.Notes != before.Notes || after.RenderPath != before.RenderPath)
+            return "the status, notes or render path changed";
+        var addAfter = Additions(MapStore.AdditionsPathOf(Key));
+        foreach (var (name, (anchor, t)) in addBefore)
+            if (!addAfter.TryGetValue(name, out var x) || x.Anchor != anchor || !x.Place.IsEqualApprox(t))
+                return $"addition {name}: saved {x}, the file had {anchor} {t}";
+        _seen.Add($"round trip: {before.Parts.Count} entries ({edits} parts shown edited) and {addBefore.Count} additions opened and saved back the same");
+        return null;
+    }
+
+    /// <summary>An additions scene's nodes: name, anchor, place.</summary>
+    private static Dictionary<string, (string Anchor, Transform3D Place)> Additions(string path)
+    {
+        var r = new Dictionary<string, (string, Transform3D)>();
+        if ((ResourceLoader.Load(path, "", ResourceLoader.CacheMode.Ignore) as PackedScene)?.Instantiate() is not { } root)
+            return r;
+        for (int i = 0; i < root.GetChildCount(); i++)
+            if (root.GetChild(i) is Node3D n)
+                r[n.Name] = (PartIds.GetString(n, "ffx_anchor") ?? "", n.Transform);
+        root.Free();
+        return r;
     }
 
     private EditorUndoRedoManager Undo => _plugin.GetUndoRedo();

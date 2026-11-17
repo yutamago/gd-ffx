@@ -7,7 +7,9 @@
 #     part, a box added at a part, undo/redo, save (into OUT_DIR/maps, not the
 #     project), the map opened again, the status, the play plan;
 #  2. the game on developer save 7 with those saved overrides
-#     (--selftest-saved-overrides): every edit where the editor showed it.
+#     (--selftest-saved-overrides): every edit where the editor showed it;
+#  3. the R1a example's hand-written overrides opened in the editor, shown as
+#     edits, and saved back with the same meaning (--remaster-editor-roundtrip).
 #
 #   FFX_GAME_DIR=<game> tools/remaster-editor-check.sh [OUT_DIR]
 #
@@ -39,4 +41,12 @@ game=$?
 rm -rf "$out/docs"
 grep -E '^ffx selftest: (PASS|FAIL)' "$out/game.log" | tail -1 || echo "ffx selftest: no result (exit $game, see $out/game.log)"
 [[ $game -eq 0 ]] || exit 1
+# 3. the R1a example's hand-written set opened in the editor and saved back unchanged
+mkdir -p "$out/roundtrip/bsil00"
+cp "$repo/godot/remaster/examples/bsil00/overrides.tres" "$repo/godot/remaster/examples/bsil00/additions.tscn" "$out/roundtrip/bsil00/"
+timeout 400 "$repo/tools/capped.sh" "$godot" --headless --editor --path . -- --remaster-editor-test --remaster-editor-roundtrip \
+    --remaster-maps="$out/roundtrip" >"$out/roundtrip.log" 2>&1
+rt=$?
+grep -E '^ffx editortest: (PASS|FAIL)' "$out/roundtrip.log" | tail -1 || echo "ffx editortest: no result (exit $rt, see $out/roundtrip.log)"
+[[ $rt -eq 0 ]] || exit 1
 echo "remaster-editor-check: PASS (logs and files in $out)"
