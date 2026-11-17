@@ -28,6 +28,7 @@ public partial class FfxGame : RefCounted
         public static readonly StringName classic_texture = "classic_texture";
         public static readonly StringName classic_texture_is_cube = "classic_texture_is_cube";
         public static readonly StringName classic_map_catalogue = "classic_map_catalogue";
+        public static readonly StringName classic_dev_saves = "classic_dev_saves";
         public static readonly StringName decode_text = "decode_text";
         public static readonly StringName effect_draws = "effect_draws";
         public static readonly StringName effect_draws_address = "effect_draws_address";
@@ -420,6 +421,19 @@ public partial class FfxGame : RefCounted
     {
         using var v = Node.Call(M.classic_map_catalogue, languages);
         return v.AsString();
+    }
+
+    /// <summary>
+    /// The developers' saves in the player's archive: (save number 1..110, the map number its
+    /// load jumps to, entrance, scenario); empty without the archive.
+    /// </summary>
+    public (int Save, int Map, int Entrance, int Scenario)[] ClassicDevSaves()
+    {
+        var a = Node.Call(M.classic_dev_saves).AsInt32Array();
+        var r = new (int, int, int, int)[a.Length / 4];
+        for (int i = 0; i < r.Length; i++)
+            r[i] = (a[4 * i], a[4 * i + 1], a[4 * i + 2], a[4 * i + 3]);
+        return r;
     }
 
     /// <summary>Whether the material texture at <paramref name="path"/> is a cube map.</summary>

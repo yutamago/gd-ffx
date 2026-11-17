@@ -163,6 +163,17 @@ impl std::fmt::Debug for Importer {
     }
 }
 
+/// A developer save (`Importer::dev_saves`): where its load starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DevSave {
+    /// 1..=110, as `--devsave=N` and `request_devsave` take it.
+    pub number: u16,
+    /// The map number (`World.map`) its load jumps to.
+    pub map: u16,
+    pub entrance: u16,
+    pub scenario: u16,
+}
+
 impl Importer {
     /// Opens `game_dir`'s `data/FFX_Data.vbf` (only reads it).
     ///
@@ -216,6 +227,31 @@ impl Importer {
         self.archive
             .read(entry)
             .map_err(|e| Error::Archive(format!("{path}: {e}")))
+    }
+
+    /// The developers' saves (`savesforviewer/1..110`) the archive holds:
+    /// each one's number, the map and entrance its load jumps to (the save
+    /// data block at `+0x40`: `+0xba`, `+0xb8`) and its scenario
+    /// (`+0xbec`; ffx-rust's docs/harness.md, "Developer saves").
+    #[must_use]
+    pub fn dev_saves(&self) -> Vec<DevSave> {
+        (1..=110u16)
+            .filter_map(|n| {
+                let b = self
+                    .read(&format!("ffx_data/gamedata/ps3data/savesforviewer/{n}"))
+                    .ok()?;
+                let u16_at = |o: usize| {
+                    b.get(0x40 + o..0x40 + o + 2)
+                        .map_or(0, |s| u16::from_le_bytes([s[0], s[1]]))
+                };
+                Some(DevSave {
+                    number: n,
+                    map: u16_at(0xba),
+                    entrance: u16_at(0xb8),
+                    scenario: u16_at(0xbec),
+                })
+            })
+            .collect()
     }
 
     /// The Flash movie `name` (`chocobo.swf`, from

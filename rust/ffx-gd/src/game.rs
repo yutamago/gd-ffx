@@ -159,8 +159,15 @@ fn run_game(
 
 /// The game, as a node: add it to the scene tree, call `start`, read
 /// `state` every frame and pass it the input events.
+///
+/// A tool class: the editor (gd-ffx's remaster plugin,
+/// docs/remaster-editor.md) uses its classic functions (`classic_open`,
+/// `classic_request`, `classic_map_catalogue`, the textures) without
+/// booting the game; a class without `tool` is only a placeholder there.
+/// The editor keeps it out of the scene tree, so `process` (the pads) does
+/// not run in it.
 #[derive(GodotClass)]
-#[class(base = Node)]
+#[class(tool, base = Node)]
 pub struct FfxGame {
     base: Base<Node>,
     run: Option<Run>,
@@ -783,6 +790,20 @@ impl FfxGame {
         classic()
             .map_catalogue(&langs)
             .map_or_else(GString::new, |s| GString::from(s.as_str()))
+    }
+
+    /// The developers' saves in the player's archive, four numbers each:
+    /// the save (1..=110, as `request_devsave` and `--devsave=N` take it),
+    /// the map number its load jumps to (`World.map`), the entrance and
+    /// the scenario; empty without the archive (`classic_open`).
+    #[func]
+    fn classic_dev_saves(&self) -> PackedInt32Array {
+        classic()
+            .dev_saves()
+            .iter()
+            .flat_map(|d| [d.number, d.map, d.entrance, d.scenario])
+            .map(i32::from)
+            .collect()
     }
 
     /// Whether the material texture at `path` is a cube map.

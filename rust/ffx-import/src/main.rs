@@ -451,23 +451,15 @@ fn effect(imp: &ffx_import::Importer, args: &[String]) -> ExitCode {
 /// `+0xb8`, the scenario at `+0xbec` (ffx-rust's docs/harness.md,
 /// "Developer saves").
 fn devsaves(imp: &ffx_import::Importer) -> ExitCode {
-    for n in 1..=110 {
-        let path = format!("ffx_data/gamedata/ps3data/savesforviewer/{n}");
-        let Ok(b) = imp.read(&path) else {
-            println!("{n:3}: missing");
-            continue;
-        };
-        let u16_at = |o: usize| {
-            b.get(o..o + 2)
-                .map_or(0, |s| u16::from_le_bytes([s[0], s[1]]))
-        };
-        let block = 0x40;
-        println!(
-            "{n:3}: map {:#06x} entrance {:#04x} scenario {}",
-            u16_at(block + 0xba),
-            u16_at(block + 0xb8),
-            u16_at(block + 0xbec)
-        );
+    let saves = imp.dev_saves();
+    for n in 1..=110u16 {
+        match saves.iter().find(|s| s.number == n) {
+            Some(s) => println!(
+                "{n:3}: map {:#06x} entrance {:#04x} scenario {}",
+                s.map, s.entrance, s.scenario
+            ),
+            None => println!("{n:3}: missing"),
+        }
     }
     ExitCode::SUCCESS
 }

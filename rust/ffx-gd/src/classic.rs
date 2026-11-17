@@ -286,6 +286,16 @@ impl Classic {
             .map(|o| o.importer.map_catalogue(languages).to_string())
     }
 
+    /// The developers' saves (`ffx_import::Importer::dev_saves`); empty
+    /// without the archive.
+    #[must_use]
+    pub fn dev_saves(&self) -> Vec<ffx_import::DevSave> {
+        lock(&self.open)
+            .clone()
+            .map(|o| o.importer.dev_saves())
+            .unwrap_or_default()
+    }
+
     /// Whether the archive is open.
     #[must_use]
     pub fn is_open(&self) -> bool {
