@@ -737,7 +737,16 @@ counter, the walls, the floor), the characters on it; the back door is open
 because the game hides its closed layer at that moment of the save (the
 shown flags). Saves 14
 (ptkl14) and 34 (mihn03) show their rooms with the characters behind the
-foreground (before: grey planes, black). The sweep's 2D saves (14, 34, 35,
+foreground (before: grey planes, black). Besaid village's huts (`bsvr04`,
+`05`, `06`, `09`, reached from the village `bsvr00`; a playtester saw the
+background slide against the characters in one): developer save 8 with
+`--walk=right:3,down:3.5,up:2.6,down:1.4,right:5,up:6,down:2.5,left:2,up:2
+--shots=24` walks into the weavers' hut `bsvr05` (11 layers, squeezed) and
+back and forth in it; the window pans, the camera's offset from -0.257 to
+0.263, and the two weavers at the loom move with the painted room: from
+offset -0.092 to 0.263 the loom and the bench move 128 pixels up, the
+weavers 127 and 128 (0.355 x 360 = 127.8), Tidus's feet on the floor in
+every picture. The sweep's 2D saves (14, 34, 35,
 50, 52, 56, 71, 80, 83, 108) pass with no errors.
 
 Not done yet: the layers' texture animation (`textureanimation.ags`, the
@@ -827,7 +836,36 @@ the game gets from `ViewProjection2` (traced only as the main camera's).
   a white wedge over a third of the picture (61.5 / 255 against the new
   picture), in Macalania (save 61) the no-depth-test mist covered the
   whole screen in white (139.6 / 255); now the glare is faint and the woods
-  misty with the pyreflies as small lights. An
+  misty with the pyreflies as small lights. Besaid village (where a
+  playtester saw "the sun and sun glare is a white rectangle" over the
+  temple square; no developer save starts outdoors there: from save 8,
+  `--walk=right:3,down:3.5,up:2.6,up+right:3.4` leaves the lodge `bsvr02`
+  for `bsvr00` and stops before the temple) draws the same flares, `0x80a`
+  with `map/bsvr/bsvr00/fp/tex` textures; offscreen the square shows the
+  sun as a soft glow above the temple and, the camera turned up 30 degrees
+  (`--camera-pitch=30`), as a bright core with rays in a halo, under
+  Compatibility and under Forward+ (Vulkan on lavapipe), no rectangle.
+
+  **Unset vertex colours.** Some captured draws index vertices whose colour
+  is no colour the game writes (`FFX_EFFECT_LOG=1` prints the first of each
+  kind, `odd colour`): the allocator's fill `0xcdcdcdcd` (-4.3e8 as a
+  float) or stale numbers such as (2303, -241, 0, 2623). At Besaid village
+  the lens flare's ring quad (`bsvr00`, key lo `0xd`, texture
+  `13888_19_0_0_128_64`, 16 vertices) holds `0xcdcdcdcd` on every vertex,
+  in the sky by the sun; the village's other effects (keys lo 5, 7, 0x271b)
+  and a battle effect texture (`15456_...`) stale numbers. Under the
+  premultiplied form (`a min(t c, 1)`, `a = t.a c.a`, both factors hugely
+  negative) such a triangle is white wherever the texture's alpha is not
+  0. `EffectDrawView` leaves out triangles with a vertex colour outside
+  0..8 or not finite (`EffectDrawView.Unset`; `--keep-unset-colours`
+  draws them, for comparing); the map check counts the draws
+  (`N with unset vertex colours so far`). With them or without, the
+  pictures above are the same (the flare's rings are faint), so this is a
+  guard rather than the cause of what the playtester saw; where the values
+  come from (an array slot the capture reads that the game did not fill,
+  or the game's own) is for ffx-rust's capture.
+
+  An
   untextured shader samples nothing, whatever name the segment holds; the
   shader's `VSP_ZTEST_DISABLE` (0x800) draws without the depth test,
   `VSP_ZWRITE_ENABLE` (0x40) writes depth. A textured shader's texture

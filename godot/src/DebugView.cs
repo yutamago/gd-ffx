@@ -664,7 +664,7 @@ public sealed class MapTest(double timeout, string? shot) : ITest
         }
         return Done(true, $"{(c.World.Battle ? "battle" : "field")} {c.World.Level} (map {c.World.Map:x}): {view.Posed.Models} models "
             + $"({view.Posed.PosedBones} bones), {view.ObjectsPlaced} objects ({view.ObjectsUnmatched} without a mesh), {view.Morphed.Meshes} morphing ({view.Morphed.Moved} with a weight), {fx?.Shown.Draws ?? 0} effect draws "
-            + $"({fx?.Shown.Textured ?? 0} textured, {fx?.MissingDraws ?? 0} without their texture), distortion {(dv?.Shown.On == true ? "on" : "off")}{Layers(view)}, {Characters(c)}, "
+            + $"({fx?.Shown.Textured ?? 0} textured, {fx?.MissingDraws ?? 0} without their texture, {EffectDrawView.UnsetSeen} with unset vertex colours so far), distortion {(dv?.Shown.On == true ? "on" : "off")}{Layers(view)}, {Characters(c)}, "
             + $"global time {view.GlobalTime:F2} s{BattleTest.ClothNote()}, at {_total:F0} s");
     }
 
@@ -722,6 +722,17 @@ public sealed class MapTest(double timeout, string? shot) : ITest
 
     private void Release() => Hold([]);
 
+    /// <summary>The player character's field position (", player at (x, y, z)"), for following a walk in the log.</summary>
+    private static string PlayerAt(Snapshot? c)
+    {
+        if (c == null)
+            return "";
+        foreach (var a in c.Actors)
+            if (a.Player)
+                return $", player at ({a.Position.X:F0}, {a.Position.Y:F0}, {a.Position.Z:F0})";
+        return "";
+    }
+
     /// <summary>
     /// <c>--walk=KEYS:SECONDS[,KEYS:SECONDS...]</c>: each leg's keys (arrow names, joined by
     /// <c>+</c>) held for its seconds in turn, then released and 2 s more; true while walking,
@@ -744,7 +755,8 @@ public sealed class MapTest(double timeout, string? shot) : ITest
             var file = shot[..^4] + $"-{_walkShots}.png";
             (Engine.GetMainLoop() as SceneTree)!.Root.GetViewport().GetTexture().GetImage().SavePng(file);
             var cur = GameHost.Instance?.View.Current;
-            GD.Print($"ffx selftest: picture {file} (walking, {t:F2} s, {cur?.World.Level})");
+            var p = GameProjection.Last;
+            GD.Print($"ffx selftest: picture {file} (walking, {t:F2} s, {cur?.World.Level}{PlayerAt(cur)}, camera offset ({p.Offset.X:F3}, {p.Offset.Y:F3}))");
         }
         double end = 0;
         int leg = -1;
@@ -761,9 +773,9 @@ public sealed class MapTest(double timeout, string? shot) : ITest
         if (!keys.SequenceEqual(_heldKeys))
         {
             if (leg >= 0)
-                GD.Print($"ffx selftest: walking {legs[leg].Names} for {legs[leg].Seconds:F1} s (at {t:F2} s, {GameHost.Instance?.View.Current?.World.Level})");
+                GD.Print($"ffx selftest: walking {legs[leg].Names} for {legs[leg].Seconds:F1} s (at {t:F2} s, {GameHost.Instance?.View.Current?.World.Level}{PlayerAt(GameHost.Instance?.View.Current)})");
             else
-                GD.Print($"ffx selftest: walked {string.Join(",", legs.Select(l => $"{l.Names}:{l.Seconds:F1}"))} ({GameHost.Instance?.View.Current?.World.Level})");
+                GD.Print($"ffx selftest: walked {string.Join(",", legs.Select(l => $"{l.Names}:{l.Seconds:F1}"))} ({GameHost.Instance?.View.Current?.World.Level}{PlayerAt(GameHost.Instance?.View.Current)})");
             Hold(keys);
         }
         return t < total + 2;

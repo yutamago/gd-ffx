@@ -182,6 +182,10 @@ public partial class StateView3D : Node3D
         if (cam is { } c)
         {
             _camera.GlobalTransform = c.Transform;
+            // a check's view (--camera-pitch=DEG): the game's camera turned up by DEG degrees
+            // about its own x axis (the sky over a map, where the game's camera does not look)
+            if (CameraPitch != 0)
+                _camera.RotateObjectLocal(Vector3.Right, Mathf.DegToRad(CameraPitch));
             _camera.Far = Mathf.Clamp(c.Far, 100f, 20000f);
             GameProjection.Apply(_camera, c, _mapLevel.Length > 0);
             // the game's screen shake (Effects.ShakeX/Y, in the PS2 screen's pixels, 448 high):
@@ -559,6 +563,9 @@ public partial class StateView3D : Node3D
             return;
         }
     }
+
+    private static readonly float CameraPitch =
+        float.TryParse(GameSettings.Arg("camera-pitch"), System.Globalization.CultureInfo.InvariantCulture, out var deg) ? deg : 0f;
 
     private static MeshInstance3D? FirstMesh(Node n)
     {
