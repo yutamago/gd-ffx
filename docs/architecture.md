@@ -452,8 +452,9 @@ weights[k])`; so does gd-ffx.
   The frame of update `n` is captured in the render after update `n`; were it
   not there yet when snapshot `n` shows, the previous update's cloth is drawn
   at alpha 1 until it comes (where the bones are at the interval's start).
-  Measured, it always is: 0 of 128 updates late in the battle below (the
-  checks' notes: `0 of N frame(s) after their snapshot`).
+  Measured: 0 of 128 updates late in the battle below, 11 of 15,475 over the
+  110 developer saves' map checks (the checks' notes: `N of M frame(s) after
+  their snapshot`).
 - **The shader** mixes the skinned position (Godot's `VERTEX` after skinning,
   taken to world space by `MODEL_MATRIX`) with the texel pair's position,
   interpolated by `ffx_cloth_alpha` (the view's alpha, set each frame: the
@@ -468,7 +469,9 @@ each update, at most 0.014 units an update standing still (ffx-rust's probe
 found the same); save 29 (Luca's stadium), `c105`: 2 segments, 181 vertices,
 117 simulated, up to 0.62 units an update; save 12 in battle 34 (its own party:
 Tidus, Yuna, Lulu): 38 segments, 1,991 vertices, 1,433 simulated, all moving,
-no segment without a surface. Offscreen (Compatibility, `FFX_CLOTH_DEBUG=1`):
+no segment without a surface. The sweep of the 110 developer saves
+(`tools/sweep-devsaves.sh`): all pass, every save shows characters with
+cloth (1 to 9 of them), all moving, no segment without a surface. Offscreen (Compatibility, `FFX_CLOTH_DEBUG=1`):
 Tidus's hood, jacket hem and shorts green (on the skin, as anchors and short
 cloth are); Yuna's long sleeves red (hanging away from the arm's skinned pose)
 and changing shape from picture to picture, joined at the shoulder; her skirt
