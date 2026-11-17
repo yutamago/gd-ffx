@@ -6,7 +6,7 @@ but does need their own copy of the game.
 
 ```bash
 tools/capped.sh tools/export.sh [linux|windows|all]     # a development export (see "Licences")
-FFX_GD_FEATURES=swf,dev-unicorn tools/capped.sh tools/export.sh all   # a development export with Unicorn (never distribute)
+FFX_GD_FEATURES=dev-unicorn tools/capped.sh tools/export.sh all   # a development export with Unicorn (never distribute)
 ```
 
 Exports are heavy (two release builds of ffx-rust and Godot's export), so
@@ -136,7 +136,8 @@ execute bit (`chmod +x`), or WSL refuses to run them (exit 126).
 
 ## Licences
 
-- **The default build has no Unicorn** (since 2026-11-17; features `swf`):
+- **The default build has no Unicorn** (since 2026-11-17; no features, so
+  no Ruffle either):
   no GPL code, and the notices step fails if any GPL-family crate is left in
   the tree. ffx-rust runs the whole game without Unicorn: all 110 developer
   saves pass the sweep with such a build.

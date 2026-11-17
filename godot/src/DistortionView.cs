@@ -118,9 +118,7 @@ void fragment() {
             {
                 _clean.World3D = GetViewport().FindWorld3D();
                 _cleanCamera.GlobalTransform = main.GlobalTransform;
-                _cleanCamera.Fov = main.Fov;
-                _cleanCamera.Near = main.Near;
-                _cleanCamera.Far = main.Far;
+                GameProjection.Copy(main, _cleanCamera);
                 _cleanCamera.Environment = main.Environment;
                 _cleanCamera.Current = true;
             }

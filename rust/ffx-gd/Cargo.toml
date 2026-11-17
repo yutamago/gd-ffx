@@ -12,15 +12,18 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [features]
-# Unicorn-free by default since 2026-11-17: ffx-rust runs the whole game without
-# it (all 110 developer saves pass gd-ffx's sweep), and with the Flash screens.
-default = ["swf"]
+# No features by default (since 2026-11-17): no Unicorn (ffx-rust runs the whole
+# game without it: all 110 developer saves pass gd-ffx's sweep) and no Ruffle
+# (gd-ffx draws every screen natively with Godot: docs/architecture.md,
+# "Native UI"; the sweep and the self-checks pass without it).
+default = []
 # Development only, as in ffx-rust: functions without a Rust port run in
 # Unicorn from the player's FFX.exe. Unicorn is GPL-2.0: never in a build for
 # others (docs/building.md, "Features").
 dev-unicorn = ["ffx-host/dev-unicorn"]
-# Iggy's Flash screens on Ruffle (heavy: wgpu). Without it the start-up
-# logos are skipped and the Flash screens are null.
+# Iggy's Flash screens on Ruffle inside ffx-host (heavy: wgpu), for
+# comparing with the original only: gd-ffx shows none of them. Without it the
+# Flash screens are null (the start-up logos are skipped either way).
 swf = ["ffx-host/swf"]
 
 [dependencies]

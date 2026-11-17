@@ -61,14 +61,20 @@ dependencies of a debug build too).
 
 ### Features
 
-- `swf` (default): the remaster's Flash (Iggy) screens on Ruffle. Heavy
-  (wgpu). Without it (`FFX_GD_FEATURES=none`) the start-up logos are skipped
-  and the Flash screens are empty.
+No feature is on by default (since 2026-11-17): the default build has
+neither Unicorn nor Ruffle, and gd-ffx draws every screen natively with
+Godot (docs/architecture.md, "Native UI"). All 110 developer saves pass
+`tools/sweep-devsaves.sh` and every self-check passes with such a build.
+
+- `swf`: the remaster's Flash (Iggy) screens on Ruffle inside ffx-host.
+  Heavy (wgpu). gd-ffx shows none of them (the game runs on the null
+  graphics device); only for comparing with ffx-rust's own runs. Without it
+  the Flash screens are null; the start-up logos are skipped either way.
 - `dev-unicorn` (off by default since 2026-11-17): development only, as in
   ffx-rust. Functions of the game without a Rust port run in Unicorn, from
   your own `FFX.exe`. ffx-rust runs the whole game without it now (all 110
   developer saves pass `tools/sweep-devsaves.sh` without Unicorn, 0 errors).
-  Unicorn is GPL-2.0: a build with it (`FFX_GD_FEATURES=swf,dev-unicorn`) is
+  Unicorn is GPL-2.0: a build with it (`FFX_GD_FEATURES=dev-unicorn`) is
   never given to others.
 
 ## The Godot project

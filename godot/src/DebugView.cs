@@ -541,7 +541,8 @@ public sealed class BesaidTest(double timeout, string? shot) : ITest
 /// battle map is shown with the classic content, character models posed by the game, and it
 /// stays up for 3 seconds; reports the level, models, bones, objects, effect draws, the
 /// distortion, the characters the game draws and whether it is a battle (with <c>--shot=FILE.png</c>
-/// and a renderer, a picture; with <c>--walk=KEYS:SECONDS</c>, after walking).
+/// and a renderer, a picture; with <c>--walk=KEYS:SECONDS</c>, after walking, and with
+/// <c>--shots=N</c> N - 1 more during the walk).
 /// </summary>
 public sealed class MapTest(double timeout, string? shot) : ITest
 {
@@ -605,6 +606,7 @@ public sealed class MapTest(double timeout, string? shot) : ITest
     }
 
     private bool _held;
+    private int _walkShots;
 
     /// <summary>
     /// <c>--walk=KEYS:SECONDS</c>: the keys (arrow names, joined by <c>+</c>) held for that long
@@ -621,6 +623,16 @@ public sealed class MapTest(double timeout, string? shot) : ITest
             "up" => Key.Up, "down" => Key.Down, "left" => Key.Left, "right" => Key.Right, _ => Key.None,
         }).Where(k => k != Key.None).ToArray();
         bool hold = t < seconds;
+        // --shots=N with a shot: N - 1 pictures during the walk, evenly spaced to its end
+        // (NAME-1.png, ...), the last one (NAME.png) after it
+        if (shot != null && DisplayServer.GetName() != "headless" && int.TryParse(GameSettings.Arg("shots"), out var n) && n > 1
+            && _walkShots < n - 1 && t >= (_walkShots + 1) * seconds / (n - 1))
+        {
+            _walkShots++;
+            var file = shot[..^4] + $"-{_walkShots}.png";
+            (Engine.GetMainLoop() as SceneTree)!.Root.GetViewport().GetTexture().GetImage().SavePng(file);
+            GD.Print($"ffx selftest: picture {file} (walking, {t:F2} s)");
+        }
         if (hold != _held)
         {
             _held = hold;
@@ -636,7 +648,9 @@ public sealed class MapTest(double timeout, string? shot) : ITest
     private static string Layers(StateView3D view)
     {
         var l = view.Layers.State;
-        return l.Layers == 0 ? "" : $", 2D layers {l.Shown}/{l.Layers} (scene {l.Scene}, pan {(l.Live ? l.Pan.ToString("F3") : "not read")})";
+        var p = GameProjection.Last;
+        var camera = $", camera aspect {p.Aspect:F3}{(p.Squeezed ? " squeezed" : "")} offset ({p.Offset.X:F3}, {p.Offset.Y:F3}), {GameProjection.Mismatched} mismatched";
+        return l.Layers == 0 ? camera : $", 2D layers {l.Shown}/{l.Layers} (scene {l.Scene}, pan {(l.Live ? l.Pan.ToString("F3") : "not read")})" + camera;
     }
 
     private bool Done(bool pass, string note)

@@ -53,10 +53,11 @@ FFX_GAME_DIR=... tools/ux-shots.sh OUT_DIR                 # G5: offscreen pictu
 (cd godot && dotnet build)
 (cd rust && cargo run -p ffx-state-cs)                    # regenerate the C# state bindings after an ffx-state change
 tools/capped.sh tools/export.sh [linux|windows|all]       # standalone program in build/<platform>/ (docs/exporting.md)
-FFX_GD_FEATURES=swf,dev-unicorn tools/capped.sh tools/export.sh all  # with Unicorn: development only, never distribute
+FFX_GD_FEATURES=dev-unicorn tools/capped.sh tools/export.sh all  # with Unicorn: development only, never distribute
 FFX_GAME_DIR=... tools/capped.sh build/linux/gd-ffx.x86_64 --headless -- --selftest --documents=/tmp/gd-ffx-docs   # the export's check
 ```
 
-The default features (swf) have no Unicorn (since 2026-11-17); an export
-with dev-unicorn contains Unicorn (GPL-2.0): never distribute it. Exports need Godot's .NET export templates
+The extension has no default features (since 2026-11-17): no Unicorn, no
+Ruffle (`swf`); every screen is drawn natively by Godot. An export with
+dev-unicorn contains Unicorn (GPL-2.0): never distribute it. Exports need Godot's .NET export templates
 (docs/exporting.md).

@@ -150,7 +150,7 @@ public partial class MapLayers : Node3D
     private static readonly StringName G_ffx_layer_far = "ffx_layer_far", G_ffx_layer_window = "ffx_layer_window";
 
     /// <summary>Shows the layers the game draws now and sets the window (once a frame).</summary>
-    public void Tick(GdFfx.Api.Snapshot? snapshot, int map, float cameraFar)
+    public void Tick(GdFfx.Api.Snapshot? snapshot, int map, float cameraFar, GameStateView.CameraFrame? camera = null)
     {
         ClassicMaterials.EnsureGlobals();
         RenderingServer.GlobalShaderParameterSet(G_ffx_layer_far, cameraFar * 0.99f);
@@ -170,10 +170,15 @@ public partial class MapLayers : Node3D
             if (on)
                 shown++;
         }
-        float b = live?.Pan ?? 0.035f;
-        var window = live is { Squeezed: false }
-            ? new Vector4(0, 1, live.ShiftX, live.ShiftY)
-            : new Vector4(1f / 3f - 2f * b, 4f / 3f, live?.ShiftX ?? 0, live?.ShiftY ?? 0);
+        // the window: the same scene terms as the main camera's adjustment, interpolated with it
+        // (GameStateView.Camera), so the characters stay on the picture while it pans; the
+        // layer pass leaves the map's own term (map_pan) out
+        float b = camera?.Pan ?? live?.Pan ?? 0.035f;
+        bool squeezed = camera?.Squeezed ?? live?.Squeezed ?? true;
+        var shift = camera?.Shift ?? new Vector2(live?.ShiftX ?? 0, live?.ShiftY ?? 0);
+        var window = squeezed
+            ? new Vector4(0.33333337f - 2f * b, GameProjection.Squeeze, shift.X, shift.Y)
+            : new Vector4(0, 1, shift.X, shift.Y);
         RenderingServer.GlobalShaderParameterSet(G_ffx_layer_window, window);
         State = (_layers.Count, shown, scene, b, live != null);
     }
