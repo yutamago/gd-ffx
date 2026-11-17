@@ -36,6 +36,14 @@ own documents folder, so the original's settings and saves are untouched.
   control. `ffx-import devsaves` lists them all (docs/importer.md).
 - `--no-classic`: no classic content (markers and skeletons only; remade
   content still shows).
+- `--stand-ins`: with classic content, draw the stand-ins too (a prism,
+  skeleton points and the model's name for a character whose model is not
+  loaded, particles for an effect without captured draws); without the
+  flag such a character is not drawn (docs/architecture.md, "Map
+  transitions").
+- `--no-hold`: do not hold the picture while a map change loads;
+  `--no-prefetch`: do not load the next map ahead (nor keep the last map
+  and the characters' models); both for comparing.
 - `--mods=DIR` (repeatable): mount the `*.pck` mod packs of `DIR` after
   those of `user://mods/`; `--no-mods`: none (docs/remake.md).
 
@@ -46,8 +54,11 @@ own documents folder, so the original's settings and saves are untouched.
 - **the 3D view** (`StateView3D`): the game's own camera, the classic map
   of the level the game loaded, and each character as its classic model
   posed by the game's skeleton (docs/importer.md), from the game-state API
-  at the display's frame rate (interpolated between the game's updates);
-  a marker with skeleton points until a model is imported;
+  at the display's frame rate (interpolated between the game's updates),
+  each once its model is loaded (a marker with skeleton points only without
+  classic content or with `--stand-ins`); a map change holds the last
+  picture (or black, with the game's fade) until the next map and its
+  characters are ready, and the next map is loaded ahead;
 - **the message boxes** (`MessageView`, G4): the game's dialogue, subtitles
   and choices as native Godot panels at the game's places, the text decoded
   from your archive in the game's language (Japanese, Korean and Chinese
@@ -568,7 +579,11 @@ in a native message box, decoded (`--shot=FILE.png` under Xvfb).
 
 `--selftest-besaid --devsave=7` (G2): Besaid's classic map and the
 characters' models posed, then a walk down and left off the beach to the
-next map (`0x14`); `--no-walk` checks that the map stays without input,
+next map (`0x14`), whose map change must be held with no frame of
+characters over another map than theirs and no stand-in, and shown within
+20 s (its `ffx: transition` line in the result; `--transition-shots=DIR`
+under Xvfb: a picture every 50 ms from the map change request);
+`--no-walk` checks that the map stays without input,
 `--shot=FILE.png` takes a picture when Godot renders (not with
 `--headless`: under Xvfb, `xvfb-run -a godot --display-driver x11
 --rendering-driver opengl3 ...`, nothing shows on screen).
@@ -590,7 +605,10 @@ renders.
 
 The battle check (`--selftest-battle`) also waits for the target selection
 (Attack's first confirm): the native menu names the target and a hand
-points at it (`--shot`: `NAME-target.png` too).
+points at it (`--shot`: `NAME-target.png` too). It counts the hits from the
+snapshots (an HP change, a monster leaving with HP left) and fails when the
+HUD popped another number of damage numbers; with `--to-results` also when
+no killing blow popped.
 
 `--selftest-remake --devsave=7` and `--selftest-mods --no-game` (G6):
 remade content and mod packs (docs/remake.md); `--selftest-launcher --no-game`:

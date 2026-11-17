@@ -176,8 +176,8 @@ remake registry and, from `GameHost.Start`, mounts the mod packs
 (docs/remake.md); `GameHost` (an autoload) owns the game (booted in
 `Start`), its input and the view;
 `StateView3D` draws the camera, the classic map and the characters'
-classic models posed by the game (docs/importer.md), markers until they
-are imported; `DebugView` is the overlay (F12).
+classic models posed by the game (docs/importer.md), each once its model
+is loaded (markers only without classic content: "Map transitions"); `DebugView` is the overlay (F12).
 
 ## Map materials
 
@@ -381,6 +381,89 @@ the beach (save 7), is a character culled or skipped while the old test
 showed it. A playtester's upside-down character inside a cliff there is
 not explained by this yet. `--walk=KEYS:SECONDS` makes the map check walk
 before its picture (`FFX_SHOT_ARGS="--walk=up:25" tools/compare-shot.sh`).
+
+## Map transitions (G5)
+
+A playtester saw the characters of the next map over the old one before the
+new map came up, and coloured prisms, bone spheres and floating names (and
+particle bursts) until models loaded. Both came from drawing each part as
+soon as it was there: the snapshot has the new map's characters at once
+(their places, the new camera), while its map took 0.3 to 4 s to load.
+
+- **The hold** (`StateView3D.UpdateTransition`, `TransitionView`). A map
+  change starts when the snapshot's level is not the map shown (the game
+  started a new map), while the game holds its update for a load
+  (`World.scene_loading`), or once its map change request
+  (`World.map_change`) has the screen black (a fade to or from black at
+  1). It ends when the map is shown (and on a field map its 2D layers), the
+  game loads nothing, and every character the game draws has its model; or
+  after 10 s (an import not seen before). Meanwhile `TransitionView`, in the
+  overlay above the screen fade and filters and below the message boxes and
+  menus, covers the 3D view with the last frame drawn (the viewport's
+  picture, taken once), black from the moment the game's fade is black (and
+  before any map was shown). So the new map and its characters come up
+  together, with the game's fade-in where it is by then. The map change
+  request alone does not hold while the screen is not black, so the game's
+  fade-out plays. `--no-hold` turns the hold off (the old behaviour, for
+  comparing).
+- **No stand-ins with classic content.** A character whose model is not
+  loaded is not drawn; the stand-ins (the prism, the skeleton points, the
+  model's name; `EffectView`'s particle burst for an effect without
+  captured draws) are made only without classic content or with
+  `--stand-ins` (`StateView3D.StandIns`). A character appearing later on
+  the same map is not drawn until its model is loaded (no hold).
+- **Kept models and maps.** A character's model goes to a pool (16 models)
+  when its character leaves, for the next one with that model: the party
+  is the same characters re-created on each map. The map left last is kept
+  out of the tree with its object index, for the way back.
+- **Loading ahead** (`MapPrefetch`). Where the player goes: while
+  `World.map_change` is set, `World.map` is its target; else the current
+  map's exits, the maps its event script jumps to with constant arguments.
+  `ffx-import`'s `exits` reads them: the event of each map number from
+  `event/header/eventid.bin` (as the game's `initEventList` reads it:
+  `(offset, _)` pairs, the first offset over 8 the count, the names at the
+  offsets; map `0x46` is `bsil0000`, `0x14` `bsil0200`), the event's `.ebp`
+  decoded with ffx-rust's `ffx-script`, and each call of `0x0011`
+  `Native_MapChange`, `0x00ab` `Native_00ab_MapChange` or `0x010c`
+  `Native_010c_MapChangeDefault` whose two arguments (map, entrance) are
+  pushed just before it as constants (`pushimm`, `pushc`). 402 map numbers
+  have an event, with 1,307 such calls; the beach has one (to `0x14`),
+  `bsil0200` four. The level is the event name's map (`bsil0200`:
+  `/map/bsil/bsil02/`); a wrong guess only loads a map that is not used.
+  The extension reads them on a thread (`FfxGame.map_exits`, `ready` false
+  until done). Each candidate's map and 2D layers are imported one at a
+  time (the extension's import threads), and the first candidate's scene
+  (and the map change's target) is built on a worker
+  (`ContentResolver.Start`, the same key the view's `Resolve` takes it by);
+  at most one is held, the older dropped. Under the headless dummy
+  renderer, whose loads run on the main thread, only the imports.
+  `--no-prefetch` turns loading ahead, the pool and the kept map off.
+- **The log.** Each change prints `ffx: transition FROM -> TO: shown N ms
+  after the game's new level (its map, where it came from: loaded ahead,
+  kept, loaded then; the 2D layers, the game's load, the characters' models),
+  M ms after its map change request, held H ms`.
+
+Measured (2026-11-17, the Besaid check's walk off the beach to `0x14`,
+developer save 7, offscreen under Xvfb (OpenGL on llvmpipe, loads on
+workers), the machine shared with another agent's jobs; "after the new
+level": the snapshot's level `bsil02` to the picture shown; "after the
+request": from `World.map_change` set):
+
+| Cache | | after the new level | after the request | peak memory |
+|---|---|---|---|---|
+| warm (imported before) | before (`--no-prefetch --no-hold`) | 1,213 ms, 15 to 18 frames of Tidus over the beach | 2,103 ms | 2.44 GB |
+| | hold, no loading ahead (`--no-prefetch`) | 1,048 to 2,807 ms, held | 2,075 to 4,056 ms | 2.25 to 2.30 GB |
+| | now | **0 ms** (loaded ahead) | 775 to 1,009 ms | 2.53 to 2.77 GB |
+| cold (a new cache) | hold, no loading ahead | 3,917 to 3,997 ms | 4,750 to 5,031 ms | 2.32 GB |
+| | now | **0 ms** (imported and loaded on the beach) | 1,023 to 1,043 ms | 2.53 GB |
+
+What remains after the request is the game's own: its fade out, the black
+it holds and its load (`TkInitScene`), before its new level. Headless, the
+maps load inline on the main thread, so the change shows in the frame of the
+new level either way (the check's 1,006 ms held are that black). The
+pictures (`--transition-shots`): before, the new map's camera and Tidus at
+his new place over the beach for 15 frames; now the beach, then black (the
+game's fade), then the next map with Tidus in its fade-in.
 
 ## The map's objects
 
@@ -637,7 +720,11 @@ the game gets from `ViewProjection2` (traced only as the main camera's).
   quarter or less yellow) by the names the player gave (`Save.members`),
   the turn order by the turn counter (lowest next), and damage numbers: a
   battler's HP change between snapshots, popped over its body (damage
-  white, healing green), rising and fading over 1.2 s. Party battler `i`
+  white, healing green), rising and fading over 1.2 s; a monster that dies
+  with a death pattern leaves `Snapshot.battlers` in the update of the blow,
+  its HP never seen at 0, so its last HP pops as the killing blow (the
+  overkill beyond it is not in the snapshot; before, kills showed no number:
+  the deck battle popped 1 number for 3 hits, now 3). Party battler `i`
   is the party actor with id `i + 1`; monster `0x14 + k` the k-th monster
   actor by slot (seen in the deck's battle; `BattleHudView.ActorOf`).
 

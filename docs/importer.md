@@ -153,6 +153,7 @@ cargo run --release -p ffx-import -- --game-dir <game> effect --wgsl Transparent
 cargo run --release -p ffx-import -- --game-dir <game> loc us 0x1cd 0x1d0 0x1ce   # localisation kit lines (the config's PC row)
 cargo run --release -p ffx-import -- --game-dir <game> wname jp [kana]            # every w_name record's gear names, per character
 cargo run --release -p ffx-import -- --game-dir <game> devnames 7                 # a developer save's 18 names, decoded in jp and us
+cargo run --release -p ffx-import -- --game-dir <game> exits 0x46 0x14            # a map's event and the maps its script jumps to (docs/architecture.md, "Map transitions")
 cargo run --release -p ffx-import -- --game-dir <game> cat <archive path> > /tmp/x # a file's raw bytes
 ```
 
