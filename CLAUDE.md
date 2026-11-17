@@ -38,6 +38,7 @@ here: `docs/architecture.md`, `docs/building.md`, `docs/running.md`,
 export FFX_RUST_DIR=/path/to/ffx-rust            # optional: a local ffx-rust
 tools/build-extension.sh [linux|windows] [build|clippy|test]
 FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/selftest.sh    # headless check (start-up opening natively, snapshots, Start)
+FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/sweep-devsaves.sh   # the map check on 10 saves covering every kind of map (`all`: all 110, for importer/shader/loading changes and releases)
 FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/bench.sh [besaid besaid-walk lchb battle battle-cloth]  # G5: frame times, views' CPU, GC, hitches (docs/running.md "Benchmark")
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-besaid --check-autosave --devsave=7)  # G4: a real autosave read back by the save list
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-besaid --devsave=7)   # G2 check; G5: the walk's map change held, no stand-ins (--transition-shots=DIR under Xvfb); Tidus's cloth placed and moving

@@ -230,15 +230,36 @@ the game's values, the game's glow, then the decode: docs/architecture.md,
 ## Sweeping the developer saves
 
 ```bash
-FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/sweep-devsaves.sh [FIRST LAST] [OUT_DIR]
+FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/sweep-devsaves.sh [quick|all|N,N,...|FIRST LAST] [OUT_DIR]
 ```
 
-Runs the map check (`--selftest-map`) headless on each developer save
-(1..110 by default), one at a time through `tools/capped.sh`: the save's
+Runs the map check (`--selftest-map`) headless on developer saves, one at
+a time through `tools/capped.sh`. By default (`quick`) on ten saves that
+between them cover every kind of map and feature the full sweep has
+caught problems in, about 4 minutes:
+
+| Save | Map | Covers |
+|---|---|---|
+| 7 | Besaid beach | 3D, objects, morphs (birds), effects, distortion, save sphere, cloth |
+| 8 | Besaid village | 3D, the exits to the village and its huts |
+| 12 | S.S. Liki corridor | a squeezed 2D room |
+| 14 | Kilika | 2D layers |
+| 22 | Luca harbour | a busy map (13 characters) |
+| 29 | Luca stadium | an NPC's cloth |
+| 52 | Rin's travel agency | a 2D room with a reference picture |
+| 61 | Macalania | mist and pyrefly effects |
+| 62 | Bikanel | the desert, the sun's flare |
+| 71 | Bevelle | a 2D scene switch |
+
+`all` runs every developer save (1..110, about 50 minutes): for changes
+that touch everything (the importer's format, the shaders, the loading
+path) and before a release. A list (`7,22,52`) or a range (`1 20`) runs
+those. For each save: the save's
 map or battle map shown with classic content and posed characters for
 3 seconds. One line a save: PASS/FAIL with the level, models, objects,
 effect draws and distortion, and the log's error and missing-classic
-counts (logs in `/tmp/gd-ffx-sweep`). About 25 s a save. `FFX_CLASSIC=DIR`
+counts (logs in `/tmp/gd-ffx-sweep`, cleared at the start). About 25 s a
+save. `FFX_CLASSIC=DIR`
 uses that classic cache instead of the project's.
 
 ## Benchmark
