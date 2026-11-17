@@ -1,4 +1,4 @@
-[gd_scene load_steps=16 format=3]
+[gd_scene load_steps=17 format=3]
 
 [ext_resource type="Script" path="res://src/StateView3D.cs" id="1_view"]
 [ext_resource type="Script" path="res://src/DebugView.cs" id="2_debug"]
@@ -15,6 +15,7 @@
 [ext_resource type="Script" path="res://src/FpsView.cs" id="13_fps"]
 [ext_resource type="Script" path="res://src/PauseView.cs" id="14_pause"]
 [ext_resource type="Script" path="res://src/OptionsView.cs" id="15_opt"]
+[ext_resource type="Script" path="res://src/TransitionView.cs" id="16_trans"]
 
 [node name="Main" type="Node"]
 
@@ -49,6 +50,13 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 mouse_filter = 2
 script = ExtResource("5_flt")
+
+[node name="TransitionView" type="ColorRect" parent="Overlay"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+script = ExtResource("16_trans")
 
 [node name="MessageView" type="Control" parent="Overlay"]
 layout_mode = 3

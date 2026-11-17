@@ -70,15 +70,9 @@ public static class ContentResolver
         }
         if (classic?.Path(kind, id) is { } path)
         {
-            // a map's own textures (its cube maps) are in PS3Data/<level>tex/
-            var texDir = kind == "map" && id.StartsWith('/') && id.EndsWith('/') ? $"PS3Data{id}tex/" : null;
             var key = (kind, id, ticket);
             if (!Loading.TryGetValue(key, out var task))
-                Loading[key] = task = Background.Run(() => GcTrace.Load($"{kind} {id}", () =>
-                {
-                    var n = ClassicLibrary.Load(path, texDir);
-                    return (n, n != null && prepare != null ? prepare(n) : null);
-                }));
+                Loading[key] = task = Begin(kind, id, path, prepare);
             if (!task.IsCompleted)
                 return null;
             Loading.Remove(key);
@@ -89,6 +83,42 @@ public static class ContentResolver
         }
         return null;
     }
+
+    private static System.Threading.Tasks.Task<(Node3D? Node, object? Prepared)> Begin(string kind, string id, string path,
+        System.Func<Node3D, object?>? prepare)
+    {
+        // a map's own textures (its cube maps) are in PS3Data/<level>tex/
+        var texDir = kind == "map" && id.StartsWith('/') && id.EndsWith('/') ? $"PS3Data{id}tex/" : null;
+        return Background.Run(() => GcTrace.Load($"{kind} {id}", () =>
+        {
+            var n = ClassicLibrary.Load(path, texDir);
+            return (n, n != null && prepare != null ? prepare(n) : null);
+        }));
+    }
+
+    /// <summary>
+    /// Starts the classic load of <paramref name="kind"/> <paramref name="id"/> ahead of
+    /// <see cref="Resolve"/> (a map the player is likely to enter next: <see cref="MapPrefetch"/>),
+    /// without taking it: the next <see cref="Resolve"/> with the same key gets the loaded scene
+    /// (or waits for it), and <see cref="Forget"/> drops it. True once started (or when a remade
+    /// scene is registered: nothing to load ahead); false while the import is not ready (ask
+    /// again) or without classic content.
+    /// </summary>
+    public static bool Start(ClassicLibrary? classic, string kind, string id, int ticket = 0,
+        System.Func<Node3D, object?>? prepare = null)
+    {
+        if (RemakeRegistry.Find(kind, id) is { } scene && !Failed.Contains((kind, id, scene)))
+            return true;
+        if (classic?.Path(kind, id) is not { } path)
+            return false;
+        var key = (kind, id, ticket);
+        if (!Loading.ContainsKey(key))
+            Loading[key] = Begin(kind, id, path, prepare);
+        return true;
+    }
+
+    /// <summary>Whether a classic load of the key is under way or done and not taken yet.</summary>
+    public static bool Pending(string kind, string id, int ticket = 0) => Loading.ContainsKey((kind, id, ticket));
 
     /// <summary>
     /// Waits up to <paramref name="ms"/> for the classic loads under way (Godot quits: a worker

@@ -484,8 +484,30 @@ fn inspect(imp: &ffx_import::Importer, what: &str, names: &[String]) -> Option<E
         "loc" => loc(imp, names),
         "wname" => wname(imp, names),
         "devnames" => each(names, |n| devnames(imp, n)),
+        "exits" => each(names, |n| exits(imp, n)),
         _ => return None,
     })
+}
+
+/// `exits <map>...` (hex `0x14` or decimal): the map's event and the maps
+/// its script jumps to with constant arguments (`Importer::map_exits`), with
+/// their events and levels.
+fn exits(imp: &ffx_import::Importer, n: &str) -> bool {
+    let map = n
+        .strip_prefix("0x")
+        .map_or_else(|| n.parse().ok(), |h| u16::from_str_radix(h, 16).ok());
+    let Some(map) = map else {
+        eprintln!("{n}: not a map number");
+        return false;
+    };
+    let name = |m: u16| imp.event_name(m).unwrap_or_else(|| "-".into());
+    println!("{map:#06x} {}", name(map));
+    for (to, entrance) in imp.map_exits(map) {
+        let event = name(to);
+        let level = ffx_import::exits::event_level(&event).unwrap_or_default();
+        println!("  -> {to:#06x} entrance {entrance}: {event} {level}");
+    }
+    true
 }
 
 /// `loc <lang> <index>...`: lines of the localisation kit

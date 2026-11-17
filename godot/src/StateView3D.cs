@@ -10,8 +10,12 @@ namespace GdFfx;
 /// The game in 3D from the game-state API: the game's camera (interpolated),
 /// the classic map of the level the game's renderer loaded, and each
 /// character as its classic model posed by the game's skeleton (element i
-/// poses <c>SkeletonNode_i</c>), or as a marker with skeleton points until
-/// its model is imported.
+/// poses <c>SkeletonNode_i</c>). A character whose model is not loaded yet is
+/// not drawn; without classic content (or with <c>--stand-ins</c>) it is a
+/// stand-in, a marker with skeleton points and its model's name. A map
+/// change is held (<see cref="Holding"/>, <see cref="TransitionView"/>) until
+/// the new map and its characters are ready (docs/architecture.md, "Map
+/// transitions").
 /// </summary>
 public partial class StateView3D : Node3D
 {
@@ -50,9 +54,11 @@ public partial class StateView3D : Node3D
     private sealed class ActorNode
     {
         public required Node3D Root;
-        public required Node3D Marker;
-        public required MultiMeshInstance3D Bones;
-        public required Label3D Label;
+        /// <summary>The stand-in (a marker, skeleton points, the model's name): made only when stand-ins are shown.</summary>
+        public MeshInstance3D? Marker;
+        public MultiMeshInstance3D? Bones;
+        public Label3D? Label;
+        public int Kind;
         public ushort Id;
         public bool LabelPlayer;
         /// <summary>The model asked for (it may still be loading).</summary>
@@ -125,20 +131,35 @@ public partial class StateView3D : Node3D
     private ActorNode Make(ushort slot, int kind)
     {
         var root = new Node3D { Name = $"Actor{slot}" };
-        var mat = new StandardMaterial3D { AlbedoColor = KindColor(kind) };
-        var marker = new MeshInstance3D { Mesh = new PrismMesh { Size = new Vector3(3f, 6f, 3f) }, MaterialOverride = mat };
-        root.AddChild(marker);
         AddChild(root);
-        var bones = new MultiMeshInstance3D
+        return new ActorNode { Root = root, Kind = kind };
+    }
+
+    /// <summary>The character's stand-in nodes, made on first use.</summary>
+    private void MakeStandIn(ActorNode n)
+    {
+        if (n.Marker != null)
+            return;
+        var mat = new StandardMaterial3D { AlbedoColor = KindColor(n.Kind) };
+        n.Marker = new MeshInstance3D { Mesh = new PrismMesh { Size = new Vector3(3f, 6f, 3f) }, MaterialOverride = mat };
+        n.Root.AddChild(n.Marker);
+        n.Bones = new MultiMeshInstance3D
         {
             Multimesh = new MultiMesh { TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, Mesh = _boneMesh },
             MaterialOverride = mat,
         };
-        AddChild(bones);
-        var label = new Label3D { Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, PixelSize = 0.05f, FontSize = 48 };
-        AddChild(label);
-        return new ActorNode { Root = root, Marker = marker, Bones = bones, Label = label };
+        AddChild(n.Bones);
+        n.Label = new Label3D { Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, PixelSize = 0.05f, FontSize = 48 };
+        AddChild(n.Label);
     }
+
+    /// <summary>
+    /// Whether stand-ins are drawn for what has no model yet (characters here, effects in
+    /// <see cref="EffectView"/>): without classic content, or with <c>--stand-ins</c> (for
+    /// development). With classic content a character is drawn once its model is loaded.
+    /// </summary>
+    public static bool StandIns =>
+        GameSettings.Flag("stand-ins") || GameHost.Instance?.Classic is not { Open: true };
 
     public override void _Process(double delta)
     {
@@ -180,6 +201,7 @@ public partial class StateView3D : Node3D
         // the scrolling UVs' and the water's clock, every frame (between snapshots too)
         GlobalTime = ClassicMaterials.SetTime(view.Previous, view.Current, view.Alpha);
         UpdateMap(host.Classic, view.Current);
+        _prefetch.Tick(host.Classic, host.Game, view.Current, _mapLevel, _parked?.Level ?? "", ObjectIndex);
         _layers.Tick(view.Current, view.Current?.World.Map ?? -1, _camera.Far);
         Perf.End(Perf.Section.View3D, t0);
         t0 = Perf.Start();
@@ -188,6 +210,7 @@ public partial class StateView3D : Node3D
         Perf.End(Perf.Section.Objects, t0);
         t0 = Perf.Start();
         UpdateActors(host.Classic, view);
+        UpdateTransition(host.Classic, view.Current);
         Perf.End(Perf.Section.Actors, t0);
     }
 
@@ -500,20 +523,37 @@ public partial class StateView3D : Node3D
             _layers.Load(lib, level, s!.World.Map);
         if (level == _mapLevel)
             return;
-        // a map still loading in the background that the game left already
-        if (_wantedLevel.Length > 0 && _wantedLevel != level)
+        // a map still loading in the background that the game left already (unless loaded ahead
+        // for a likely next map: MapPrefetch holds or drops those)
+        if (_wantedLevel.Length > 0 && _wantedLevel != level && !_prefetch.Loads.Contains(_wantedLevel))
             ContentResolver.Forget("map", _wantedLevel);
         _wantedLevel = level;
+        // back to the map left last: it was kept
+        if (_parked is { } parked && parked.Level == level)
+        {
+            _parked = null;
+            Park(_mapLevel);
+            _map = parked.Node;
+            _objectNodes = parked.Nodes;
+            _morphs = parked.Morphs;
+            _mapLevel = level;
+            if (_map != null)
+                AddChild(_map);
+            _mapSource = "kept";
+            GD.Print($"ffx: map {level} shown (kept from before)");
+            return;
+        }
+        bool ahead = _prefetch.Loads.Contains(level);
         if (ContentResolver.Resolve(lib, "map", level, prepare: ObjectIndex) is not { } content)
         {
             // a map of 2D layers only has no 3D model: shown once its layers are
             if (lib?.Failed("map", level) == true && _layers.Level == level)
             {
-                _map?.QueueFree();
-                _map = null;
+                Park(_mapLevel);
                 _objectNodes = null;
                 _morphs = [];
                 _mapLevel = level;
+                _mapSource = "2D layers only";
                 GD.Print($"ffx: map {level} shown (2D layers only)");
             }
             return;
@@ -521,12 +561,13 @@ public partial class StateView3D : Node3D
         var map = content.Node;
         if (map != null)
             ClassicMaterials.FixLayers(map);
-        _map?.QueueFree();
+        Park(_mapLevel);
         _map = map;
         var objects = content.Remade ? null : content.Prepared as MapObjects;
         _objectNodes = objects?.Nodes;
         _morphs = objects?.Morphs ?? [];
         _mapLevel = level;
+        _mapSource = content.Remade ? "remade" : ahead ? "loaded ahead" : "loaded then";
         if (map == null)
             return;
         map.Name = content.Remade ? "RemadeMap" : "ClassicMap";
@@ -535,13 +576,226 @@ public partial class StateView3D : Node3D
         GD.Print($"ffx: map {level} shown{(content.Remade ? $" (remade: {content.Path})" : "")}");
     }
 
+    /// <summary>The map shown before the current one, out of the tree, with its object index (null none).</summary>
+    private (string Level, Node3D? Node, Dictionary<(uint Id, int K), Node3D>? Nodes, List<Morph> Morphs)? _parked;
+
+    /// <summary>
+    /// Takes the shown map out of the tree and keeps it as the one to come back to (the player
+    /// often walks back through the exit they came by), dropping the one kept before.
+    /// </summary>
+    private void Park(string level)
+    {
+        if (_parked is { Node: { } old })
+            old.QueueFree();
+        _parked = null;
+        if (_map != null && level.Length > 0 && !GameSettings.Flag("no-prefetch"))
+        {
+            RemoveChild(_map);
+            _parked = (level, _map, _objectNodes, _morphs);
+        }
+        else
+            _map?.QueueFree();
+        _map = null;
+        _objectNodes = null;
+        _morphs = [];
+    }
+
+    private readonly MapPrefetch _prefetch = new();
+
+    /// <summary>Where the map shown came from: loaded ahead, kept, loaded then (for the transitions' log).</summary>
+    private string _mapSource = "";
+
+    /// <summary>The next maps loaded ahead (for tests and the log).</summary>
+    public MapPrefetch Prefetch => _prefetch;
+
+    public override void _ExitTree()
+    {
+        if (_parked is { Node: { } n })
+            n.QueueFree();
+        _parked = null;
+        foreach (var list in _pool.Values)
+            foreach (var m in list)
+                m.QueueFree();
+        _pool.Clear();
+    }
+
+    // ---- map transitions ------------------------------------------------------------
+
+    /// <summary>
+    /// Whether the picture is held this frame: a map change is under way and the new map, its
+    /// 2D layers or its characters are not ready (<see cref="UpdateTransition"/>).
+    /// <see cref="TransitionView"/> then covers the 3D view with the last frame drawn before
+    /// (black when the game's fade was), so the new map's characters never show over the old
+    /// map, and the new map shows with its characters at once. <c>--no-hold</c> turns it off.
+    /// </summary>
+    public bool Holding { get; private set; }
+
+    /// <summary>Whether a map change is under way (held unless <c>--no-hold</c>).</summary>
+    public bool InTransition => _inTransition;
+
+    /// <summary>Whether the game's fade holds the screen black this frame (a fade to or from black at 1).</summary>
+    public bool ScreenBlack { get; private set; }
+
+    /// <summary>Whether a map was shown since the start (before that the hold is black).</summary>
+    public bool EverShown { get; private set; }
+
+    /// <summary>Seconds a hold lasts at most (an import of a map not seen before takes a few).</summary>
+    public const double HoldLimit = 10;
+
+    /// <summary>
+    /// Frames while not held with characters drawn on another map than theirs (the snapshot's
+    /// level not the map shown) or with stand-ins drawn, and frames held (for the checks).
+    /// </summary>
+    public (int Leaked, int StandIns, int Held) Frames { get; private set; }
+
+    /// <summary>
+    /// One finished map change: the levels; the milliseconds from the game's map change request
+    /// to the start of the change here (-1 none seen), and from that start to the snapshot's new
+    /// level, to its map shown in the scene and to the picture shown (the hold's end); where the
+    /// map came from.
+    /// </summary>
+    public readonly record struct Transition(string From, string To, double RequestMs, double LevelMs, double MapMs,
+        double LayersMs, double LoadedMs, double ModelsMs, double ShownMs, string Source, bool TimedOut)
+    {
+        private string After(double ms) => ms >= 0 ? $"{ms - LevelMs:F0}" : "-";
+
+        public override string ToString() =>
+            $"{(From.Length > 0 ? From : "(none)")} -> {To}: shown {ShownMs - LevelMs:F0} ms after the game's new level "
+            + $"(its map {After(MapMs)} ms, {Source}; 2D layers {After(LayersMs)}, the game's load done {After(LoadedMs)}, "
+            + $"characters' models {After(ModelsMs)} ms)"
+            + (RequestMs >= 0 ? $", {ShownMs + RequestMs:F0} ms after its map change request" : "")
+            + $", held {ShownMs:F0} ms{(TimedOut ? " (gave up waiting)" : "")}";
+    }
+
+    /// <summary>The map changes so far (for the checks and the log).</summary>
+    public List<Transition> Transitions { get; } = new();
+
+    private bool _inTransition, _gaveUp, _changeWas;
+    private long _tStart, _tChange = -1;
+    private double _levelMs, _mapMs, _layersMs, _loadedMs, _modelsMs;
+    private string _from = "", _source = "";
+
+    private static double Ms(long from) => (System.Diagnostics.Stopwatch.GetTimestamp() - from) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+
+    private static bool IsMapLevel(string level) => level.StartsWith("/map/") || level.StartsWith("/btlmap/");
+
+    /// <summary>Whether a screen filter holds the screen black (a fade to or from black at 1).</summary>
+    private static bool Black(Snapshot s)
+    {
+        foreach (var f in s.Effects.Filters)
+            if (f is { Active: true, Mode: 2 or 3 } && ScreenFilterView.Alpha(f.Mode, f.Frames, f.Level) >= 1f)
+                return true;
+        return false;
+    }
+
+    /// <summary>
+    /// The map change's state, once a frame after the map and the characters: it starts when the
+    /// snapshot's level is not the map shown (the game started a new map: its characters are
+    /// in the snapshot already), while the game holds its update for a load
+    /// (<c>World.scene_loading</c>), or once its map change request (<c>World.map_change</c>)
+    /// has the screen black; it ends when the map (and on a field map its 2D layers) is shown,
+    /// the game loads nothing, and every character the game draws has its model, or after
+    /// <see cref="HoldLimit"/>. Meanwhile <see cref="Holding"/>.
+    /// </summary>
+    private void UpdateTransition(ClassicLibrary? lib, Snapshot? s)
+    {
+        if (s == null)
+            return;
+        var w = s.World;
+        var level = w.Level;
+        bool classic = lib is { Open: true };
+        bool mapPending = IsMapLevel(level) && level != _mapLevel
+            && (classic || RemakeRegistry.Find("map", level) != null);
+        bool layersPending = classic && level.StartsWith("/map/") && _layers.Level != level;
+        if (w.MapChange && !_changeWas)
+            _tChange = System.Diagnostics.Stopwatch.GetTimestamp();
+        _changeWas = w.MapChange;
+        ScreenBlack = Black(s);
+        bool changing = w.MapChange && ScreenBlack;
+        bool start = mapPending || layersPending || w.SceneLoading || changing;
+        if (_mapLevel.Length > 0)
+            EverShown = true;
+        if (!start && ModelsPending == 0)
+            _gaveUp = false;
+        if (!_inTransition && start && !_gaveUp)
+        {
+            _inTransition = true;
+            _tStart = System.Diagnostics.Stopwatch.GetTimestamp();
+            _from = _mapLevel;
+            _levelMs = _mapMs = _layersMs = _loadedMs = _modelsMs = -1;
+            _source = "";
+        }
+        if (_inTransition)
+        {
+            if (_levelMs < 0 && level != _from)
+                _levelMs = Ms(_tStart);
+            if (level != _from)
+            {
+                // the last of each step after the new level came (each can go back and forth)
+                if (_mapLevel == level)
+                {
+                    if (_mapMs < 0)
+                    {
+                        _mapMs = Ms(_tStart);
+                        _source = _mapSource;
+                    }
+                }
+                else
+                    _mapMs = -1;
+                _layersMs = layersPending ? -1 : _layersMs < 0 ? Ms(_tStart) : _layersMs;
+                _loadedMs = w.SceneLoading ? -1 : _loadedMs < 0 ? Ms(_tStart) : _loadedMs;
+                _modelsMs = ModelsPending > 0 || mapPending ? -1 : _modelsMs < 0 ? Ms(_tStart) : _modelsMs;
+            }
+            bool ready = !start && ModelsPending == 0;
+            bool timedOut = !ready && Ms(_tStart) > HoldLimit * 1000;
+            if (ready || timedOut)
+            {
+                _inTransition = false;
+                _gaveUp = timedOut;
+                var now = Ms(_tStart);
+                // the request came before the start (the fade out), at most a minute before
+                double request = _tChange >= 0 ? (_tStart - _tChange) * 1000.0 / System.Diagnostics.Stopwatch.Frequency : -1;
+                if (request > 60000)
+                    request = -1;
+                _tChange = -1;
+                if (level != _from || timedOut)
+                {
+                    var t = new Transition(_from, level, request, Mathf.Max(_levelMs, 0), _mapMs, _layersMs, _loadedMs, _modelsMs,
+                        now, _source.Length > 0 ? _source : "already shown", timedOut);
+                    Transitions.Add(t);
+                    GD.Print($"ffx: transition {t}");
+                }
+            }
+        }
+        Holding = _inTransition && !GameSettings.Flag("no-hold");
+        // what a frame shows while not held: characters over another map than theirs, stand-ins
+        var (leaked, standIns, held) = Frames;
+        if (Holding)
+            held++;
+        else
+        {
+            if (IsMapLevel(level) && level != _mapLevel && classic && Posed.Models > 0)
+                leaked++;
+            if (StandInsDrawn > 0 && classic && !GameSettings.Flag("stand-ins"))
+                standIns++;
+        }
+        Frames = (leaked, standIns, held);
+    }
+
     // ---- the characters -------------------------------------------------------------
+
+    /// <summary>Characters the game draws whose model is still coming (not drawn until it is), this frame.</summary>
+    public int ModelsPending { get; private set; }
+
+    /// <summary>Stand-ins (markers, skeleton points, names) drawn this frame.</summary>
+    public int StandInsDrawn { get; private set; }
 
     private void UpdateActors(ClassicLibrary? lib, GameStateView view)
     {
         var seen = _seen;
         seen.Clear();
-        int models = 0, posed = 0, attached = 0;
+        int models = 0, posed = 0, attached = 0, pending = 0, standIns = 0;
+        bool showStandIns = StandIns;
         foreach (var f in view.Actors())
         {
             var a = f.Actor;
@@ -560,31 +814,45 @@ public partial class StateView3D : Node3D
                 if (n.Asked.Length > 0 && n.Asked != a.Model)
                     ContentResolver.Forget("chr", n.Asked, a.Slot);
                 n.Asked = a.Model;
+                // a model a character of the last map left (the party, from map to map)
+                if (TakePooled(a.Model) is { } pooled)
+                    AttachModel(n, a.Model, pooled);
                 // a few models enter the scene a frame (a scene's dozen at once was a 30 ms frame)
-                if (attached < AttachesPerFrame && ContentResolver.Resolve(lib, "chr", a.Model, a.Slot) is { } content)
+                else if (attached < AttachesPerFrame && ContentResolver.Resolve(lib, "chr", a.Model, a.Slot) is { } content)
                 {
-                    AttachModel(n, a.Model, content);
+                    AttachModel(n, a.Model, content.Node);
                     attached++;
                 }
             }
             n.Root.GlobalTransform = f.Root;
             var hasModel = n.Model != null;
-            n.Root.Visible = f.Shown;
-            n.Marker.Visible = !hasModel;
-            n.Bones.Visible = f.Shown && !hasModel;
-            n.Label.Visible = f.Shown && !hasModel;
+            // a model still coming: classic content is there, the model has a name and has not
+            // loaded or failed yet (AttachModel names it either way)
+            bool coming = !hasModel && a.Model.Length > 0 && n.ModelName != a.Model && lib is { Open: true } && !lib.Failed("chr", a.Model);
+            bool standIn = f.Shown && !hasModel && showStandIns;
+            if (f.Shown && coming)
+                pending++;
+            n.Root.Visible = f.Shown && (hasModel || standIn);
+            if (standIn || n.Marker != null)
+            {
+                MakeStandIn(n);
+                n.Marker!.Visible = standIn;
+                n.Bones!.Visible = standIn;
+                n.Label!.Visible = standIn;
+            }
             if (hasModel && f.Shown)
             {
                 models++;
                 posed += Pose(n, f, view);
             }
-            else if (f.Shown && !hasModel)
+            else if (standIn)
             {
+                standIns++;
                 Points(n, f);
-                if (n.LabelPlayer != a.Player || n.Label.Text.Length == 0)
+                if (n.LabelPlayer != a.Player || n.Label!.Text.Length == 0)
                 {
                     n.LabelPlayer = a.Player;
-                    n.Label.Text = $"{a.Model}{(a.Player ? " (player)" : "")}";
+                    n.Label!.Text = $"{a.Model}{(a.Player ? " (player)" : "")}";
                 }
             }
         }
@@ -598,11 +866,13 @@ public partial class StateView3D : Node3D
                 }
         }
         Posed = (models, posed);
+        ModelsPending = pending;
+        StandInsDrawn = standIns;
     }
 
     private static void Points(ActorNode n, GameStateView.ActorFrame f)
     {
-        var mm = n.Bones.Multimesh;
+        var mm = n.Bones!.Multimesh;
         var bones = f.Bones();
         if (mm.InstanceCount != bones.Length)
             mm.InstanceCount = bones.Length;
@@ -613,13 +883,12 @@ public partial class StateView3D : Node3D
             if (bones[i].Y > top.Y)
                 top = bones[i];
         }
-        n.Label.GlobalPosition = top + Vector3.Up * 4f;
+        n.Label!.GlobalPosition = top + Vector3.Up * 4f;
     }
 
-    private static void AttachModel(ActorNode n, string name, Content content)
+    private static void AttachModel(ActorNode n, string name, Node3D? model)
     {
         n.ModelName = name;
-        var model = content.Node;
         if (model == null)
             return;
         model.Name = "Model";
@@ -823,12 +1092,61 @@ public partial class StateView3D : Node3D
     private static Transform3D Solid(Transform3D t) =>
         Mathf.Abs(t.Basis.Determinant()) < 1e-12f ? new Transform3D(Basis.FromScale(Vector3.One * 1e-4f), t.Origin) : t;
 
-    private static void Free(ActorNode n, ushort slot)
+    private void Free(ActorNode n, ushort slot)
     {
         if (n.Model == null && n.Asked.Length > 0)
             ContentResolver.Forget("chr", n.Asked, slot);
+        // the model kept for the next character with it (a map change re-creates the party)
+        if (n.Model != null)
+        {
+            n.Root.RemoveChild(n.Model);
+            Pool(n.ModelName, n.Model);
+        }
         n.Root.QueueFree();
-        n.Bones.QueueFree();
-        n.Label.QueueFree();
+        n.Bones?.QueueFree();
+        n.Label?.QueueFree();
+    }
+
+    /// <summary>Character models out of the tree by name, for the next character with that model.</summary>
+    private readonly Dictionary<string, List<Node3D>> _pool = new();
+
+    /// <summary>The pool's models, oldest first (the first to go beyond <see cref="PoolSize"/>).</summary>
+    private readonly List<(string Name, Node3D Model)> _poolOrder = new();
+
+    /// <summary>Character models kept out of the tree at most.</summary>
+    public const int PoolSize = 16;
+
+    private void Pool(string name, Node3D model)
+    {
+        if (GameSettings.Flag("no-prefetch"))
+        {
+            model.QueueFree();
+            return;
+        }
+        if (!_pool.TryGetValue(name, out var list))
+            _pool[name] = list = new();
+        list.Add(model);
+        _poolOrder.Add((name, model));
+        while (_poolOrder.Count > PoolSize)
+        {
+            var (oldName, old) = _poolOrder[0];
+            _poolOrder.RemoveAt(0);
+            _pool[oldName].Remove(old);
+            old.QueueFree();
+        }
+    }
+
+    private Node3D? TakePooled(string name)
+    {
+        if (!_pool.TryGetValue(name, out var list) || list.Count == 0)
+            return null;
+        var model = list[^1];
+        list.RemoveAt(list.Count - 1);
+        _poolOrder.Remove((name, model));
+        // the pose of the character it was: back to the model's own
+        foreach (var x in model.FindChildren("*", nameof(Skeleton3D), true, false))
+            if (x is Skeleton3D sk)
+                sk.ResetBonePoses();
+        return model;
     }
 }

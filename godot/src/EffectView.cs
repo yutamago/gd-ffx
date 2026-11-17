@@ -13,7 +13,8 @@ namespace GdFfx;
 /// <item>a remade effect registered for its id (kind <c>effect</c>, id the effect id as eight
 /// hex digits, e.g. <c>00030102</c>; docs/remake.md), instanced there;</item>
 /// <item>otherwise the game's own draws (<see cref="EffectDrawView"/>), or, when those are
-/// not captured, a stand-in: a short burst of particles in a colour of its id.</item>
+/// not captured, a stand-in: a short burst of particles in a colour of its id (only without
+/// classic content or with <c>--stand-ins</c>: <see cref="StateView3D.StandIns"/>).</item>
 /// </list>
 /// Who a character index is: in battle the battler (<see cref="BattleHudView.ActorOf"/>), out
 /// of battle the actor in that slot.
@@ -155,8 +156,8 @@ public partial class EffectView : Node3D
                 node = n;
                 remade = true;
             }
-            else if (ClassicDrawn())
-                continue; // the game's own draws show it (EffectDrawView)
+            else if (ClassicDrawn() || !StateView3D.StandIns)
+                continue; // the game's own draws show it (EffectDrawView); stand-ins only without classic content
             else
                 node = StandIn(e.Id);
             node.Position = w;
