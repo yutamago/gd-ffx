@@ -600,8 +600,8 @@ public sealed class BesaidTest(double timeout, string? shot) : ITest
 /// battle map is shown with the classic content, character models posed by the game, and it
 /// stays up for 3 seconds; reports the level, models, bones, objects, effect draws, the
 /// distortion, the characters the game draws and whether it is a battle (with <c>--shot=FILE.png</c>
-/// and a renderer, a picture; with <c>--walk=KEYS:SECONDS</c>, after walking, and with
-/// <c>--shots=N</c> N - 1 more during the walk).
+/// and a renderer, a picture; with <c>--walk=KEYS:SECONDS[,KEYS:SECONDS...]</c>, after walking,
+/// and with <c>--shots=N</c> N - 1 more during the walk).
 /// </summary>
 public sealed class MapTest(double timeout, string? shot) : ITest
 {
@@ -625,6 +625,8 @@ public sealed class MapTest(double timeout, string? shot) : ITest
         if (view.MapLevel != c.World.Level || view.Posed.Models == 0)
         {
             _shown = -1;
+            // a walk stops while the next map comes and settles (Walk takes it up again)
+            Release();
             return null;
         }
         if (_level != c.World.Level)
@@ -636,8 +638,9 @@ public sealed class MapTest(double timeout, string? shot) : ITest
             _shown = _total;
         if (_total - _shown < 3)
             return null;
-        // --walk=KEYS:SECONDS (keys joined by +, e.g. up+left:6): hold them, then 2 s still
-        if (Walk(_total - _shown - 3, delta) is { } walking && walking)
+        // --walk=KEYS:SECONDS[,KEYS:SECONDS...] (keys joined by +, e.g. up+left:6,up:2): hold
+        // each in turn, then 2 s still
+        if (Walk(delta) is { } walking && walking)
             return null;
         var fx = view.GetNodeOrNull<EffectDrawView>("EffectDrawView");
         var dv = view.GetTree().Root.FindChild("DistortionView", true, false) as DistortionView;
@@ -661,7 +664,7 @@ public sealed class MapTest(double timeout, string? shot) : ITest
         }
         return Done(true, $"{(c.World.Battle ? "battle" : "field")} {c.World.Level} (map {c.World.Map:x}): {view.Posed.Models} models "
             + $"({view.Posed.PosedBones} bones), {view.ObjectsPlaced} objects ({view.ObjectsUnmatched} without a mesh), {view.Morphed.Meshes} morphing ({view.Morphed.Moved} with a weight), {fx?.Shown.Draws ?? 0} effect draws "
-            + $"({fx?.Shown.Textured ?? 0} textured, {fx?.MissingDraws ?? 0} without their texture), distortion {(dv?.Shown.On == true ? "on" : "off")}{Layers(view)}, {Characters(c)}, "
+            + $"({fx?.Shown.Textured ?? 0} textured, {fx?.MissingDraws ?? 0} without their texture, {EffectDrawView.UnsetSeen} with unset vertex colours so far), distortion {(dv?.Shown.On == true ? "on" : "off")}{Layers(view)}, {Characters(c)}, "
             + $"global time {view.GlobalTime:F2} s{BattleTest.ClothNote()}, at {_total:F0} s");
     }
 
@@ -677,44 +680,105 @@ public sealed class MapTest(double timeout, string? shot) : ITest
             : note + $" ({skipped.Count} culled or skipped by the game: {string.Join(" ", skipped.Select(a => $"{a.Model}#{a.Slot}(flags2 {a.Flags2:x})"))})";
     }
 
-    private bool _held;
+    private Key[] _heldKeys = [];
     private int _walkShots, _stillShots;
     private double _stillShotAt = -1;
+    /// <summary>The walk's time: it runs only on a shown map, after its 3 s (not across map changes).</summary>
+    private double _walkT;
+
+    /// <summary>The <c>--walk</c> legs: keys and seconds each (empty: no walk or not read).</summary>
+    private static (Key[] Keys, string Names, double Seconds)[] Legs()
+    {
+        if (GameSettings.Arg("walk") is not { } arg)
+            return [];
+        var legs = new System.Collections.Generic.List<(Key[], string, double)>();
+        foreach (var leg in arg.Split(','))
+        {
+            if (leg.Split(':') is not [var names, var time]
+                || !double.TryParse(time, System.Globalization.CultureInfo.InvariantCulture, out var seconds))
+                return [];
+            var keys = names.Split('+').Select(n => n.ToLowerInvariant() switch
+            {
+                "up" => Key.Up, "down" => Key.Down, "left" => Key.Left, "right" => Key.Right, _ => Key.None,
+            }).Where(k => k != Key.None).ToArray();
+            legs.Add((keys, names, seconds));
+        }
+        return [.. legs];
+    }
+
+    /// <summary>Holds <paramref name="keys"/> (releasing the others held).</summary>
+    private void Hold(Key[] keys)
+    {
+        if (keys.SequenceEqual(_heldKeys))
+            return;
+        foreach (var k in _heldKeys)
+            if (!keys.Contains(k))
+                Godot.Input.ParseInputEvent(new InputEventKey { PhysicalKeycode = k, Keycode = k, Pressed = false });
+        foreach (var k in keys)
+            if (!_heldKeys.Contains(k))
+                Godot.Input.ParseInputEvent(new InputEventKey { PhysicalKeycode = k, Keycode = k, Pressed = true });
+        _heldKeys = keys;
+    }
+
+    private void Release() => Hold([]);
+
+    /// <summary>The player character's field position (", player at (x, y, z)"), for following a walk in the log.</summary>
+    private static string PlayerAt(Snapshot? c)
+    {
+        if (c == null)
+            return "";
+        foreach (var a in c.Actors)
+            if (a.Player)
+                return $", player at ({a.Position.X:F0}, {a.Position.Y:F0}, {a.Position.Z:F0})";
+        return "";
+    }
 
     /// <summary>
-    /// <c>--walk=KEYS:SECONDS</c>: the keys (arrow names, joined by <c>+</c>) held for that long
-    /// from <paramref name="t"/> 0, then released and 2 s more; true while walking, null without
-    /// the option.
+    /// <c>--walk=KEYS:SECONDS[,KEYS:SECONDS...]</c>: each leg's keys (arrow names, joined by
+    /// <c>+</c>) held for its seconds in turn, then released and 2 s more; true while walking,
+    /// null without the option. Its clock runs only while called (a shown map, 3 s after it came):
+    /// a map change pauses it, the keys released until the next map has settled.
     /// </summary>
-    private bool? Walk(double t, double delta)
+    private bool? Walk(double delta)
     {
-        if (GameSettings.Arg("walk") is not { } arg || arg.Split(':') is not [var names, var time]
-            || !double.TryParse(time, System.Globalization.CultureInfo.InvariantCulture, out var seconds))
+        var legs = Legs();
+        if (legs.Length == 0)
             return null;
-        var keys = names.Split('+').Select(n => n.ToLowerInvariant() switch
-        {
-            "up" => Key.Up, "down" => Key.Down, "left" => Key.Left, "right" => Key.Right, _ => Key.None,
-        }).Where(k => k != Key.None).ToArray();
-        bool hold = t < seconds;
+        double t = _walkT, total = legs.Sum(l => l.Seconds);
+        _walkT += delta;
         // --shots=N with a shot: N - 1 pictures during the walk, evenly spaced to its end
         // (NAME-1.png, ...), the last one (NAME.png) after it
         if (shot != null && DisplayServer.GetName() != "headless" && int.TryParse(GameSettings.Arg("shots"), out var n) && n > 1
-            && _walkShots < n - 1 && t >= (_walkShots + 1) * seconds / (n - 1))
+            && _walkShots < n - 1 && t >= (_walkShots + 1) * total / (n - 1))
         {
             _walkShots++;
             var file = shot[..^4] + $"-{_walkShots}.png";
             (Engine.GetMainLoop() as SceneTree)!.Root.GetViewport().GetTexture().GetImage().SavePng(file);
-            GD.Print($"ffx selftest: picture {file} (walking, {t:F2} s)");
+            var cur = GameHost.Instance?.View.Current;
+            var p = GameProjection.Last;
+            GD.Print($"ffx selftest: picture {file} (walking, {t:F2} s, {cur?.World.Level}{PlayerAt(cur)}, camera offset ({p.Offset.X:F3}, {p.Offset.Y:F3}))");
         }
-        if (hold != _held)
+        double end = 0;
+        int leg = -1;
+        for (int i = 0; i < legs.Length; i++)
         {
-            _held = hold;
-            foreach (var k in keys)
-                Godot.Input.ParseInputEvent(new InputEventKey { PhysicalKeycode = k, Keycode = k, Pressed = hold });
-            if (!hold)
-                GD.Print($"ffx selftest: walked {names} for {seconds:F1} s");
+            end += legs[i].Seconds;
+            if (t < end)
+            {
+                leg = i;
+                break;
+            }
         }
-        return t < seconds + 2;
+        var keys = leg >= 0 ? legs[leg].Keys : [];
+        if (!keys.SequenceEqual(_heldKeys))
+        {
+            if (leg >= 0)
+                GD.Print($"ffx selftest: walking {legs[leg].Names} for {legs[leg].Seconds:F1} s (at {t:F2} s, {GameHost.Instance?.View.Current?.World.Level}{PlayerAt(GameHost.Instance?.View.Current)})");
+            else
+                GD.Print($"ffx selftest: walked {string.Join(",", legs.Select(l => $"{l.Names}:{l.Seconds:F1}"))} ({GameHost.Instance?.View.Current?.World.Level}{PlayerAt(GameHost.Instance?.View.Current)})");
+            Hold(keys);
+        }
+        return t < total + 2;
     }
 
     /// <summary>The 2D layers, when the map has any: loaded, shown, the 2D scene and the pan (read from the game, or "not read").</summary>
@@ -826,7 +890,8 @@ public sealed class BattleTest : ITest
     private string _first = "";
     private string _target = "", _btLine = "";
     private bool _targetClosed;
-    private int _targetShot;
+    private int _targetShot, _stillShots;
+    private double _stillShotAt = -1;
     /// <summary>The effect this battle starts first (seen in the deck's battle 3,0,0), remade by the example.</summary>
     public const string RemadeId = "50001800";
     private double _tap;
@@ -962,6 +1027,19 @@ public sealed class BattleTest : ITest
             _seen = _total;
         if (_total - _seen < 0.3)
             return null;
+        // --shots=N: N - 1 pictures 0.1 s apart first (NAME-1.png, ...), then NAME.png
+        if (_first.Length == 0 && shot != null && DisplayServer.GetName() != "headless"
+            && int.TryParse(GameSettings.Arg("shots"), out var shots) && _stillShots < shots - 1)
+        {
+            if (_total - _stillShotAt >= 0.1)
+            {
+                _stillShotAt = _total;
+                var file = shot[..^4] + $"-{++_stillShots}.png";
+                root!.GetViewport().GetTexture().GetImage().SavePng(file);
+                GD.Print($"ffx selftest: picture {file}");
+            }
+            return null;
+        }
         if (_first.Length == 0)
         {
             if (shot != null && DisplayServer.GetName() != "headless")

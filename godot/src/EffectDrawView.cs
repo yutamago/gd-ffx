@@ -559,6 +559,25 @@ void fragment() {
     /// <summary><c>FFX_EFFECT_LOG=1</c>: each kind of draw (flags, technique, texture, look) printed once.</summary>
     private static readonly bool LogDraws = System.Environment.GetEnvironmentVariable("FFX_EFFECT_LOG") == "1";
     private static readonly HashSet<(uint, int, string, Look)> Logged = new();
+    private static readonly HashSet<(uint, int, string)> LoggedOdd = new();
+
+    /// <summary>
+    /// Whether a captured vertex colour is one the game never writes: not finite, below 0 or above
+    /// 8 (the PS2's colours are 0..0xff, 0..2 here). Some draws index vertices whose colour array
+    /// slot holds the allocator's fill (<c>0xcdcdcdcd</c>, -4.3e8 as a float) or stale numbers
+    /// (Besaid village's lens flare, bsvr00 key lo 0xd); under the premultiplied form (colour x
+    /// alpha, both hugely negative) such a triangle came out as a flat white quad: the playtester's
+    /// "white rectangle" of the sun's glare.
+    /// </summary>
+    public static bool Unset(Color c) =>
+        !(c.R >= -1e-3f && c.R <= 8f && c.G >= -1e-3f && c.G <= 8f && c.B >= -1e-3f && c.B <= 8f && c.A >= -1e-3f && c.A <= 8f);
+
+    /// <summary><c>--keep-unset-colours</c>: draws the triangles with unset colours too (for comparing).</summary>
+    private static readonly bool KeepUnset = GameSettings.Flag("keep-unset-colours");
+
+    /// <summary>Draws of the last frame with triangles not drawn for an unset colour, and such draws since the start.</summary>
+    public int UnsetDraws { get; private set; }
+    public static int UnsetSeen { get; private set; }
 
     /// <summary>Draws of the last frame shown not drawn because their texture was not found (for tests).</summary>
     public int MissingDraws { get; private set; }
@@ -640,6 +659,7 @@ void fragment() {
         {
             HideParts(0);
             MissingDraws = 0;
+            UnsetDraws = 0;
             Shown = (0, 0, s.Update);
             Textures.Clear();
             return;
@@ -660,7 +680,15 @@ void fragment() {
             var look = LookOf(d);
             if (LogDraws && Logged.Add((d.Flags, d.Technique, d.Texture, look)))
                 GD.Print($"ffx effects: flags 0x{d.Flags:x} (shader 0x{Shader(d.Flags):x}) technique {d.Technique} pass {d.Pass} key 0x{d.Key:x} "
-                    + $"texture \"{d.Texture}\" {look}, colour {geo.Colours[d.First]}");
+                    + $"texture \"{d.Texture}\" {look}, colour {geo.Colours[d.First]}, at {geo.Positions[d.First]}");
+            if (LogDraws)
+                for (int ki = 0; ki < d.IndexCount; ki++)
+                    if (geo.Indices[d.IndexFirst + ki] is var i && i < d.Vertices && geo.Colours[d.First + i] is var c && Unset(c))
+                    {
+                        if (LoggedOdd.Add((d.Flags, d.Technique, d.Texture)))
+                            GD.Print($"ffx effects: odd colour {c} at indexed vertex {i} of {d.Vertices} ({d.IndexCount} indices; at {geo.Positions[d.First + i]}), flags 0x{d.Flags:x} technique {d.Technique} key 0x{d.Key:x} texture \"{d.Texture}\", update {s.Update}");
+                        break;
+                    }
             if (look.Skip)
                 continue;
             var k = (d.Texture, look);
@@ -676,7 +704,7 @@ void fragment() {
         }
         if (_arrays.Count != (int)Mesh.ArrayType.Max)
             _arrays.Resize((int)Mesh.ArrayType.Max);
-        int textured = 0, parts = 0, missing = 0;
+        int textured = 0, parts = 0, missing = 0, unsetDraws = 0;
         Textures.Clear();
         var surf = _surface;
         for (int gi = 0; gi < used; gi++)
@@ -691,11 +719,27 @@ void fragment() {
                 geo.Colours.AsSpan(d.First, d.Vertices).CopyTo(surf.Colours.AsSpan(b));
                 geo.Uvs.AsSpan(d.First, d.Vertices).CopyTo(surf.Uvs.AsSpan(b));
                 surf.VertexCount += d.Vertices;
-                for (int k = 0; k < d.IndexCount; k++)
+                // triangle by triangle: one with a vertex out of the draw's range, or (unless
+                // --keep-unset-colours) with a colour no vertex has (Unset), is not drawn
+                bool unset = false;
+                for (int k = 0; k + 2 < d.IndexCount; k += 3)
                 {
-                    var i = geo.Indices[d.IndexFirst + k];
-                    if (i < d.Vertices)
-                        surf.Indices[surf.IndexCount++] = b + i;
+                    int i0 = geo.Indices[d.IndexFirst + k], i1 = geo.Indices[d.IndexFirst + k + 1], i2 = geo.Indices[d.IndexFirst + k + 2];
+                    if (i0 >= d.Vertices || i1 >= d.Vertices || i2 >= d.Vertices)
+                        continue;
+                    if (!KeepUnset && (Unset(geo.Colours[d.First + i0]) || Unset(geo.Colours[d.First + i1]) || Unset(geo.Colours[d.First + i2])))
+                    {
+                        unset = true;
+                        continue;
+                    }
+                    surf.Indices[surf.IndexCount++] = b + i0;
+                    surf.Indices[surf.IndexCount++] = b + i1;
+                    surf.Indices[surf.IndexCount++] = b + i2;
+                }
+                if (unset)
+                {
+                    unsetDraws++;
+                    UnsetSeen++;
                 }
             }
             if (surf.IndexCount == 0)
@@ -727,6 +771,7 @@ void fragment() {
         HideParts(parts);
         Parts = parts;
         MissingDraws = missing;
+        UnsetDraws = unsetDraws;
         Shown = (frame.Value.Draws.Count, textured, s.Update);
     }
 

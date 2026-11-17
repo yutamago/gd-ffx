@@ -182,6 +182,10 @@ public partial class StateView3D : Node3D
         if (cam is { } c)
         {
             _camera.GlobalTransform = c.Transform;
+            // a check's view (--camera-pitch=DEG): the game's camera turned up by DEG degrees
+            // about its own x axis (the sky over a map, where the game's camera does not look)
+            if (CameraPitch != 0)
+                _camera.RotateObjectLocal(Vector3.Right, Mathf.DegToRad(CameraPitch));
             _camera.Far = Mathf.Clamp(c.Far, 100f, 20000f);
             GameProjection.Apply(_camera, c, _mapLevel.Length > 0);
             // the game's screen shake (Effects.ShakeX/Y, in the PS2 screen's pixels, 448 high):
@@ -227,6 +231,7 @@ public partial class StateView3D : Node3D
         Perf.End(Perf.Section.Cloth, t0);
         t0 = Perf.Start();
         UpdateActors(host.Classic, view);
+        LookAtActor();
         UpdateTransition(host.Classic, view.Current);
         Perf.End(Perf.Section.Actors, t0);
     }
@@ -528,6 +533,48 @@ public partial class StateView3D : Node3D
         var c = mi.GlobalTransform * mi.GetAabb().GetCenter();
         _camera.GlobalTransform = Transform3D.Identity.LookingAt(Vector3.Forward, Vector3.Up).Translated(c + new Vector3(0, 40, 150));
         _camera.LookAt(c);
+    }
+
+    /// <summary>
+    /// A check's view (<c>--look-at-actor=MODEL</c>, e.g. <c>w012</c>): the camera in front of the
+    /// first shown character with that model, looking at its first cloth mesh (else its model),
+    /// from three times the mesh's size (at least 12 units): the cloth's pictures close up.
+    /// </summary>
+    private void LookAtActor()
+    {
+        if (GameSettings.Arg("look-at-actor") is not { Length: > 0 } name)
+            return;
+        foreach (var n in _actors.Values)
+        {
+            if (n.ModelName != name || n.Model == null || !n.Root.Visible)
+                continue;
+            var mi = n.Cloth is { Meshes: [var first, ..] } ? first.Node : FirstMesh(n.Model);
+            if (mi == null)
+                continue;
+            var box = mi.GetAabb();
+            var c = mi.GlobalTransform * box.GetCenter();
+            float d = Mathf.Max(12f, 3f * box.Size.Length());
+            // from the game camera's side, level with the mesh
+            var from = _camera.GlobalPosition - c;
+            from.Y = 0;
+            from = from.LengthSquared() > 1e-6f ? from.Normalized() : Vector3.Back;
+            _camera.GlobalTransform = Transform3D.Identity.Translated(c + from * d + new Vector3(0, d * 0.2f, 0));
+            _camera.LookAt(c);
+            return;
+        }
+    }
+
+    private static readonly float CameraPitch =
+        float.TryParse(GameSettings.Arg("camera-pitch"), System.Globalization.CultureInfo.InvariantCulture, out var deg) ? deg : 0f;
+
+    private static MeshInstance3D? FirstMesh(Node n)
+    {
+        if (n is MeshInstance3D mi)
+            return mi;
+        for (int i = 0, k = n.GetChildCount(); i < k; i++)
+            if (FirstMesh(n.GetChild(i)) is { } found)
+                return found;
+        return null;
     }
 
     private void UpdateMap(ClassicLibrary? lib, Snapshot? s)
@@ -883,7 +930,7 @@ public partial class StateView3D : Node3D
                     {
                         var tc = Perf.Start();
                         _cloth.Place(a.Slot, n.ModelName, n.Cloth, GameStateView.FieldTransform(a.World),
-                            f.Previous is { } fp ? GameStateView.FieldTransform(fp.World) : null);
+                            f.Previous is { } fp ? GameStateView.FieldTransform(fp.World) : null, a.Kind == 4);
                         Perf.End(Perf.Section.Cloth, tc);
                     }
                 }
@@ -948,6 +995,9 @@ public partial class StateView3D : Node3D
         // a remade character may opt out of the game's posing (docs/remake.md)
         if (!Content.Posed(model))
             return;
+        // the game's cloth moves its hair and clothes (ClothView), on skinned models and on rigid
+        // ones (a weapon's ribbon: w012's instance 1)
+        n.Cloth = ClothView.Of(model);
         var skels = model.FindChildren("*", nameof(Skeleton3D), true, false);
         if (skels.Count == 0 || skels[0] is not Skeleton3D skel)
         {
@@ -963,8 +1013,6 @@ public partial class StateView3D : Node3D
         n.SkeletonInModelInv = t.AffineInverse();
         n.AllBones = AllBones(skel);
         n.Globals = new Transform3D[skel.GetBoneCount()];
-        // the game's cloth moves its hair and clothes (ClothView)
-        n.Cloth = ClothView.Of(model);
     }
 
     /// <summary>

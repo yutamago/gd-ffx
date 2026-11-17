@@ -49,6 +49,7 @@ public partial class FfxGame : RefCounted
         public static readonly StringName peek = "peek";
         public static readonly StringName place_name = "place_name";
         public static readonly StringName request_battle = "request_battle";
+        public static readonly StringName set_battle_party = "set_battle_party";
         public static readonly StringName request_devsave = "request_devsave";
         public static readonly StringName request_results = "request_results";
         public static readonly StringName runtime_texture = "runtime_texture";
@@ -314,6 +315,12 @@ public partial class FfxGame : RefCounted
     /// <summary>Asks the game to start battle <paramref name="field"/>/<paramref name="group"/>/<paramref name="formation"/> as an encounter would.</summary>
     public bool RequestBattle(int field, int group, int formation) =>
         Node.Call(M.request_battle, field, group, formation).AsBool();
+
+    /// <summary>
+    /// Writes the battle party (<c>g_SaveInParty</c>: 8 party indices, 0xff empty) before a battle is
+    /// asked for (the checks' <c>--party=HEX</c>, as ffx-rust's <c>cloth-probe --party</c>).
+    /// </summary>
+    public bool SetBattleParty(byte[] party) => Node.Call(M.set_battle_party, party).AsBool();
 
     /// <summary>Asks the game to load developer save <paramref name="n"/> (1..110) at its next update.</summary>
     public bool RequestDevSave(int n) => Node.Call(M.request_devsave, n).AsBool();

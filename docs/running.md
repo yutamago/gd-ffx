@@ -654,7 +654,20 @@ capture off (`cloth off`), `FFX_CLOTH_DEBUG=1` tints the cloth vertices
 (green near the skinned position, red 2 units off and more). On another
 save than 7, `FFX_SHOT_ARGS="--shots=N" tools/compare-shot.sh` takes N
 pictures 0.1 s apart (`godot-1.png` ... and `godot.png` last), e.g. with
-`--battle=34,0,0` on save 12.
+`--battle=34,0,0` on save 12; the battle check takes them the same way
+(`--shots=N` with `--shot`) before its first picture. `--look-at-actor=MODEL`
+(e.g. `w012`, Yuna's staff) points the camera at the first shown character
+with that model, at its first cloth mesh, close up. `--party=HEX` (with
+`--battle`): the battle party written first (`g_SaveInParty`, 8 party
+indices, `ff` an empty place; as ffx-rust's `cloth-probe --party`), e.g.
+`01000405ff020306` (Yuna, Tidus, Wakka on save 12). `--camera-pitch=DEG`
+turns the game's camera up by DEG degrees (the sky, where the game's camera
+does not look: Besaid village's sun). The map check's walk logs the
+player's field position with each leg and picture (`player at (x, y, z)`)
+and the camera's offset, to find a route; developer save 8 (Besaid's lodge
+`bsvr02`) reaches the village with `right:3,down:3.5,up:2.6` and the
+weavers' hut `bsvr05` with `...,down:1.4,right:5,up:6` (docs/architecture.md,
+"The 2D layers").
 
 `--selftest-remake --devsave=7` and `--selftest-mods --no-game` (G6):
 remade content and mod packs (docs/remake.md); `--selftest-launcher --no-game`:
