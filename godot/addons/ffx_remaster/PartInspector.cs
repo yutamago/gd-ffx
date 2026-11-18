@@ -70,6 +70,17 @@ public partial class PartPanel : VBoxContainer
         };
         AddChild(id);
         AddChild(new Label { Text = Describe(), AutowrapMode = TextServer.AutowrapMode.WordSmart });
+        // its textures, each to the Materials tab
+        foreach (var t in TexturesOf(_node))
+        {
+            var trow = new HBoxContainer();
+            AddChild(trow);
+            trow.AddChild(new Label { Text = RemasterTextures.ShortName(t), SizeFlagsHorizontal = SizeFlags.ExpandFill, TooltipText = t, MouseFilter = MouseFilterEnum.Pass });
+            var mat = new Button { Text = "Materialize", TooltipText = "Add this texture to the Materials tab's queue and open the tab" };
+            var texId = t;
+            mat.Pressed += () => _plugin.Materialize([texId]);
+            trow.AddChild(mat);
+        }
         _state = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart };
         AddChild(_state);
         if (_part == null)

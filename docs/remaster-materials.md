@@ -7,8 +7,9 @@ R2b replaces that with a view built for the job: one texture, one map at a
 time, a big lit preview that changes while a slider moves, and profiles that
 carry the settings over to the next texture.
 
-Status: planned (2026-11-18), not implemented. Decisions taken with the
-user are marked as such.
+Status: phase 1 implemented (2026-11-18, "Phase 1: what there is"); phases
+2 to 6 planned. Decisions taken with the user are marked as such; the ones
+taken while implementing are in "Decisions".
 
 ## What it reuses and what it learns from
 
@@ -294,13 +295,137 @@ Each phase is usable on its own.
    estimation of maps where a model's licence allows it (recorded per
    texture, as R2 records upscaling).
 
+## Phase 1: what there is
+
+The **Materials** tab (`godot/addons/ffx_remaster/MaterialsTab.cs`) on R2's
+CPU generators:
+
+- **Adding textures**: the Textures dock's **Materialize** (several at once:
+  Ctrl or Shift+click in its list), **Materialize** beside each texture in the
+  part inspector's "FFX part" section, the tab's **+ Open map** (every texture
+  the open map draws) and **+ Selected** (the dock's selection). A click in
+  the queue or the arrow keys switch texture with the settings kept; **Its
+  settings** loads a texture's saved recipe instead (one undo step).
+- **The preview** (`MaterialPreview.cs`): plane, cube, cylinder, sphere and
+  **Object** (`PreviewObject.cs`: the surfaces drawing the texture, from the
+  open map, else from the classic import of the first map the where-used
+  index names, with their UVs and vertex colours, at most 48 surfaces);
+  drag to orbit, wheel to zoom, middle drag to pan, Shift+drag turns the
+  light, Alt+drag the environment, F frames; UV tiling (1 to 8); the compare
+  wipe (left: the raw texture lit as a plain colour, or the classic look: the
+  game piece's own classic material on the Object, the texture unshaded on
+  the primitives; right: the material); **Studio** (key, fill, rim), **HDRI**
+  (the four shipped ones, then `ffx_remaster/hdri_dir`'s) and **The map's
+  light** (R3's resolved lighting of the open map when it draws the texture,
+  else of the first map that uses it: its key light, ambient, background and
+  tone map; the game's look from `LookCache`, the defaults' direction when
+  the game has not shown the map yet; no fog). Tone mapping, exposure,
+  saturation and contrast from that map's lighting, else R3's defaults.
+- **The steps** (`godot/src/Remaster/MaterialPipeline.cs`): Source (upscale,
+  working size, full size, tiling; or an image of one's own), Albedo,
+  Height, Normal, Roughness, Metallic, Occlusion, Emission, each with
+  **Generate**, **Import** (a file, resized to the working size) and
+  **Skip** (a constant), **Reset step** and a reset per setting. The step
+  panel shows the map in 2D (`MapView2D.cs`: wheel zoom, drag pan, double
+  click for the whole map, 2x2 tiling, the before/after split against the
+  source) and only that step's settings; the strip shows every map with its
+  state (✓ made, … making, ⇩ imported, – skipped).
+- **The dependency graph**: every map is kept with a signature of its
+  settings, mode, file and its inputs' signatures; a change makes again
+  exactly the maps downstream of it (a height change: height, normal,
+  occlusion; the albedo stays). Settings only the material reads (parallax
+  depth, emission energy) make no map at all.
+- **Small first, then refined**: every change asks for all maps at 256 px,
+  then at the working size (1024 by default; never above the texture's size
+  after the upscale), the current step's chain first, off the main thread
+  (one run at a time, a new change cancels the run going; the texture's
+  pixels and the imported files are read on the main thread before).
+- **Save**: the maps made again at the full size (`MaxSide` after the
+  upscale) in a run later changes do not cancel, then written as R2 writes
+  them (`TextureStore.WriteMaterial`: content-named PNGs, the
+  `ORMMaterial3D`'s text), the settings as the entry's `PbrRecipe`
+  (`Version` 2), one undo step of the global history.
+- **Undo**: every setting, mode, import, reset and "Its settings" is one step
+  of the editor's global history; a slider drag is one step (the maps follow
+  it live, the step is committed at its end).
+
+**Latency** (a setting changed → the current step's map shown at 256 px →
+at the working size → every map at the working size), on Besaid beach's
+textures with R2's CPU generators, the development machine (WSL2, Xvfb editor,
+2026-11-18; the check's log line `ffx editortest: materials latency`):
+
+| Change | working size | small | refined | all maps |
+|---|---|---|---|---|
+| a step's own setting (median of 5) | 512 px (the texture's size) | 3 ms | 18 ms | 62 ms |
+| the de-lighting (every map after it) | 512 px | 42 ms | 160 ms | 220 ms |
+| a step's own setting (median of 5) | 1024 px (upscaled x2) | 3 ms | 60 ms | 200 ms |
+| the de-lighting | 1024 px | 40 ms | 406 ms | 653 ms |
+| the upscale (every map, new sizes) | 1024 px | 10 ms | 102 ms | 696 ms |
+| Save (every map at the full size, 1024 px, and the files) | | | | 1.4 s |
+
+So a slider shows within a frame or two at 256 px and settles in a tenth to
+half a second at 1024 px; the plan's GPU target (33 ms at 1024 px, phase 2)
+is for the refined map.
+
+Not in phase 1 (planned later): profiles, Apply to queue, the band
+equaliser, colour masks, progressive AO, the GPU pipeline, 16-bit height,
+the other maps, the seam tool, In map, colour picking, keyboard steps.
+
+## Decisions
+
+Taken while implementing phase 1 (2026-11-18):
+
+- **The tab's name.** Godot names an editor plugin's main screen after the
+  plugin (`_GetPluginName`), one main screen per plugin, so the remaster
+  plugin's name is now "Materials" (`RemasterPlugin.MainScreen`); its docks
+  keep their titles.
+- **Settings on `PbrRecipe`.** The workbench's settings are new fields of R2's
+  `PbrRecipe` (a mode and a file per step, the generators' other options,
+  `EmissionEnergy`, `WorkingSide`) with defaults, and `Version` (1: R2's,
+  2: the tab's), so every old entry loads as it was. An R2 recipe loaded in
+  the tab ("Its settings") is migrated: emission on where R2's threshold made
+  one. R2's Generate and batch still run `PbrBuilder.Make` (R2's order)
+  until phase 3 removes them.
+- **The graph as the plan draws it.** Height from the albedo by default
+  (`HeightFrom`: or the source, as R2 did), roughness, metallic and emission
+  from the albedo (R2: the source). Occlusion is computed from the height
+  only (as R2's) but depends on the normal in the graph, ready for phase 2's
+  normal-based occlusion.
+- **Skip's constants.** Albedo: the source as it is; height: flat (no
+  parallax); normal: flat; roughness: the base value; metallic: the value;
+  occlusion: white; emission: none. Metallic and emission are skipped by
+  default (most FFX textures).
+- **Imported files.** While editing, the step holds the chosen file's path;
+  Save copies its pixels into the texture's folder
+  (`import-<step>.<hash>.png`) and the saved recipe names that store-relative
+  path, so no path of the machine is kept and the import stays editable.
+- **The preview's material** is Godot's `ORMMaterial3D` over the maps (what
+  Save writes), not the game's lit shader (`RemasterLook`), which adds the
+  baked vertex light; the In map view (phase 5) shows that.
+- **The compare wipe** draws two views of one world (two cameras with cull
+  masks, the object twice on two layers), joined by a shader at the wipe.
+- **The map's light** is R3's `RemasterLighting.Resolve` over the map's
+  lighting (the open map's as edited, else its layers) and its look, applied
+  to the preview's own light and environment (the rig itself is not used: it
+  changes global shader parameters); fog is left out on a small object.
+- **HDRIs** (decision with the user: ship them): Poly Haven's `meadow_2`
+  (sun), `kloofendal_overcast`, `venice_sunset` and `lebombo` (interior),
+  1k, CC0, 5.8 MB, in `godot/addons/ffx_remaster/hdri/` with a README naming
+  the sources and authors. Exports leave out `addons/*` already, so no
+  export rule changed.
+- **The save size.** Save runs the same pipeline at the full size (the
+  texture after the upscale, at most `MaxSide`), not at the preview's
+  working size.
+
 ## Checks
 
 - **The editor check** (`tools/remaster-editor-check.sh`) drives the tab on
   Besaid: queue three textures, step through, change a setting and see the
   preview's pixels change, import and skip a map, save, undo and redo, save
   a profile, switch texture with it, apply to the queue, a profile changed
-  and made again; pictures under Xvfb (`FFX_EDITOR_SHOT=1`).
+  and made again; pictures under Xvfb (`FFX_EDITOR_SHOT=1`). Phase 1 has the
+  parts without profiles and the queue's apply (docs/remaster-editor.md,
+  "Checks").
 - **A game-side check** on the GPU (`--selftest-materialize`, the Windows
   export through `tools/compare-shot-win.sh`): the pipeline's time per
   slider change and per bake against the targets, and the GPU maps against

@@ -331,7 +331,7 @@ public static class TextureStore
                 _ => TexturePreset.Colour,
             });
         var folder = RemasterTextures.Folder(id, Dir);
-        var key = string.Join("|", paths.Values) + $"|{recipe.HeightScale}|{recipe.Wrap}";
+        var key = string.Join("|", paths.Values) + $"|{recipe.HeightScale}|{recipe.Wrap}" + (recipe.EmissionEnergy != 1f ? $"|{recipe.EmissionEnergy}" : "");
         var file = $"{folder}/material.{MapStore.Hash(key)}.tres";
         if (!FileAccess.FileExists(file))
         {
@@ -375,7 +375,7 @@ public static class TextureStore
         sb.Append("orm_texture = ExtResource(\"orm\")\n");
         sb.Append("normal_enabled = true\nnormal_scale = 1.0\nnormal_texture = ExtResource(\"normal\")\n");
         if (maps.ContainsKey("emission"))
-            sb.Append("emission_enabled = true\nemission = Color(1, 1, 1, 1)\nemission_energy_multiplier = 1.0\nemission_texture = ExtResource(\"emission\")\n");
+            sb.Append($"emission_enabled = true\nemission = Color(1, 1, 1, 1)\nemission_energy_multiplier = {r.EmissionEnergy.ToString("0.0##", inv)}\nemission_texture = ExtResource(\"emission\")\n");
         if (maps.ContainsKey("height"))
             sb.Append($"heightmap_enabled = true\nheightmap_scale = {(r.HeightScale * 100f).ToString("0.###", inv)}\nheightmap_texture = ExtResource(\"height\")\n");
         return sb.ToString();

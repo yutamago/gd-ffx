@@ -278,6 +278,26 @@ texture) with the albedo, normal and height maps: Godot's own material,
 A `StandardMaterial3D` or a `ShaderMaterial` of your own can stand in its
 place (set the entry's `Material`).
 
+### The Materials tab
+
+The material workbench (R2b, docs/remaster-materials.md; phase 1): a main
+screen **Materials** beside 2D, 3D, Script and Game (the plugin's main
+screen, so the plugin is named "Materials" there). Textures come from the
+Textures dock's **Materialize** (several selected), the part inspector's
+**Materialize** beside each of the part's textures, or the tab's **+ Open
+map**; a big lit preview with a compare wipe, one step per map (source,
+albedo, height, normal, roughness, metallic, occlusion, emission: generate,
+import a file, or skip), only the maps after a change made again, 256 px
+first and then the working size, off the main thread; **Save** writes the
+maps and the `ORMMaterial3D` into the files below as one undo step, the
+settings as the entry's `PbrRecipe` (`Version` 2). Every setting change is
+one step of the global undo history (a slider drag: one). The HDRIs of its
+preview are four CC0 ones from Poly Haven in
+`godot/addons/ffx_remaster/hdri/` (editor only, out of exports with the
+plugin) and those of the folder in the editor setting
+`ffx_remaster/hdri_dir`. The recipe sliders below and the batch stay until
+R2b's phase 3.
+
 ### The batch
 
 Below the dock: materials for many textures at once. The scope is the open
@@ -580,6 +600,18 @@ FFX_EDITOR_SHOT=1 FFX_GAME_DIR=<game> tools/remaster-editor-check.sh [OUT_DIR]  
    kept as one undo step, undone, redone); then every PNG and material
    imported, the material an ORMMaterial3D over its imported maps, drawn by
    the map. It writes `DIR/textures-expect.json`.
+   Then R2b's Materials tab (after R3 below): three of Besaid's textures
+   queued (the Textures dock's Materialize, the tab's add), every step made
+   (256 px first, then the working size), a slider dragged (one undo step;
+   the height and the normal made again, the albedo kept; the preview's
+   pixels changed under a renderer), the latency of five changes at 512 px
+   and five at 1024 px (upscaled x2), undo and redo (the albedo back byte for
+   byte), a synthetic roughness map imported and the occlusion skipped (one
+   undo step each, the ORM packed from them), the next texture with the
+   settings kept, saved at the full size (one undo step, undone, redone; the
+   recipe with a store-relative import path, the ORM's occlusion white), the
+   open map's textures added; with `--editor-shot`: `materials-studio.png`,
+   `materials-hdri.png`, `materials-object.png` beside it.
    Then R3 (`--remaster-looks=DIR/looks`: a stand-in look of Besaid beach
    written there, the editor runs no game): the lighting nodes tagged by ID,
    the key light where the look puts it, the facets at the defaults; the key
@@ -690,8 +722,8 @@ export that holds either (`project.godot` still names the plugin's
   `BlendedParts = Lit` choice) and in linear light they come out paler, so
   they stay classic by default, and the shore under them stays paler than
   the classic one (Besaid's lagoon).
-- The materials' recipe has no live preview; the batch has no per-texture
-  recipe.
+- The dock's recipe has no live preview (the Materials tab has); the batch
+  has no per-texture recipe.
 - A headless editor save prints Godot's own "Parameter "t" is null" (no
   thumbnail without a renderer).
 
@@ -710,6 +742,11 @@ export that holds either (`project.godot` still names the plugin's
 | `BatchPanel.cs` | the batch and its review |
 | `TextureActions.cs` | replace, upscale, generate, revert, edit (one undo step each, through `RemasterPlugin.SetTexture`) |
 | `TextureStore.cs` | the project's texture index and files, the import |
+| `MaterialsTab.cs` | the Materials tab (R2b): the queue, the steps and their settings, undo, the pipeline's results, save |
+| `MaterialPreview.cs` | the tab's 3D preview: the objects, the camera, the compare wipe, studio, HDRI and the map's light |
+| `MapView2D.cs` | the tab's map in 2D (zoom, pan, 2x2, the split) |
+| `PreviewObject.cs` | the game piece that draws a texture, as one mesh |
+| `hdri/` | the preview's HDRIs (CC0, Poly Haven; README) |
 | `WhereUsed.cs` | the where-used index and its cache |
 | `ComfyUpscaler.cs` | the optional ComfyUI upscaling |
 | `LightingEdit.cs` | the map's lighting as nodes, the preview, the save of `lighting.tres` |
@@ -720,7 +757,8 @@ export that holds either (`project.godot` still names the plugin's
 Game side (R2): `RemasterTexture`, `RemasterTextureSet`, `PbrRecipe` (the
 resources), `RemasterTextures` (the layers, the merge, the images and
 materials, the binding on the classic materials), `PbrBuilder` and
-`Texturing/` (the generators), `RemasterLook` and `MapLook` (the lit
+`Texturing/` (the generators), `MaterialPipeline` (R2b: the steps, the
+graph, the runs off the main thread), `RemasterLook` and `MapLook` (the lit
 materials, the swap), `RemasterLighting` and `RenderPaths` (the rig, the
 choice), `MaterialsTest`; `ClassicMaterials` binds the replacements and
 notes each map material's modes and defines (`ffx_map_shader`).
