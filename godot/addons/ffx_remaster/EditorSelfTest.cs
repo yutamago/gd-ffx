@@ -1627,6 +1627,18 @@ public sealed class EditorSelfTest
                 fail($"the starter profile {name}: {(MaterialProfiles.Find(name) is { } x ? $"layer {x.Layer}" : "not listed")}");
                 yield break;
             }
+        // their files as the editor writes profiles (a Save without a change changes no byte)
+        foreach (var name in starters)
+        {
+            var path = MaterialProfiles.Find(name)!.Path;
+            var written = MaterialProfiles.ToText(MaterialProfiles.Load(name)!);
+            if (written != FileAccess.GetFileAsString(path))
+            {
+                System.IO.File.WriteAllText(GameSettings.Globalize($"{MapStore.Dir}/starter-{name}.tres"), written);
+                fail($"the starter profile {name}'s file is not as the editor writes it (see starter-{name}.tres beside the maps)");
+                yield break;
+            }
+        }
         var v = global.GetVersion();
         var lp = tab.LoadProfile("rock");
         if (lp != null || global.GetVersion() != v + 1 || tab.ProfileName != "rock"

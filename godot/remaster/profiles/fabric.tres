@@ -13,7 +13,6 @@ HeightContrast = 0.9
 HeightScale = 0.006
 NormalStrength = 8.0
 RoughnessBase = 0.92
-RoughnessRange = 0.5
 OcclusionRadius = 4.0
 OcclusionStrength = 0.8
 HeightBlur = 0.3

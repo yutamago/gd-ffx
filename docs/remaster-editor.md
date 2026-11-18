@@ -776,7 +776,8 @@ FFX_EDITOR_SHOT=1 FFX_GAME_DIR=<game> tools/remaster-editor-check.sh [OUT_DIR]  
    `materials-lit-raw.png`, `materials-lit-material.png`.
    Phase 3 (after the save; profiles into `--remaster-profiles=res://remaster/check/profiles`,
    a layer after the project's, gitignored, removed at the end): the eight
-   starter profiles listed (the project's layer) and loaded (one undo step);
+   starter profiles listed (the project's layer), their files as the editor
+   writes profiles, and loaded (one undo step);
    the queue's settings saved as a profile (one undo step, undone and redone
    to the same bytes, written again from what it reads the same), loaded,
    kept when the texture changes; a setting pinned to a texture (one undo
