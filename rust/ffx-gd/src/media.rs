@@ -268,7 +268,8 @@ fn setting(e: &Exec, off: u32) -> u32 {
 const MUSIC_VOLUME: (u32, u32) = (0x43, 0x1c);
 const VOICE_VOLUME: (u32, u32) = (0x44, 0x18);
 
-#[allow(clippy::too_many_lines)] // one match over the commands
+// one match over the commands; a, b, c as the commands' arguments
+#[allow(clippy::too_many_lines, clippy::many_single_char_names)]
 fn push_command(e: &mut Exec, args: &Args) -> Ret {
     let mgr = args.ecx;
     let w = |i: usize| args.stack.get(i).copied().unwrap_or(0);
@@ -319,9 +320,23 @@ fn push_command(e: &mut Exec, args: &Args) -> Ret {
                 if all || s.music == Some(a) {
                     s.music = None;
                 }
-                event = Some(ev(MUSIC, if all { STOP_ALL } else { STOP }, id, [0; 3], replaced));
+                event = Some(ev(
+                    MUSIC,
+                    if all { STOP_ALL } else { STOP },
+                    id,
+                    [0; 3],
+                    replaced,
+                ));
             }
-            0x2f => event = Some(ev(MUSIC, PAUSE, s.music.unwrap_or(u32::MAX), [a, 0, 0], false)),
+            0x2f => {
+                event = Some(ev(
+                    MUSIC,
+                    PAUSE,
+                    s.music.unwrap_or(u32::MAX),
+                    [a, 0, 0],
+                    false,
+                ))
+            }
             // iMusicVolumeDirect(id, v, 1), iMusicVolumeTranslate(id, frames, v)
             0x23 => {
                 let replaced = s.replaced[0].contains(&a);
@@ -375,7 +390,9 @@ fn push_command(e: &mut Exec, args: &Args) -> Ret {
             // stop (id), stop all non-blocking, stop non-blocking (id), stop all non-looping
             0x36 | 0x38 => event = Some(ev(SFX, STOP, a, [0; 3], s.replaced[1].contains(&a))),
             0x37 | 0x39 => event = Some(ev(SFX, STOP_ALL, u32::MAX, [0; 3], false)),
-            0x30..=0x41 => event = Some(ev(SFX, OTHER, a, [b, c, w(4)], s.replaced[1].contains(&a))),
+            0x30..=0x41 => {
+                event = Some(ev(SFX, OTHER, a, [b, c, w(4)], s.replaced[1].contains(&a)))
+            }
             // voice: the line read, then started
             0x10 => {
                 s.voice = Some(a);
@@ -397,23 +414,37 @@ fn push_command(e: &mut Exec, args: &Args) -> Ret {
             // iVoiceVolumeDirect(volume, 1), iVoiceVolumeTranslate(frames, volume), the voice stopped
             0x0e => {
                 let id = s.voice.unwrap_or(u32::MAX);
-                event = Some(ev(VOICE, VOLUME, id, [a, 0, 0], s.replaced[2].contains(&id)));
+                event = Some(ev(
+                    VOICE,
+                    VOLUME,
+                    id,
+                    [a, 0, 0],
+                    s.replaced[2].contains(&id),
+                ));
             }
             0x0d => {
                 let id = s.voice.unwrap_or(u32::MAX);
-                event = Some(ev(VOICE, VOLUME, id, [b, a, 0], s.replaced[2].contains(&id)));
+                event = Some(ev(
+                    VOICE,
+                    VOLUME,
+                    id,
+                    [b, a, 0],
+                    s.replaced[2].contains(&id),
+                ));
             }
             0x0a => {
                 let id = s.voice.unwrap_or(u32::MAX);
                 event = Some(ev(VOICE, STOP, id, [0; 3], s.replaced[2].contains(&id)));
             }
-            0x0a..=0x13 => {
+            0x0b | 0x0c | 0x11..=0x13 => {
                 let id = s.voice.unwrap_or(u32::MAX);
                 event = Some(ev(VOICE, OTHER, id, [a, b, c], s.replaced[2].contains(&id)));
             }
             // the settings' volumes: master (also the movies'), music, voice, sound effects
             0x42..=0x45 => {
-                if (cmd == MUSIC_VOLUME.0 && s.music_muted) || (cmd == VOICE_VOLUME.0 && s.voice_muted) {
+                if (cmd == MUSIC_VOLUME.0 && s.music_muted)
+                    || (cmd == VOICE_VOLUME.0 && s.voice_muted)
+                {
                     call.stack[1] = 0;
                 }
                 event = Some(ev(SETTINGS_KIND, VOLUME, cmd, [a, 0, 0], false));
@@ -431,14 +462,22 @@ fn push_command(e: &mut Exec, args: &Args) -> Ret {
         ffx_host::log::note(&format!(
             "gd-ffx: audio command {cmd:#04x} ({a:#x}, {b:#x}, {c:#x}, {:#x}){}",
             w(4),
-            if event.is_some_and(|e| e.replaced) { " replaced" } else { "" }
+            if event.is_some_and(|e| e.replaced) {
+                " replaced"
+            } else {
+                ""
+            }
         ));
     }
     let resolve = |e: &Exec, (cmd, v): (u32, u32)| {
         if v != u32::MAX {
             return v;
         }
-        let off = if cmd == MUSIC_VOLUME.0 { MUSIC_VOLUME.1 } else { VOICE_VOLUME.1 };
+        let off = if cmd == MUSIC_VOLUME.0 {
+            MUSIC_VOLUME.1
+        } else {
+            VOICE_VOLUME.1
+        };
         setting(e, off)
     };
     for hold in before {
@@ -490,7 +529,14 @@ fn main_loop(e: &mut Exec, args: &Args) -> Ret {
         if mgr != 0 {
             for (cmd, v) in holds {
                 let v = if v == u32::MAX {
-                    setting(e, if cmd == MUSIC_VOLUME.0 { MUSIC_VOLUME.1 } else { VOICE_VOLUME.1 })
+                    setting(
+                        e,
+                        if cmd == MUSIC_VOLUME.0 {
+                            MUSIC_VOLUME.1
+                        } else {
+                            VOICE_VOLUME.1
+                        },
+                    )
                 } else {
                     v
                 };
@@ -589,8 +635,16 @@ fn c_string(e: &Exec, at: u32, max: u32) -> String {
 fn note_movie(ev: MovieEvent) {
     ffx_host::log::note(&format!(
         "gd-ffx: movie {} {} (player {:#x}{})",
-        if ev.action == 1 { "opened" } else { "terminated" },
-        if ev.path.is_empty() { "-" } else { ev.path.as_str() },
+        if ev.action == 1 {
+            "opened"
+        } else {
+            "terminated"
+        },
+        if ev.path.is_empty() {
+            "-"
+        } else {
+            ev.path.as_str()
+        },
         ev.player,
         if ev.looping { ", looping" } else { "" }
     ));

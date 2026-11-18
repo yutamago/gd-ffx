@@ -53,8 +53,14 @@ pub struct Pcm {
 /// Reads `exe`'s bytes at virtual address `va` (`n` of them) through its
 /// section table.
 fn exe_bytes(exe: &[u8], va: u32, n: usize) -> Option<&[u8]> {
-    let u32_at = |at: usize| exe.get(at..at + 4).map(|s| u32::from_le_bytes(s.try_into().expect("4")));
-    let u16_at = |at: usize| exe.get(at..at + 2).map(|s| u16::from_le_bytes(s.try_into().expect("2")));
+    let u32_at = |at: usize| {
+        exe.get(at..at + 4)
+            .map(|s| u32::from_le_bytes(s.try_into().expect("4")))
+    };
+    let u16_at = |at: usize| {
+        exe.get(at..at + 2)
+            .map(|s| u16::from_le_bytes(s.try_into().expect("2")))
+    };
     let pe = u32_at(0x3c)? as usize;
     let sections = usize::from(u16_at(pe + 6)?);
     let optional = usize::from(u16_at(pe + 20)?);
@@ -97,18 +103,23 @@ impl Importer {
             let mut stored = vec![0u8; b.stored];
             {
                 use std::io::{Read as _, Seek as _, SeekFrom};
-                file.seek(SeekFrom::Start(b.offset)).map_err(|e| bad(e.to_string()))?;
-                file.read_exact(&mut stored).map_err(|e| bad(e.to_string()))?;
+                file.seek(SeekFrom::Start(b.offset))
+                    .map_err(|e| bad(e.to_string()))?;
+                file.read_exact(&mut stored)
+                    .map_err(|e| bad(e.to_string()))?;
             }
             let data = if b.is_compressed() {
                 let mut d = Vec::with_capacity(b.size);
-                std::io::copy(&mut flate2::read::ZlibDecoder::new(&stored[..]), &mut d).map_err(|e| bad(e.to_string()))?;
+                std::io::copy(&mut flate2::read::ZlibDecoder::new(&stored[..]), &mut d)
+                    .map_err(|e| bad(e.to_string()))?;
                 d
             } else {
                 stored
             };
             let lo = usize::try_from(start.saturating_sub(from)).unwrap_or(0);
-            let hi = usize::try_from(end.min(to) - from).unwrap_or(0).min(data.len());
+            let hi = usize::try_from(end.min(to) - from)
+                .unwrap_or(0)
+                .min(data.len());
             if lo < hi {
                 out.extend_from_slice(&data[lo..hi]);
             }
@@ -148,7 +159,10 @@ impl Importer {
         for id in 0..MUSIC_IDS {
             let at = 4 * id as usize;
             let index = i32::from_le_bytes(table[at..at + 4].try_into().expect("4"));
-            let Some(event) = usize::try_from(index).ok().and_then(|i| group.events.get(i)) else {
+            let Some(event) = usize::try_from(index)
+                .ok()
+                .and_then(|i| group.events.get(i))
+            else {
                 continue;
             };
             let Some((wave, _)) = project.wave(event) else {
@@ -174,10 +188,14 @@ impl Importer {
             if !bank.ends_with("_bank00.fsb") {
                 continue;
             }
-            let Some(head) = self.bank_head(&bank) else { continue };
+            let Some(head) = self.bank_head(&bank) else {
+                continue;
+            };
             for (i, s) in head.samples.iter().enumerate() {
                 let number = s.name.split('_').next().unwrap_or("");
-                let Ok(id) = number.parse::<u32>() else { continue };
+                let Ok(id) = number.parse::<u32>() else {
+                    continue;
+                };
                 // the sound's first sample (a looping sound's layers are `_1`, `_2`, ...)
                 if out.get(&id).is_some_and(|x| x.name == number) {
                     continue;
@@ -213,7 +231,10 @@ impl Importer {
             }
             if let Some(head) = self.bank_head(&bank) {
                 for (i, s) in head.samples.iter().enumerate() {
-                    samples.insert(s.name.to_ascii_lowercase(), (bank.clone(), u32::try_from(i).unwrap_or(0)));
+                    samples.insert(
+                        s.name.to_ascii_lowercase(),
+                        (bank.clone(), u32::try_from(i).unwrap_or(0)),
+                    );
                 }
             }
         }
@@ -221,7 +242,12 @@ impl Importer {
             .into_iter()
             .filter_map(|(id, name)| {
                 let (bank, sample) = samples.get(&name.to_ascii_lowercase())?.clone();
-                Some(Sound { id, name, bank, sample })
+                Some(Sound {
+                    id,
+                    name,
+                    bank,
+                    sample,
+                })
             })
             .collect();
         v.sort_by_key(|s| s.id);
@@ -247,14 +273,19 @@ impl Importer {
 
 /// An `ML` file's (key, name) pairs.
 fn ml_names(b: &[u8]) -> Vec<(u32, String)> {
-    let u32_at = |at: usize| b.get(at..at + 4).map(|s| u32::from_le_bytes(s.try_into().expect("4")));
+    let u32_at = |at: usize| {
+        b.get(at..at + 4)
+            .map(|s| u32::from_le_bytes(s.try_into().expect("4")))
+    };
     if b.get(..2) != Some(b"ML") {
         return Vec::new();
     }
     let n = u32_at(4).unwrap_or(0).min(1 << 20) as usize;
     let mut out = Vec::with_capacity(n);
     for i in 0..n {
-        let (Some(key), Some(off)) = (u32_at(8 + 8 * i), u32_at(12 + 8 * i)) else { break };
+        let (Some(key), Some(off)) = (u32_at(8 + 8 * i), u32_at(12 + 8 * i)) else {
+            break;
+        };
         let at = off as usize;
         let Some(rest) = b.get(at..) else { continue };
         let end = rest.iter().position(|&c| c == 0).unwrap_or(rest.len());

@@ -75,7 +75,7 @@ pub struct Owners {
     /// Each field-program owner's place in render space (the entry's
     /// position, `(-x, -y, z)`), and whether the entry sticks to a
     /// character or object (its draws then tell its place better).
-    pub places: Vec<(u32, [f32; 3], bool)>,
+    pub places: Places,
 }
 
 /// The game's memory, read where it is mapped.
@@ -107,9 +107,12 @@ impl Mem {
     }
 }
 
+/// Each field-program owner's place and stuck flag ([`Owners::places`]).
+type Places = Vec<(u32, [f32; 3], bool)>;
+
 /// The objects of each running field-program entry: object address ->
 /// entry index; and each entry's place.
-fn field_objects(m: &Mem) -> (HashMap<u32, u32>, Vec<(u32, [f32; 3], bool)>) {
+fn field_objects(m: &Mem) -> (HashMap<u32, u32>, Places) {
     let mut objects = HashMap::new();
     let mut places = Vec::new();
     let Some(data) = m.u32(FP_DATA).filter(|&d| d != 0) else {

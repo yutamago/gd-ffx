@@ -847,7 +847,9 @@ impl FfxGame {
         classic()
             .sounds(&kind.to_string(), &language.to_string())
             .iter()
-            .map(|s| GString::from(format!("{}\t{}\t{}\t{}", s.id, s.name, s.bank, s.sample).as_str()))
+            .map(|s| {
+                GString::from(format!("{}\t{}\t{}\t{}", s.id, s.name, s.bank, s.sample).as_str())
+            })
             .collect()
     }
 
@@ -874,7 +876,9 @@ impl FfxGame {
             return vdict! { "found" => false };
         };
         let bytes: Vec<u8> = p.samples.iter().flat_map(|v| v.to_le_bytes()).collect();
-        let (lb, le) = p.looped.map_or((-1, -1), |(a, b)| (i64::from(a), i64::from(b)));
+        let (lb, le) = p
+            .looped
+            .map_or((-1, -1), |(a, b)| (i64::from(a), i64::from(b)));
         vdict! {
             "found" => true,
             "rate" => i64::from(p.rate),
@@ -1036,7 +1040,11 @@ impl FfxGame {
         let v: Vec<i32> = usize::try_from(kind)
             .ok()
             .and_then(|k| all.get(k))
-            .map(|l| l.iter().flat_map(|&(id, n)| [id.cast_signed(), n.cast_signed()]).collect())
+            .map(|l| {
+                l.iter()
+                    .flat_map(|&(id, n)| [id.cast_signed(), n.cast_signed()])
+                    .collect()
+            })
             .unwrap_or_default();
         PackedInt32Array::from(v.as_slice())
     }
