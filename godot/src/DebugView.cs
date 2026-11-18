@@ -76,6 +76,10 @@ public partial class DebugView : Control
             _test = new Remaster.SavedOverridesTest(timeout);
         else if (GameSettings.Flag("selftest-lighting"))
             _test = new Remaster.LightingTest(timeout, GameSettings.Arg("shot"));
+        else if (GameSettings.Flag("selftest-wizard"))
+            _test = new Remaster.Wizard.WizardTest(timeout, GameSettings.Arg("shot"));
+        else if (GameSettings.Flag("selftest-wizard-classifier"))
+            _test = new Remaster.Wizard.ClassifierCheck(timeout);
         else if (GameSettings.Flag("selftest-materialize"))
             _test = new Remaster.Materialize.MaterializeTest(timeout);
         else if (GameSettings.Flag("selftest-effects"))

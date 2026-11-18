@@ -1,6 +1,6 @@
 # The remaster editor
 
-gd-ffx's editor plugin for the remaster (docs/remaster-plan.md, R1b to R3, R5, R6):
+gd-ffx's editor plugin for the remaster (docs/remaster-plan.md, R1b to R7a):
 browse the game's maps, open one as an editable scene of its classic parts,
 move, hide, remove, replace and add parts with Godot's own tools, and save
 the edits as the map's override files (docs/remake.md, "Overrides"), which
@@ -9,7 +9,8 @@ and draw a map remastered ("Textures" and below), and light it: the game's
 lights and fog as nodes, sky, GI, volumes ("Lighting"); see the game's own data on
 the map (walk mesh, triggers, entrances, cameras) and check that remade geometry
 lines up with it ("The game's data"); remake characters: open one with its motions, assign a
-remade model with a skeleton of its own and map it onto the game's ("Characters"). What it writes into the
+remade model with a skeleton of its own and map it onto the game's ("Characters"); make a first pass over
+maps automatically and review it ("The remaster wizard"). What it writes into the
 project is IDs and your own work; images made from the game's textures are
 your work products too, but never belong in gd-ffx's git ("Your work and
 git").
@@ -944,6 +945,66 @@ In the game, **F8** turns every replacement off and on for the run (remade
 effects, sounds and movies; `--no-replacements` starts with them off), as F7
 does the render path.
 
+## The remaster wizard
+
+R4 (docs/remaster-plan.md, "R4 in detail"). The **Wizard** dock makes a first
+automated pass over maps and stages it for review; nothing reaches the project
+until a map is accepted.
+
+- **Run** over the map selected in the Remaster dock, its area, the maps the
+  project changes, or all maps. For each map the wizard loads its classic import
+  (no scene is opened), lists its colour textures with how the map draws them,
+  chooses a **profile per texture** (rock, stone and concrete, sand and dirt, grass
+  and foliage, wood, metal, fabric, plaster and painted walls, or keep classic:
+  sky, water, glows and effects, background paintings) with a score and its
+  reasons, makes the materials with those profiles (R2b's run: the GPU when the
+  Materials tab uses it, else the CPU), stages the lighting (R3's defaults from
+  the game's look, VoxelGI over the map's middle; not SDFGI, which leaked light on
+  the GPU), and, with a renderer, renders the before/after pictures, matches the
+  exposure to the classic picture once and runs the colour check.
+- **Pause** stops after the map being made, **Resume** goes on (in the next
+  editor session too), **Cancel** drops the map being made. 2D-layer maps are
+  skipped (or noted as kept classic: the box under the buttons). The progress bar,
+  the status and a summary (maps done, to review, accepted, skipped, failed;
+  materials per profile; the time per map) are at the top, the maps of the batch
+  below with their state, time and colour check.
+- **The review** of the selected map: the classic and the remastered picture side
+  by side (the game's camera when the game captured the map, else three views
+  over the walk mesh; **View** steps through them), the colour check (orange when
+  it fails), the lighting (GI, exposure), and per texture its made albedo and
+  normal, the profile with its score and lead over the runner-up, and the
+  decision. A texture's reasons show under the list ("sand 3.7 (on the ground
+  +1.0, common in bsil +0.4, warm share 0.995 (its 0.98) +0.2, ...); then wood
+  1.5"). **Accept** keeps its material, **Reject (classic)** gives it none,
+  **Make with** makes it again with the chosen profile; **Pictures again** draws
+  the remastered pictures with the textures as decided now.
+- **Accept map** applies the pass as one undo step: the materials (not the
+  rejected ones) as texture entries (with the profile, its hash, the settings that
+  differ from it), the render path remastered, the status in progress (a higher
+  one set by hand stays), the pass's note added to the map's notes ("wizard pass
+  2026-11-18: 50 material(s) (grass-and-foliage 20, sand-and-dirt 14, ...), 3 kept
+  classic; lighting from the game's look, GI VoxelGi, exposure 0.8"), and
+  `lighting.tres` (only what differs from the defaults). An open map is opened
+  again. **Discard** drops the pass. Each review action is one undo step of the
+  global history; making a pass is none (no project file changes).
+- **Headless** (the editor without a window): `godot --headless --editor --path godot
+  -- --remaster-wizard --maps=bsil00,slik08,ptkl14` makes the batch and prints
+  `ffx wizard: DONE <summary>`; `--wizard-resume` resumes a paused batch,
+  `--wizard-pause-after=N` pauses after N maps (and quits), `--wizard-accept`
+  accepts every staged map, `--wizard-2d-classic` notes 2D-layer maps as kept
+  classic. Headless there are no pictures and no colour check.
+
+The files: the wizard's state is `res://remaster/wizard/state.json`
+(`--remaster-wizard-dir=DIR`): the batch, and per map the staged pass (texture IDs,
+kinds, profiles, scores, reasons, decisions, the staged entries, the lighting's
+changed fields, the colour check), text; gitignored in gd-ffx's checkout. The
+made maps go to the texture folders as R2b's runs write them (content-named; a
+staged map's are unreferenced until accepted, and stay when a pass is discarded).
+The pictures and thumbnails are the player's game: `user://remaster/wizard/<map>/`
+(a check's: `DIR/pictures/`), never in git. A map the game has not shown on this
+machine has no look cached: its lighting follows the defaults and the review says
+"play the map once".
+
 ## Your work and git
 
 Replacements and generated maps are your own work products, but the ones
@@ -1285,6 +1346,30 @@ The pictures show the player's game: keep them out of git.
    --audio-file=DIR/media/audio/audio.tres` (the battle music),
    `--selftest-movie --devsave=22 --movies-file=DIR/media/movies/movies.tres`.
 
+### The wizard check
+
+7. R4 (`tools/remaster-wizard-check.sh OUT_DIR`, also alone): the editor under
+   Xvfb (`--editor -- --remaster-editor-wizard --remaster-wizard-dir=DIR/wizard
+   --remaster-maps=DIR/wizard/maps --remaster-textures=res://remaster/check/wizard-textures`):
+   Besaid beach from the map browser's selection (the scopes: the area and all
+   maps listed), its pass staged without an undo step or a project file (53
+   textures with kinds, scores and reasons; at least ten materials with three
+   profiles or more, their staged entries and files, the thumbnails; GI staged; the
+   note; the pictures and the colour check under a renderer); a texture rejected
+   (one undo step, undone, redone, the state file following), another made again
+   with a different profile (one undo step, undone, redone), the pictures drawn
+   again; the map accepted (one undo step: every material entry, the rejected one
+   without, the remade one with its new profile, the render path, status and notes,
+   `lighting.tres` with GI; undone: the project as before; redone); a batch of
+   `slik08`, `ptkl14` (2D layers) and `mtgz03` paused while the first is made (the
+   state file says paused after one), resumed (two staged, one skipped, the
+   summary with the time per map). It writes `DIR/wizard/wizard-expect.json`. Then
+   the game with what it accepted (`--selftest-wizard --wizard-expect=...`
+   through `tools/compare-shot.sh`: pictures and the colour check in
+   `DIR/wizard-game`), a headless batch paused in one editor session and resumed in
+   the next (`--remaster-wizard --wizard-pause-after=1`, then `--wizard-resume`),
+   and the classifier's accuracy (`--selftest-wizard-classifier`, below).
+
 ### The effect, audio and movie checks
 
 ```bash
@@ -1317,6 +1402,32 @@ FFX_GAME_DIR=<game> godot --headless --path . -- --selftest-movie --devsave=22 -
   while it went 0.37 to 3.37 s), the subtitle shows, the game's movie sound is
   silent (the mix 0.017 RMS against 0.075 with F8, which brings the game's
   movie back). `--movies-file=FILE`: the editor's file.
+
+### The wizard's checks in the game
+
+```bash
+FFX_GAME_DIR=<game> godot --headless --path godot -- --selftest-wizard-classifier --devsave=7
+FFX_GAME_DIR=<game> FFX_SHOT_TEST="--selftest-wizard --selftest-timeout=500" tools/compare-shot.sh - OUT_DIR       # the pass in the game (Compatibility, Xvfb)
+FFX_GAME_DIR=<game> FFX_SHOT_TEST="--selftest-wizard --selftest-timeout=500" tools/compare-shot-win.sh - OUT_DIR   # the GPU (Windows export)
+```
+
+- `--selftest-wizard-classifier` (`ClassifierCheck`): every texture of
+  `godot/remaster/classifier-labels.tsv` classified from its classic pixels and how
+  its map draws it (each labelled map's classic import loaded), against its label:
+  the accuracy overall, leave one area out (the prototypes refitted without the
+  area scored: the honest number), per kind (recall and precision), the confusion
+  matrices, the tuning areas, Zanarkand and the held-out areas apart. Fails under
+  60 % overall. `--classifier-dump=FILE` writes the features and uses; with
+  `--no-game --classifier-features=FILE` it classifies from such a file (tuning,
+  2 s); `--classifier-verbose` prints every texture with its reasons.
+- `--selftest-wizard` (`WizardTest`) on Besaid beach: the classic picture; with
+  `--wizard-expect=FILE` the editor's accepted files registered as layers (the map
+  remastered by its own render path, each accepted texture drawn with its made
+  material, the rejected one without, the remade one's material, the lighting
+  file's GI and exposure), else the wizard's pass run in the game (classified,
+  made at most `--wizard-size` px, 512 by default, on the CPU, the lighting, the
+  exposure tuned once); the colour check against the classic picture (with a
+  renderer); F7 classic again. `--shot=FILE.png`: FILE.png, FILE-remastered.png.
 
 ## Exports
 
@@ -1384,6 +1495,13 @@ export that holds either (`project.godot` still names the plugin's
 - Audio (R7a): a replaced sound effect plays where the game plays it, without
   its pan; the voice browser lists the US banks; the dock's loop fields apply
   when a file is assigned (edit them in the inspector after).
+- The wizard (R4): the classifier is right on about half of unseen areas' textures
+  (leave one area out: 55 %; grass, sand and keep classic well, rock against stone
+  half, wood, metal and plaster seldom), so its choices are a first pass to review;
+  the review's pictures need a renderer (the headless batch stages without them);
+  a map the game has not shown here has no look (the lighting's defaults, a sky
+  without the game's colours); a discarded pass's files stay in the texture
+  folders.
 - Movies (R7a): no classic movie picture in gd-ffx yet, so no classic preview
   and nothing drawn for a movie without a replacement; the replacement plays at
   its own rate (not re-synchronised to the game's frame if it drifts); the
@@ -1433,6 +1551,12 @@ export that holds either (`project.godot` still names the plugin's
 | `MediaStore.cs` | where R7a's files go (the project's or a check's), their text, the recorded effects |
 | `RemasterPlugin.Media.cs` | open an effect; assign or clear an effect's remake, a sound, a movie (one undo step each) |
 | `MediaEditorTest.cs` | the media check |
+| `WizardDock.cs` | the Wizard dock (R4): scope, run, pause, resume, the maps, the review |
+| `Wizard.cs` | the wizard's engine: the batch, a map's pass (import, classify, bake, lighting, imports, pictures, exposure, colour check), a texture made again, pictures again |
+| `WizardState.cs` | the wizard's saved state: the batch, each map's staged pass |
+| `WizardRender.cs` | the review's before/after pictures in a viewport of its own |
+| `RemasterPlugin.Wizard.cs` | the review's actions (decide, accept, discard; one undo step each), the headless batch |
+| `WizardEditorTest.cs` | the wizard's editor check |
 
 Game side (R2): `RemasterTexture`, `RemasterTextureSet`, `PbrRecipe` (the
 resources), `RemasterTextures` (the layers, the merge, the images and
@@ -1475,6 +1599,12 @@ remake's root), `RemasterSound`, `RemasterSoundSet`, `RemasterMovie`,
 `Replacements` (F8), `EffectsTest`, `AudioTest`, `MovieTest`; in the extension
 `fxowner.rs` (who made each draw) and `media.rs` (the sound commands, the
 movies); `ffx-import`'s `sounds.rs` (the game's sounds by id, decoded).
+
+Game side (R4, `godot/src/Remaster/Wizard/`): `TextureFeatures` (a texture's colour
+and statistics), `MapTextures` (how a loaded map draws each texture), `TextureClassifier`
+(the kinds, the rules, the prototypes, the reasons), `WizardPass` (a map's pass: the
+classification, the lighting and GI, the exposure, the note), `ClassifierCheck`
+(`--selftest-wizard-classifier`), `WizardTest` (`--selftest-wizard`).
 
 Game side (R5): `MapGameData` (the archive's walk meshes, scene cameras,
 entrances and workers in render space, from `FfxGame.classic_map_game_data`),

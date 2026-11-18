@@ -33,7 +33,7 @@ env -u WAYLAND_DISPLAY -u DISPLAY "$repo/tools/capped.sh" xvfb-run -a -s "-scree
 [[ -f "$out/godot.png" ]] || { echo "compare-shot: no picture (see $out/godot.log)" >&2; exit 1; }
 # the remastered pictures' colour balance against the classic one (R3: --selftest-lighting)
 for r in remastered pbr; do
-    if [[ -f "$out/godot-$r.png" && "$test" == *selftest-lighting* ]]; then
+    if [[ -f "$out/godot-$r.png" && ( "$test" == *selftest-lighting* || "$test" == *selftest-wizard* ) ]]; then
         echo "colour, $r against classic:"
         uv run -q --with pillow python -I "$repo/tools/compare/colour.py" "$out/godot.png" "$out/godot-$r.png" || true
     fi

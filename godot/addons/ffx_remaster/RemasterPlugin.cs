@@ -75,6 +75,7 @@ public partial class RemasterPlugin : EditorPlugin
         EnterCharacters();
         EnterMedia();
         EnterPick();
+        EnterWizard();
         // the 3D view's compare: the open map classic or remastered (its render path when opened)
         _lookToggle = new CheckButton { Text = "Remastered", TooltipText = "Draw the open map remastered (PBR materials, the map's lighting) or classic" };
         _lookToggle.Toggled += on => SetEditorLook(on);
@@ -119,6 +120,7 @@ public partial class RemasterPlugin : EditorPlugin
         ExitCharacters();
         ExitMedia();
         ExitPick();
+        ExitWizard();
         if (_textures != null)
         {
             RemoveDock(_textures);
@@ -187,6 +189,7 @@ public partial class RemasterPlugin : EditorPlugin
         _test?.Step(delta);
         _charTest?.Step(delta);
         StepMedia(delta);
+        StepWizard(delta);
     }
 
     /// <summary>Opens the player's archive (<paramref name="dir"/>: a folder chosen in the dock) and shows the catalogue.</summary>
@@ -196,6 +199,7 @@ public partial class RemasterPlugin : EditorPlugin
         _catalogue = null;
         _dock?.ArchiveChanged();
         _characters?.Fill();
+        _wizardDock?.Refresh();
         if (ok)
             Uses.Start(Session);
         _textures?.UsesChanged();
