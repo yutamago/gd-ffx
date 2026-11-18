@@ -17,7 +17,11 @@
 //! - [`esc`]: the ESC menu's Flash callbacks, called for gd-ffx's native page;
 //! - [`flash`]: the movies the game opens and the calls it makes on them,
 //!   for the native screens; the native opening's `Finish`;
-//! - [`encounters`]: the battle maps of the current map's random encounters.
+//! - [`encounters`]: the battle maps of the current map's random encounters;
+//! - [`fxowner`]: who made each effect draw (a map's field program, a spell),
+//!   for remade effects by id (R7);
+//! - [`media`]: the music, sound effects, voice and movies the game plays,
+//!   for replacements by id (R7).
 //!
 //! Nothing of the game is built in: it is read from the player's folder at
 //! run time.
@@ -27,7 +31,9 @@ pub mod classic;
 pub mod encounters;
 pub mod esc;
 pub mod flash;
+pub mod fxowner;
 pub mod game;
+pub mod media;
 pub mod keys;
 pub mod platform;
 pub mod snapshots;
