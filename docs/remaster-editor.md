@@ -412,8 +412,7 @@ dock's **Render**):
   texture's PBR material, or its colour texture (the replacement or the
   classic one) as a plain rough surface; a material whose maps did not load
   (a file gone or not imported yet: an ORM material without its ORM map, a
-  normal or height map switched on without its texture, a texture file it names
-  that is not there) is drawn from its albedo alone, else the classic colour
+  normal or height map switched on without its texture) is drawn from its albedo alone, else the classic colour
   texture, with one log line (`ffx: materials: <id>: ... has maps that did not
   load (orm, normal): drawn from ... only`), never as plain metal (R7b; the
   materials check's broken material). The lit material keeps what the

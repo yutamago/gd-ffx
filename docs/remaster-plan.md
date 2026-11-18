@@ -841,8 +841,9 @@ docs/remake.md, "Rebuilt 2D rooms"; docs/architecture.md, "The 2D layers" and
   census found the two documented tests never disagree (4,680 entries); no spell
   was cast in gd-ffx's checks to compare the old shortcut.
 - **A broken material is drawn from its albedo.** An ORM material without its ORM
-  map (metallic 1 times nothing: plain metal), a normal or height map switched on
-  without its texture, or a missing texture file: logged once, drawn from its
+  map (metallic 1 times nothing: plain metal), or a normal or height map switched
+  on without its texture (what Godot leaves of a material whose files are gone or
+  not imported yet; once they are imported the material is made again): logged once, drawn from its
   albedo, else the classic colour texture.
 - **No ffx-rust change**: the layers' depths and rectangles are in the 2D import,
   the cameras in R5's game data, the art ids in the movies (`flash_symbols`, gd-ffx's
