@@ -21,6 +21,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
+pub mod chars;
 pub mod effect;
 pub mod exits;
 pub mod flash;
@@ -309,7 +310,7 @@ impl Importer {
 
     /// The kernel table `table` (`item`, `w_name`...) of `language`, read
     /// once; `None` without it.
-    fn kernel_table(
+    pub(crate) fn kernel_table(
         &self,
         language: &str,
         table: &str,
@@ -556,6 +557,19 @@ impl Importer {
     /// # Errors
     /// When the model is missing or does not parse.
     pub fn model_glb(&self, path: &str) -> Result<Vec<u8>> {
+        self.model_glb_with(path, &[])
+    }
+
+    /// As [`Importer::model_glb`], with `animations` (glTF animations of the
+    /// model's nodes: a character's motions, [`Importer::character_animations`]).
+    ///
+    /// # Errors
+    /// As [`Importer::model_glb`].
+    pub fn model_glb_with(
+        &self,
+        path: &str,
+        animations: &[ffx_phyre::Animation],
+    ) -> Result<Vec<u8>> {
         let bytes = self.read(path)?;
         let model =
             ffx_phyre::Model::parse(&bytes).map_err(|e| Error::Model(format!("{path}: {e}")))?;
@@ -572,7 +586,7 @@ impl Importer {
                     })
                     .clone()
             },
-            &[],
+            animations,
         );
         // the morphing instances (map clusters only), the segments' model ids
         let tags = morph::tags(&bytes);
@@ -1554,7 +1568,7 @@ fn add_color_morph_streams(model: &ffx_phyre::Model, doc: &mut Value, bin: &mut 
 
 /// The importer format (`asset.extras.ffx_import`) of the `.glb` at
 /// `path`; `None` for an older import or an unreadable file.
-fn glb_format(path: &Path) -> Option<u64> {
+pub(crate) fn glb_format(path: &Path) -> Option<u64> {
     use std::io::Read;
     let mut f = std::fs::File::open(path).ok()?;
     let mut head = [0u8; 20];

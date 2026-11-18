@@ -101,6 +101,39 @@ export keeps a segment's vertex order, which is the capture's. Tidus (`c001`):
 model 0 pieces 0, 1, 2 (68, 28, 22 vertices) and model 1 pieces 1, 2 (16,
 64), all in his one mesh (a test on the player's game).
 
+## Characters for the remaster (R6)
+
+For the editor's character tools (docs/remaster-editor.md, "Characters") the
+importer also gives (`rust/ffx-import/src/chars.rs`; nothing of it is in the
+game's own character import):
+
+- **The list** (`Importer::characters`, `character_list`;
+  `FfxGame.classic_characters`): every `chr/<kind>/<name>/mdl/d3d11/<name>.dae.phyre`
+  with its kind (`c` party and people of `chr/pc`, `m` monster, `n` person,
+  `s` aeon, `w` weapon, `f` object, `k` skeleton), whether it has motion groups
+  of its own, the game's names (the party's c001 to c008 from the kernel's
+  `ply_save` records 0 to 7; a monster `m<n>` from record `n` of the kernel's
+  `monster1` to `monster3`, the battle's names: a model several monsters share
+  shows that record's name) and its attachment points.
+- **Attachment points** (`character_points`): the PS2 `.chr` file's 16-byte
+  entries from the offset at `+0x20`, count at `+0x24` (`Ch_ElemGetAttr`:
+  ffx-rust's `ffx_chara::attach`): the point id (bits 0..13), its kind (14..15),
+  the element (`i16`) and an offset. Tidus has 19: 9 the head (element 61),
+  13 the jaw (63), 4 and 5 the hands' weapon points (24, 50), 0x13 and 0x14 the
+  shoulders.
+- **The PS2 skeleton** (`character_skeleton`; `FfxGame.classic_character_skeleton`):
+  the `.chr` bind pose (ffx-rust's `ffx-motion` `Skeleton`): per element its
+  parent, translation, rotation and scale. It has every element, also the ends
+  the HD model has no node for (and Godot's glTF import keeps no bone for:
+  Tidus's 84, the hand points 24 and 50).
+- **Motions** (`chr-motions`, `import_character_motions`: `<cache>/chr-motions/<name>.glb`):
+  the model with every clip of its own motion groups (`mot/resident0..3.mgrp`;
+  a monster without its own takes those of the character its `.chr` names) as
+  glTF animations of its `SkeletonNode_i` nodes, named `<group>/<clip>` with the
+  motion numbers that start by playing it, as ffx-rust's `ffx model export`
+  writes them (`ffx_motion::trs`). Tidus: 140 clips, 22 MB; a monster about
+  2 MB. Only the editor asks for it.
+
 ## Morphing meshes
 
 The game morphs some map meshes (MIMe; `MorphManager`). Each
@@ -294,6 +327,8 @@ cd rust
 cargo run --release -p ffx-import -- --game-dir <game> --out <dir> map /map/bsil/bsil00/
 cargo run --release -p ffx-import -- --game-dir <game> --out <dir> chr c001 w041
 cargo run --release -p ffx-import -- --game-dir <game> --out <dir> map2d /map/kami/kami01/
+cargo run --release -p ffx-import -- --game-dir <game> --out <dir> chr-motions c001   # a character with its motions as animations (the editor's)
+cargo run --release -p ffx-import -- --game-dir <game> characters us jp   # the character list as JSON: kind, names, motions, attachment points
 cargo run --release -p ffx-import -- --game-dir <game> devsaves      # the developers' saves: map, entrance, scenario
 cargo run --release -p ffx-import -- --game-dir <game> model /map/kami/kami01/   # a model's nodes, instances, materials
 cargo run --release -p ffx-import -- --game-dir <game> effects /map/bsil/bsil00/  # its materials' effect variant states, instances' render orders

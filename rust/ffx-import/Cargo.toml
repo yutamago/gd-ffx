@@ -16,6 +16,7 @@ ffx-vbf.workspace = true
 ffx-scene.workspace = true
 ffx-script.workspace = true
 ffx-dxbc.workspace = true
+ffx-motion.workspace = true
 serde_json.workspace = true
 # the Flash movies' art (flash.rs): Ruffle's SWF reader (MIT OR Apache-2.0), zlib
 swf = { version = "0.3.0", default-features = false, features = ["flate2"] }

@@ -86,6 +86,8 @@ public partial class DebugView : Control
             _test = new Remaster.OverridesTest(timeout, GameSettings.Arg("shot"));
         else if (GameSettings.Flag("selftest-remake-map"))
             _test = new Remake.RemakeMapTest(timeout, GameSettings.Arg("shot"));
+        else if (GameSettings.Flag("selftest-character"))
+            _test = new Characters.CharacterTest(timeout, GameSettings.Arg("shot"));
         else if (GameSettings.Flag("selftest-remake"))
             _test = new Remake.RemakeTest(timeout);
         else if (GameSettings.Flag("selftest-battle"))

@@ -4,6 +4,8 @@
 //! ffx-import --game-dir DIR --out DIR map <level>...     # /map/znkd/znkd06/, bsil0000
 //! ffx-import --game-dir DIR --out DIR map2d <level>...   # a map's 2D layers (/map/kami/kami01/)
 //! ffx-import --game-dir DIR --out DIR chr <model>...     # c001, m009, w041
+//! ffx-import --game-dir DIR --out DIR chr-motions <model>...  # a character with its motions as glTF animations (the editor's preview)
+//! ffx-import --game-dir DIR characters [LANG...]         # the character list as JSON: kind, names, motions, attachment points
 //! ffx-import --game-dir DIR devsaves                     # the developers' saves: map, entrance, scenario
 //! ffx-import --game-dir DIR list <text>...               # archive paths containing the text
 //! ffx-import --game-dir DIR model <path or level>...     # a model's nodes, instances, materials
@@ -50,6 +52,9 @@ fn main() -> ExitCode {
     if what == "devsaves" {
         return devsaves(&imp);
     }
+    if what == "characters" {
+        return characters(&imp, names);
+    }
     if what == "model" {
         return each(names, |n| model(&imp, n));
     }
@@ -89,9 +94,10 @@ fn main() -> ExitCode {
             "map" => imp.import_map(n, &out),
             "map2d" => imp.import_map_layers(n, &out),
             "chr" => imp.import_character(n, &out),
+            "chr-motions" => imp.import_character_motions(n, &out),
             other => {
                 eprintln!(
-                    "unknown command {other} (map, map2d, chr, devsaves, list, cat, loc, wname, devnames, model, maps, parts)"
+                    "unknown command {other} (map, map2d, chr, chr-motions, characters, devsaves, list, cat, loc, wname, devnames, model, maps, parts)"
                 );
                 return ExitCode::FAILURE;
             }
@@ -109,6 +115,28 @@ fn main() -> ExitCode {
     } else {
         ExitCode::FAILURE
     }
+}
+
+/// The character list as JSON (`characters [LANG...]`, English by default):
+/// kind, the game's names, motions, attachment points.
+fn characters(imp: &ffx_import::Importer, names: &[String]) -> ExitCode {
+    let langs: Vec<&str> = if names.is_empty() {
+        vec!["us"]
+    } else {
+        names.iter().map(String::as_str).collect()
+    };
+    let charsets: Vec<(&str, ffx_text::Charset)> = langs
+        .iter()
+        .filter_map(|l| imp.charset(l).ok().map(|c| (*l, c)))
+        .collect();
+    let decode = |lang: &str, b: &[u8]| {
+        charsets
+            .iter()
+            .find(|(l, _)| *l == lang)
+            .map(|(_, c)| c.decode(b))
+    };
+    println!("{:#}", imp.character_list(&langs, decode));
+    ExitCode::SUCCESS
 }
 
 /// Runs `f` on each name; fails when any does.

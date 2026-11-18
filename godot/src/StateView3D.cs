@@ -105,6 +105,17 @@ public partial class StateView3D : Node3D
         public (Node3D Part, int ModelId, Transform3D ParentInv)[] Rigid = [];
         /// <summary>The model's cloth meshes (null: none; <see cref="ClothView"/>).</summary>
         public ClothView.Model? Cloth;
+        /// <summary>A remade character with a skeleton of its own: its driver (docs/remake.md, "Retargeting"; null: none).</summary>
+        public Characters.Retargeter? Retarget;
+        /// <summary>The game's element globals this frame (character space) and which the game drives, for <see cref="Retarget"/>.</summary>
+        public Transform3D[] Game = [];
+        public bool[] Has = [];
+        /// <summary>The character's slot and its model's place (character space to Godot's) this frame, for the game's cloth.</summary>
+        public ushort Slot;
+        public Transform3D ModelInv = Transform3D.Identity;
+        public float Alpha;
+        /// <summary>The game's cloth points in character space (made once per character).</summary>
+        public Characters.Retargeter.ClothPoint? ClothPoint;
     }
 
     public override void _Ready()
@@ -702,9 +713,12 @@ public partial class StateView3D : Node3D
     /// first shown character with that model, looking at its first cloth mesh (else its model),
     /// from three times the mesh's size (at least 12 units): the cloth's pictures close up.
     /// </summary>
+    /// <summary>A model the camera looks at (a check's close-up; null: <c>--look-at-actor</c>'s).</summary>
+    public static string? LookAtModel { get; set; }
+
     private void LookAtActor()
     {
-        if (GameSettings.Arg("look-at-actor") is not { Length: > 0 } name)
+        if ((LookAtModel ?? GameSettings.Arg("look-at-actor")) is not { Length: > 0 } name)
             return;
         foreach (var n in _actors.Values)
         {
@@ -713,7 +727,8 @@ public partial class StateView3D : Node3D
             var mi = n.Cloth is { Meshes: [var first, ..] } ? first.Node : FirstMesh(n.Model);
             if (mi == null)
                 continue;
-            var box = mi.GetAabb();
+            // a skinned remade mesh's bounds as drawn (its custom ones: the rig's scale baked)
+            var box = mi.CustomAabb.Size != Vector3.Zero ? mi.CustomAabb : mi.GetAabb();
             var c = mi.GlobalTransform * box.GetCenter();
             float d = Mathf.Max(12f, 3f * box.Size.Length());
             // from the game camera's side, level with the mesh
@@ -1090,6 +1105,8 @@ public partial class StateView3D : Node3D
             {
                 models++;
                 posed += Pose(n, f, view);
+                if (n.Retarget is { GameCloth: true })
+                    cloth = true;
                 if (n.Cloth != null)
                 {
                     cloth = true;
@@ -1122,6 +1139,7 @@ public partial class StateView3D : Node3D
                     _actors.Remove(slot);
                 }
         }
+        Attachments(view);
         if (rebuild)
         {
             var tc = Perf.Start();
@@ -1162,6 +1180,14 @@ public partial class StateView3D : Node3D
         // a remade character may opt out of the game's posing (docs/remake.md)
         if (!Content.Posed(model))
             return;
+        // a remade character with a skeleton of its own: retargeted (docs/remake.md, "Retargeting")
+        if (Characters.RemadeCharacter.Of(model) is { Rig: not null } rc && rc.Drive() is { } drive)
+        {
+            n.Retarget = drive;
+            n.Game = new Transform3D[Mathf.Max(0, drive.MaxElement + 1)];
+            n.Has = new bool[n.Game.Length];
+            return;
+        }
         // the game's cloth moves its hair and clothes (ClothView), on skinned models and on rigid
         // ones (a weapon's ribbon: w012's instance 1)
         n.Cloth = ClothView.Of(model);
@@ -1238,11 +1264,13 @@ public partial class StateView3D : Node3D
         && m[6] == 0 && m[8] == 0 && m[9] == 0 && m[12] == 0 && m[13] == 0 && m[14] == 0;
 
     /// <summary>Poses the model's skeleton from the game's bones (interpolated); the bones posed.</summary>
-    private static int Pose(ActorNode n, GameStateView.ActorFrame f, GameStateView view)
+    private int Pose(ActorNode n, GameStateView.ActorFrame f, GameStateView view)
     {
         var a = f.Actor;
         var skel = n.Skeleton;
         var prev = f.Previous is { } fp && fp.Bones.Count == a.Bones.Count ? fp : null;
+        if (n.Retarget is { } rt)
+            return PoseRemade(n, rt, a, prev, view.Alpha);
         if (skel == null)
         {
             // Ch_DrawMain's walk 1: an unskinned model at the character's world times its base
@@ -1297,6 +1325,64 @@ public partial class StateView3D : Node3D
         }
         return posed;
     }
+
+    /// <summary>
+    /// A retargeted remade character (docs/remake.md, "Retargeting"): the game's element globals
+    /// (interpolated; character space) into its driver, the game's cloth points through
+    /// <see cref="ClothView.Point"/>. The bones the game drives.
+    /// </summary>
+    private int PoseRemade(ActorNode n, Characters.Retargeter rt, Actor a, Actor? prev, float alpha)
+    {
+        int driven = 0;
+        for (int e = 0; e < n.Game.Length; e++)
+        {
+            bool has = e < a.Bones.Count && !IsIdentity(a.Bones[e].Matrix);
+            n.Has[e] = has;
+            if (!has)
+                continue;
+            var t = RowMajor(a.Bones[e].Matrix);
+            n.Game[e] = prev != null ? Lerp(RowMajor(prev.Bones[e].Matrix), t, alpha) : t;
+            driven++;
+        }
+        n.Slot = a.Slot;
+        n.Alpha = alpha;
+        if (rt.GameCloth && n.Model != null)
+        {
+            n.ModelInv = (n.Root.GlobalTransform * n.Model.Transform).AffineInverse();
+            n.ClothPoint ??= (model, piece, k) => _cloth.Point(n.Slot, model, piece, k, n.Alpha) is { } w ? n.ModelInv * w : null;
+        }
+        rt.Apply(n.Game, n.Has, rt.GameCloth ? n.ClothPoint : null);
+        return driven;
+    }
+
+    /// <summary>
+    /// What the game binds to a retargeted character's element (a weapon: <c>Actor.parent</c>,
+    /// <c>parent_bone</c>) follows the remade bone the rig attaches there: its root moved by the
+    /// remade frame's difference from the game's element (<see cref="Characters.Retargeter.AttachFrame"/>).
+    /// </summary>
+    private void Attachments(GameStateView view)
+    {
+        foreach (var f in view.Actors())
+        {
+            var a = f.Actor;
+            if (a.Parent < 0 || !f.Shown || !_actors.TryGetValue(a.Slot, out var n) || !_actors.TryGetValue((ushort)a.Parent, out var holder))
+                continue;
+            int e = a.ParentBone;
+            if (holder.Retarget is not { } rt || holder.Model == null || e >= holder.Has.Length || !holder.Has[e] || rt.AttachFrame(e) is not { } frame)
+                continue;
+            var r = holder.Root.GlobalTransform * holder.Model.Transform;
+            var g = holder.Game[e];
+            var d = r * frame * new Transform3D(g.Basis.Orthonormalized(), g.Origin).AffineInverse() * r.AffineInverse();
+            n.Root.GlobalTransform = d * n.Root.GlobalTransform;
+            AttachedToRemade++;
+        }
+    }
+
+    /// <summary>A character's root node (the checks; null: not shown).</summary>
+    public Node3D? ActorRoot(ushort slot) => _actors.TryGetValue(slot, out var n) ? n.Root : null;
+
+    /// <summary>Frames' attachments moved onto a remade bone so far (the checks).</summary>
+    public int AttachedToRemade { get; private set; }
 
     /// <summary>A bone's local pose from one snapshot: set by the game or not, and whether its matrix had a size (not hidden).</summary>
     private readonly record struct BoneLocal(bool Set, bool Solid, Vector3 Position, Quaternion Rotation, Vector3 Scale);
@@ -1372,6 +1458,49 @@ public partial class StateView3D : Node3D
         n.Root.QueueFree();
         n.Bones?.QueueFree();
         n.Label?.QueueFree();
+    }
+
+    /// <summary>
+    /// Drops every model of <paramref name="name"/> (shown ones and pooled ones): the characters
+    /// with it take their content again from the next frame (<see cref="Remake.ContentResolver"/>:
+    /// a remade scene registered meanwhile). The model count dropped.
+    /// </summary>
+    public int Reload(string name)
+    {
+        int n = 0;
+        foreach (var slot in new List<ushort>(_actors.Keys))
+            if (_actors[slot] is var a && (a.ModelName == name || a.Asked == name))
+            {
+                if (a.Model != null)
+                {
+                    a.Root.RemoveChild(a.Model);
+                    a.Model.QueueFree();
+                    a.Model = null;
+                    n++;
+                }
+                a.Root.QueueFree();
+                a.Bones?.QueueFree();
+                a.Label?.QueueFree();
+                _actors.Remove(slot);
+            }
+        if (_pool.Remove(name, out var pooled))
+            foreach (var m in pooled)
+            {
+                _poolOrder.Remove((name, m));
+                m.QueueFree();
+                n++;
+            }
+        return n;
+    }
+
+    /// <summary>The shown retargeted characters of model <paramref name="name"/>: each driver with the game's element globals and which the game drives this frame (the checks).</summary>
+    public List<(Characters.Retargeter Driver, Transform3D[] Game, bool[] Has, Node3D Model, ushort Slot)> Remade(string name)
+    {
+        var list = new List<(Characters.Retargeter, Transform3D[], bool[], Node3D, ushort)>();
+        foreach (var (slot, a) in _actors)
+            if (a.ModelName == name && a.Retarget != null && a.Model != null && a.Root.Visible)
+                list.Add((a.Retarget, a.Game, a.Has, a.Model, slot));
+        return list;
     }
 
     /// <summary>Character models out of the tree by name, for the next character with that model.</summary>

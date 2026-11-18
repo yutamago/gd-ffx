@@ -1,0 +1,18 @@
+[gd_resource type="ShaderMaterial" load_steps=2 format=3]
+
+[ext_resource type="Shader" path="res://remake/shaders/hair.gdshader" id="1_hair"]
+
+[resource]
+resource_name = "Hair"
+render_priority = 0
+shader = ExtResource("1_hair")
+shader_parameter/root_color = Color(0.1, 0.065, 0.04, 1)
+shader_parameter/tip_color = Color(0.36, 0.23, 0.12, 1)
+shader_parameter/roughness = 0.42
+shader_parameter/specular = 0.55
+shader_parameter/anisotropy = 0.75
+shader_parameter/flow_direction = Vector2(0, 1)
+shader_parameter/strand_count = 120.0
+shader_parameter/coverage = 0.8
+shader_parameter/softness = 0.35
+shader_parameter/tip_start = 0.7
