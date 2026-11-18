@@ -29,6 +29,7 @@ pub mod gamedata;
 pub mod ids;
 pub mod maps;
 pub mod morph;
+pub mod sounds;
 
 /// The version of what the importer writes into a `.glb`
 /// (`asset.extras.ffx_import`): a cached import of another version is made
@@ -143,6 +144,8 @@ pub fn character_model_path(model: &str) -> Option<String> {
 /// The player's archive, open.
 pub struct Importer {
     archive: ffx_vbf::Archive,
+    /// The archive's file (ranged reads: [`Importer::read_range`]).
+    vbf: PathBuf,
     /// Kernel tables read so far, by archive path.
     kernel: std::sync::Mutex<HashMap<String, Option<std::sync::Arc<ffx_kernel::Table>>>>,
     /// Localisation kits read so far ([`Importer::loc_text`]), by archive path.
@@ -187,6 +190,7 @@ impl Importer {
             .map_err(|e| Error::Archive(format!("{}: {e}", path.display())))?;
         Ok(Self {
             archive,
+            vbf: path,
             kernel: std::sync::Mutex::default(),
             lockit: std::sync::Mutex::default(),
             effects: std::sync::Mutex::default(),

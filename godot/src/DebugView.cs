@@ -78,6 +78,12 @@ public partial class DebugView : Control
             _test = new Remaster.LightingTest(timeout, GameSettings.Arg("shot"));
         else if (GameSettings.Flag("selftest-materialize"))
             _test = new Remaster.Materialize.MaterializeTest(timeout);
+        else if (GameSettings.Flag("selftest-effects"))
+            _test = new Remaster.EffectsTest(timeout, GameSettings.Arg("shot"));
+        else if (GameSettings.Flag("selftest-audio"))
+            _test = new Remaster.AudioTest(timeout);
+        else if (GameSettings.Flag("selftest-movie"))
+            _test = new Remaster.MovieTest(timeout);
         else if (GameSettings.Flag("selftest-materials"))
             _test = new Remaster.MaterialsTest(timeout, GameSettings.Arg("shot"));
         else if (GameSettings.Flag("selftest-alignment"))

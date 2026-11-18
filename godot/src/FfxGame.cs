@@ -37,6 +37,18 @@ public partial class FfxGame : RefCounted
         public static readonly StringName effect_draws = "effect_draws";
         public static readonly StringName effect_draws_address = "effect_draws_address";
         public static readonly StringName effect_draws_held = "effect_draws_held";
+        public static readonly StringName effect_draw_owners = "effect_draw_owners";
+        public static readonly StringName audio_events = "audio_events";
+        public static readonly StringName set_audio_replaced = "set_audio_replaced";
+        public static readonly StringName audio_seen = "audio_seen";
+        public static readonly StringName movie_events = "movie_events";
+        public static readonly StringName movie_state = "movie_state";
+        public static readonly StringName set_movie_muted = "set_movie_muted";
+        public static readonly StringName audio_mix_level = "audio_mix_level";
+        public static readonly StringName audio_holds = "audio_holds";
+        public static readonly StringName classic_sounds = "classic_sounds";
+        public static readonly StringName classic_list = "classic_list";
+        public static readonly StringName classic_sound_pcm = "classic_sound_pcm";
         public static readonly StringName encounter_maps = "encounter_maps";
         public static readonly StringName esc_button = "esc_button";
         public static readonly StringName esc_popup_answer = "esc_popup_answer";
@@ -353,6 +365,89 @@ public partial class FfxGame : RefCounted
         var at = Node.Call(M.effect_draws_address).AsInt64();
         return at == 0 ? 0 : Held.CopyInto(at, len, ref buffer);
     }
+
+    /// <summary>
+    /// Who made each draw of the frame that drew <paramref name="update"/> (R7: the extension's
+    /// <c>effect_draw_owners</c>): the draw count, an owner word per draw, then per field-program
+    /// owner its word, place and stuck flag (<see cref="EffectOwners.Decode"/>); empty when no
+    /// longer kept.
+    /// </summary>
+    public int[] EffectDrawOwners(uint update)
+    {
+        using var v = Node.Call(M.effect_draw_owners, update);
+        return v.AsInt32Array();
+    }
+
+    /// <summary>The sound commands the game queued since the last call, eight words each (<see cref="GdFfx.Remaster.AudioReplacements"/>).</summary>
+    public int[] AudioEvents()
+    {
+        using var v = Node.Call(M.audio_events);
+        return v.AsInt32Array();
+    }
+
+    /// <summary>The ids of sound kind <paramref name="kind"/> (0 music, 1 sound effects, 2 voice) Godot plays itself; the game's own are silenced.</summary>
+    public void SetAudioReplaced(int kind, int[] ids) => Node.Call(M.set_audio_replaced, kind, ids);
+
+    /// <summary>Every id of sound kind <paramref name="kind"/> seen so far with its start count, as pairs.</summary>
+    public int[] AudioSeen(int kind)
+    {
+        using var v = Node.Call(M.audio_seen, kind);
+        return v.AsInt32Array();
+    }
+
+    /// <summary>The movies the game opened or ended since the last call (<c>opened</c>, <c>name</c>, <c>path</c>, <c>player</c>, <c>looping</c>).</summary>
+    public Array<Dictionary> MovieEvents() => Node.Call(M.movie_events).AsGodotArray<Dictionary>();
+
+    /// <summary>Where the game's movie is: <c>playing</c>, <c>frame</c>, <c>paused</c>, <c>ended</c>, <c>player</c>.</summary>
+    public Dictionary MovieState() => Node.Call(M.movie_state).AsGodotDictionary();
+
+    /// <summary>The game's own mix level: the RMS of its last half second (R7's checks).</summary>
+    public double AudioMixLevel() => Node.Call(M.audio_mix_level).AsDouble();
+
+    /// <summary>The game's FMOD volumes (<c>master</c>, <c>music</c>, <c>voice</c>, <c>sfx</c>, 0..1) and whether the music and voice are held silent (<c>music_held</c>, <c>voice_held</c>).</summary>
+    public Dictionary AudioHolds() => Node.Call(M.audio_holds).AsGodotDictionary();
+
+    /// <summary>The game's sounds of <paramref name="kind"/> (<c>music</c>, <c>sfx</c>, <c>voice</c>) by id: (id, name, bank, sample); empty without the archive.</summary>
+    public System.Collections.Generic.List<(int Id, string Name, string Bank, int Sample)> ClassicSounds(string kind, string language)
+    {
+        var list = new System.Collections.Generic.List<(int, string, string, int)>();
+        foreach (var line in Node.Call(M.classic_sounds, kind, language).AsStringArray())
+        {
+            var p = line.Split('\t');
+            if (p.Length == 4 && int.TryParse(p[0], out var id) && int.TryParse(p[3], out var sample))
+                list.Add((id, p[1], p[2], sample));
+        }
+        return list;
+    }
+
+    /// <summary>The archive's paths containing <paramref name="needle"/> (lower case); empty without the archive.</summary>
+    public string[] ClassicList(string needle) => Node.Call(M.classic_list, needle).AsStringArray();
+
+    /// <summary>A sample of the archive's bank as a stream (16-bit, its loop points), null when it is not there.</summary>
+    public AudioStreamWav? ClassicSound(string bank, int sample)
+    {
+        var d = Node.Call(M.classic_sound_pcm, bank, sample).AsGodotDictionary();
+        if (!d.TryGetValue("found", out var f) || !f.AsBool())
+            return null;
+        var wav = new AudioStreamWav
+        {
+            Format = AudioStreamWav.FormatEnum.Format16Bits,
+            MixRate = d["rate"].AsInt32(),
+            Stereo = d["channels"].AsInt32() == 2,
+            Data = d["pcm"].AsByteArray(),
+        };
+        int lb = d["loop_begin"].AsInt32(), le = d["loop_end"].AsInt32();
+        if (lb >= 0 && le > lb)
+        {
+            wav.LoopMode = AudioStreamWav.LoopModeEnum.Forward;
+            wav.LoopBegin = lb;
+            wav.LoopEnd = le;
+        }
+        return wav;
+    }
+
+    /// <summary>Silences the game's movie sound while a replacement plays.</summary>
+    public void SetMovieMuted(bool on) => Node.Call(M.set_movie_muted, on);
 
     /// <summary>
     /// The characters' cloth of the frame that drew <paramref name="update"/> (that update's only),

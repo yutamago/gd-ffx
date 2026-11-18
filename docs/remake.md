@@ -11,7 +11,7 @@ a remade character on a classic map, or the other way round.
 |---|---|---|---|
 | `map` | the level the game's renderer loaded (`World.level`), or its last part | `/map/bsil/bsil00/` or `bsil00` | `res://remake/map/bsil00.tscn` |
 | `chr` | the model name (`Actor.model`) | `c001` (Tidus) | `res://remake/chr/c001.tscn` |
-| `effect` | the effect id as eight hex digits (`EffectInstance.id`, `MsGetEffID`) | `50001800` | `res://remake/effect/50001800.tscn` |
+| `effect` | a map's field program (`<level>-fp<entry>`) or a spell overlay (`magic-<id>`, four hex digits): who makes the classic draws (R7a, "Effects" below); or, for the battle's effect records, the record id as eight hex digits (`EffectInstance.id`, `MsGetEffID`: a per-character counter is part of it, so it is not one effect's id from run to run of different battles) | `bsil00-fp15`, `magic-004c`, `50001800` | `res://remake/effect/bsil00-fp15.tscn` |
 | `ui` | later | | |
 
 A map's level and its last part are the same id (`bsil00`). The overlay
@@ -179,6 +179,60 @@ shapes `mouth_open` and `blink`, a hood down the back (`Hood_1..3`) and a
 ponytail (`Tail_1..3`). Nothing of it is the game's; `StandInHumanoid.Save`
 writes it as a scene. The checks make it at run time (no file in git).
 
+## Effects (R7a)
+
+The game's effects have no ids of their own in its draws (a draw's key holds
+addresses); gd-ffx gives each the id of what makes it (the extension's
+`fxowner.rs`, from the game's memory at the update the frame drew; ffx-rust's
+docs/formats/effects-draw.md, "Instance keys and makers", and scene-maps.md,
+"Map effects: the field-program table"):
+
+- **`<level>-fp<n>`**: entry `n` of the map's field-program table, a map's own
+  particle effect (Besaid beach: `bsil00-fp0`..`fp13` the sea's foam and wave
+  strips, `bsil00-fp15` the save sphere's glow). The ppp objects that draw it
+  are the entry's part's (`g_FpRun + 0x80 n`, its list from `+0x30`).
+- **`magic-<id>`**: the spell overlay `magic_<id>.dll` (`magic-004c` Fire): the
+  draws whose object or birth record lies inside the loaded overlay's image.
+
+Both are stable: the table is the map's file, the overlay the spell's. Other
+draws (the battle's shared effects, the op system's records) have none yet and
+stay classic.
+
+A remade effect is a scene for the id (kind `effect`: the convention's
+`res://remake/effect/<id>.tscn`, a `remake.json` entry, a pack's), authored in
+render space (the game's units, y up; the save sphere's orb is about 2.5
+units across). While the classic effect draws, the scene is instanced at its
+place (a field program's table entry, or the centre of the effect's draws for
+one its program places itself or one stuck to a character, and for spells),
+following it, and the classic effect's draws are left out. When the classic
+effect stops (no draw for 0.25 s) the remake's particles stop emitting and it
+is freed once they have died out. Its root may be a `RemadeEffect`
+(`godot/src/Remake/RemadeEffect.cs`) with options: `HideClassic` (off: both
+drawn, for comparing), `Follow` (off: stays where it started), `Offset`
+(render units), `Linger` (seconds after the end; 0: the longest particle
+lifetime), `Note`. F8 in the game turns remakes off and on for the run.
+
+The battle's effect records (`Effects.running`) keep G6's path (`EffectView`):
+a scene registered for a record id is instanced on its targets while the game
+keeps the record (the classic draws are not left out there).
+
+`res://remake/examples/save_sphere_sparkle.tscn` is R7a's example: rising
+sparkles and a soft light, made of Godot's particles and generated gradients
+(original work, nothing of the game's). The checks register it for
+`bsil00-fp15` (`--selftest-effects`).
+
+## Replaced sounds and movies (R7a)
+
+Music, sound effects, voice lines and movies are replaced by the ids the game
+plays them by (docs/remaster-editor.md, "Effects, audio and movies"):
+`RemasterSoundSet` (`res://remaster/audio/audio.tres`: per entry the kind,
+id, file, loop, loop points, volume) and `RemasterMovieSet`
+(`res://remaster/movies/movies.tres`: per entry the movie's name, video,
+sound, subtitles, volume), each a layer of its own over the packs'
+(`res://mods/<pack>/remaster/audio/audio.tres`, `.../movies/movies.tres`; a
+later layer wins per id, `Classic` pins an id to the game's). The files they
+name are yours (Ogg Vorbis, WAV, MP3; Ogg Theora); keep them in your pack.
+
 ## Mod packs
 
 Godot packs (`.pck`) carry remade content: scenes, meshes, textures,
@@ -222,7 +276,9 @@ switch and Up and Down, and writes the folder's `load_order.txt`.
 
 A pack's remaster textures and materials (docs/remaster-editor.md,
 "Textures") are in `res://mods/<pack>/remaster/textures/textures.tres` and
-layer over the project's per texture ID, the later pack winning.
+layer over the project's per texture ID, the later pack winning; its replaced
+sounds and movies in `res://mods/<pack>/remaster/audio/audio.tres` and
+`res://mods/<pack>/remaster/movies/movies.tres`, per id the same way.
 
 Not yet: C# scripts in packs (they need gd-ffx's assembly rebuilt; use
 GDScript or plain scenes), `ffx-rust`'s data mods (and the launcher
@@ -376,7 +432,7 @@ Godot's shapes: a capsule 16 units tall in character space and a flat
 skeleton of `SkeletonNode_0..23` with a dot on each bone. It is for the
 tests and as a template; it is not registered for any id.
 
-`res://remake/examples/stand_in_effect.tscn` is a remade effect (a ring):
+`res://remake/examples/stand_in_effect.tscn` is a remade battle effect record (a ring):
 an effect scene is instanced at each of the effect's targets (or its
 character) when the game starts the effect record and freed when the game
 ends it. The battle check registers it for `50001800`, the first effect of

@@ -546,23 +546,36 @@ void fragment() {
             return null;
         if (look.Textured && texture != FrameBufferName && t == null)
             return null;
-        m = new ShaderMaterial { Shader = ShaderOf(look), RenderPriority = Priority };
+        m = MakeMaterial(look, t, texture == FrameBufferName);
+        _materials[(texture, look)] = m;
+        return m;
+    }
+
+    /// <summary>
+    /// A material that draws an effect draw of <paramref name="look"/> with texture
+    /// <paramref name="t"/> as the game does (<paramref name="frameBuffer"/>: the DTT pass's frame
+    /// copy); the editor's classic effect replay uses it too (R7).
+    /// </summary>
+    public static ShaderMaterial MakeMaterial(Look look, Texture2D? t, bool frameBuffer = false)
+    {
+        var m = new ShaderMaterial { Shader = ShaderOf(look), RenderPriority = Priority };
         m.SetShaderParameter("form", look.Form);
         m.SetShaderParameter("alpha_one", look.AlphaOne);
         m.SetShaderParameter("zero_colour", look.ZeroColour);
         m.SetShaderParameter("address_u", look.AddressU);
         m.SetShaderParameter("address_v", look.AddressV);
         // the DTT pass's draws sample the frame copy (the picture so far)
-        if (texture == FrameBufferName)
+        if (frameBuffer)
         {
             m.SetShaderParameter("frame_buffer", true);
-            _materials[(texture, look)] = m;
             return m;
         }
         m.SetShaderParameter("textured", t != null);
         if (t != null)
-            { m.SetShaderParameter("tex", t); m.SetShaderParameter("tex_clamp", t); }
-        _materials[(texture, look)] = m;
+        {
+            m.SetShaderParameter("tex", t);
+            m.SetShaderParameter("tex_clamp", t);
+        }
         return m;
     }
 
@@ -649,6 +662,27 @@ void fragment() {
     /// <summary>The parts in use (for tests).</summary>
     public int Parts { get; private set; }
 
+    /// <summary>Draws of the last frame left out because a remade effect stands in for them (R7; for tests).</summary>
+    public int RemadeSkipped { get; private set; }
+
+    private Remaster.EffectRemakeView? _remakes;
+
+    /// <summary>The remade effects' view, a sibling (R7; made when missing).</summary>
+    private Remaster.EffectRemakeView? Remakes()
+    {
+        if (_remakes != null && IsInstanceValid(_remakes))
+            return _remakes;
+        if (GetParent() is not { } parent)
+            return null;
+        _remakes = parent.GetNodeOrNull<Remaster.EffectRemakeView>("EffectRemakeView");
+        if (_remakes == null)
+        {
+            _remakes = new Remaster.EffectRemakeView { Name = "EffectRemakeView" };
+            parent.AddChild(_remakes);
+        }
+        return _remakes;
+    }
+
     private void Build(FfxGame game, GdFfx.Api.Snapshot s, (uint Update, List<Draw> Draws, Geometry Geometry)? frame)
     {
         // the screen distortion of the same frame (DistortionView, in the overlay)
@@ -682,8 +716,18 @@ void fragment() {
             list.Clear();
         int used = 0;
         var geo = frame.Value.Geometry;
-        foreach (var d in frame.Value.Draws)
+        // R7: who made each draw; the remade effects started, moved, stopped; their classic draws left out
+        var remakes = Remakes();
+        remakes?.Frame(game, s.Update, s.World.Level, frame.Value.Draws, geo);
+        int skipped = 0;
+        for (int di = 0; di < frame.Value.Draws.Count; di++)
         {
+            var d = frame.Value.Draws[di];
+            if (remakes != null && remakes.Hidden.Count > 0 && remakes.Ids[di] is { } rid && remakes.Hidden.Contains(rid))
+            {
+                skipped++;
+                continue;
+            }
             if (d.Pass is >= 0 and < 5)
                 PassDraws[d.Pass]++;
             if (d.IndexCount == 0 || d.Vertices == 0 || !Drawn(d.Pass))
@@ -784,6 +828,7 @@ void fragment() {
         }
         HideParts(parts);
         Parts = parts;
+        RemadeSkipped = skipped;
         MissingDraws = missing;
         UnsetDraws = unsetDraws;
         Shown = (frame.Value.Draws.Count, textured, s.Update);

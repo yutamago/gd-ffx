@@ -132,6 +132,7 @@ gd-ffx's own keys never reach the game:
 | Keys | gd-ffx |
 |---|---|
 | F7 | the remaster's compare: the map classic or remastered, in turn, for every map this run (docs/remaster-editor.md, "The render path") |
+| F8 | R7a's compare: remade effects, replaced music, sound effects, voice and movies on or off (everything classic) for the run; `--no-replacements` starts with them off (docs/remaster-editor.md, "Effects, audio and movies") |
 | F9 | the FPS overlay (saved) |
 | F10 | the options (over the ESC menu: gd-ffx presses the game's Esc first, so play halts; alone when the game's menu does not open within 0.7 s) |
 | F11 | windowed / fullscreen (saved) |
