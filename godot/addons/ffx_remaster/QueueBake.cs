@@ -26,7 +26,8 @@ public sealed class QueueBake
     public enum JobState { Waiting, Making, Done, Failed, Cancelled }
 
     /// <summary>A texture to make: its settings (the profile's or the queue's, its exceptions over them) and the profile they are linked to (empty: none).</summary>
-    public sealed record Job(string Id, PbrRecipe Recipe, string Profile);
+    /// <param name="Regions">The texture's regions (R2b phase 6; null or empty: none), as an entry keeps them.</param>
+    public sealed record Job(string Id, PbrRecipe Recipe, string Profile, Godot.Collections.Array? Regions = null);
 
     private readonly List<Job> _jobs;
     private readonly Dictionary<string, JobState> _states = new();
@@ -39,6 +40,8 @@ public sealed class QueueBake
     private Job? _cur;
     private GpuBake? _bake;
     private Task<BakedMaps>? _task;
+    /// <summary>The texture being made's material recipe (its regions' maps on).</summary>
+    private PbrRecipe? _union;
 
     /// <summary>The undo step's name.</summary>
     public string Action { get; }
@@ -79,6 +82,11 @@ public sealed class QueueBake
 
     public HashSet<string> ComfyUsed { get; } = new();
 
+    /// <summary>A texture's cached AI estimate of a step (R2b phase 6; null: none: the step generates), and the notes of the ones used per texture.</summary>
+    public System.Func<string, RgbaImage, MaterialStep, (string Import, RgbaImage Image, string Note)?>? Ai { get; init; }
+
+    public Dictionary<string, Dictionary<MaterialStep, string>> AiUsed { get; } = new();
+
     public QueueBake(Node parent, IEnumerable<Job> jobs, bool gpu, System.Func<string, RgbaImage?> loadImport,
         System.Func<Job, BakedMaps, RemasterTexture> finish, string action)
     {
@@ -109,7 +117,7 @@ public sealed class QueueBake
             {
                 if (!_bake.Done)
                     return false;
-                (got, _) = _bake.Finish(recipe: cur.Recipe);
+                (got, _) = _bake.Finish(recipe: _union);
                 BakeBackends.Return(_bake.Backend);
                 _bake = null;
             }
@@ -175,7 +183,21 @@ public sealed class QueueBake
             imports[up.Import] = up.Image;
             ComfyUsed.Add(job.Id);
         }
-        var inputs = new MaterialPipeline.Inputs(job.Id, px, job.Recipe, imports);
+        // the regions (R2b phase 6) and their files; the AI estimates cached for its steps
+        var regions = MaterialRegionStore.Inputs(job.Regions);
+        foreach (var f in regions.SelectMany(x => MaterialPipeline.Files(x.Recipe)))
+            if (_loadImport(f) is { } rpx)
+                imports[f] = rpx;
+        _union = MaterialRegions.Union(job.Recipe, regions.Select(x => x.Recipe));
+        foreach (var s in MaterialPipeline.AiSteps)
+            if ((MaterialPipeline.ModeOf(job.Recipe, s) == StepMode.Ai || regions.Any(x => MaterialPipeline.ModeOf(x.Recipe, s) == StepMode.Ai)) && Ai?.Invoke(job.Id, px, s) is { } ai)
+            {
+                imports[ai.Import] = ai.Image;
+                if (!AiUsed.TryGetValue(job.Id, out var used))
+                    AiUsed[job.Id] = used = new Dictionary<MaterialStep, string>();
+                used[s] = ai.Note;
+            }
+        var inputs = new MaterialPipeline.Inputs(job.Id, px, job.Recipe, imports, regions);
         _cur = job;
         _jobClock.Restart();
         if (_gpu)
@@ -187,7 +209,7 @@ public sealed class QueueBake
         else
         {
             var token = _cts.Token;
-            _task = Task.Run(() => MaterialBaker.Cpu(job.Id, px, job.Recipe, imports, token), token);
+            _task = Task.Run(() => MaterialBaker.Cpu(job.Id, px, job.Recipe, imports, token, regions), token);
         }
         return true;
     }

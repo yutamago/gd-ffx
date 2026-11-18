@@ -29,6 +29,9 @@ public sealed class GpuPipeline
     /// <summary>The colour sample shown as a mask, or null.</summary>
     public (MaterialStep Step, int Sample)? Isolate { get; set; }
 
+    /// <summary>The region being edited (R2b phase 6; -1: the texture's own settings).</summary>
+    public int Focus { get; set; } = -1;
+
     /// <summary>Milliseconds from the last change to its passes drawn (seen at the frame after), and to the occlusion settled.</summary>
     public double DrawnMs { get; private set; }
 
@@ -56,7 +59,7 @@ public sealed class GpuPipeline
     {
         var i = _inputs!;
         Backend.Begin();
-        Outputs = MaterializeGraph.Build(Backend, i.Key, i.Original, i.Imports, i.Recipe, new BuildRequest(_size.W, _size.H, _size.S, _aoDone, Isolate));
+        Outputs = MaterializeGraph.Build(Backend, i.Key, i.Original, i.Imports, i.Recipe, new BuildRequest(_size.W, _size.H, _size.S, _aoDone, Isolate, Focus), i.Regions);
         Backend.Commit();
     }
 
@@ -194,7 +197,7 @@ public sealed class GpuBake
         else
             _b.Invalidate();
         _b.Begin();
-        _outs = MaterializeGraph.Build(_b, inputs.Key, inputs.Original, inputs.Imports, inputs.Recipe, new BuildRequest(w, h, scale));
+        _outs = MaterializeGraph.Build(_b, inputs.Key, inputs.Original, inputs.Imports, inputs.Recipe, new BuildRequest(w, h, scale), inputs.Regions);
         _b.Commit();
         BuildMs = _clock.Elapsed.TotalMilliseconds;
     }

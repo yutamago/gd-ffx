@@ -79,6 +79,12 @@ public partial class MaterialsTab
     {
         if (_pickFor is not { } prop)
             return;
+        // the colour of a region by colour (R2b phase 6)
+        if (prop == RegionPick)
+        {
+            RegionPicked(uv, phase);
+            return;
+        }
         if (phase == 0)
         {
             _pickImage = PickSource(prop);
@@ -105,6 +111,8 @@ public partial class MaterialsTab
     /// <summary>The image a colour setting is picked from: the source for the height's samples when the height comes from it, else the albedo.</summary>
     private RgbaImage? PickSource(string prop)
     {
+        if (prop == RegionPick)
+            return _original;
         var from = prop.StartsWith("Height", System.StringComparison.Ordinal) && Recipe.HeightFrom == HeightInput.Source ? MaterialStep.Source : MaterialStep.Albedo;
         return Pixels(from);
     }

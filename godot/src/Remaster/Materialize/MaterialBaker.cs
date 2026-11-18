@@ -19,12 +19,12 @@ public static class MaterialBaker
 {
     /// <summary>The maps of <paramref name="original"/> by <paramref name="r"/> at the full size, on the CPU (any thread).</summary>
     public static BakedMaps Cpu(string key, RgbaImage original, PbrRecipe r, IReadOnlyDictionary<string, RgbaImage>? imports = null,
-        System.Threading.CancellationToken cancel = default)
+        System.Threading.CancellationToken cancel = default, IReadOnlyList<RegionInput>? regions = null)
     {
         var b = new CpuBackend { Cancel = cancel };
-        var inputs = new MaterialPipeline.Inputs(key, original, r, imports ?? new Dictionary<string, RgbaImage>());
+        var inputs = new MaterialPipeline.Inputs(key, original, r, imports ?? new Dictionary<string, RgbaImage>(), regions);
         var (w, h, scale) = MaterialPipeline.Size(inputs, MaterialPipeline.FullSide);
-        var outs = MaterializeGraph.Build(b, key, original, inputs.Imports, r, new BuildRequest(w, h, scale));
+        var outs = MaterializeGraph.Build(b, key, original, inputs.Imports, r, new BuildRequest(w, h, scale), regions);
         var maps = new Dictionary<MaterialStep, RgbaImage>();
         foreach (var (s, t) in outs.Maps)
             maps[s] = b.Get(t).ToRgba();

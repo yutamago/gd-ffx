@@ -88,7 +88,11 @@ public sealed class MaterialPipeline
     /// <param name="Original">The colour texture at its own size (the classic one or its replacement).</param>
     /// <param name="Recipe">A copy of the settings (read only: plain C# properties).</param>
     /// <param name="Imports">The imported files' pixels by path (as the recipe names them).</param>
-    public sealed record Inputs(string Key, RgbaImage Original, PbrRecipe Recipe, IReadOnlyDictionary<string, RgbaImage> Imports);
+    /// <param name="Regions">The texture's regions (R2b phase 6; null or empty: none), each made by its own settings and composited over the texture's maps.</param>
+    public sealed record Inputs(string Key, RgbaImage Original, PbrRecipe Recipe, IReadOnlyDictionary<string, RgbaImage> Imports, IReadOnlyList<RegionInput>? Regions = null);
+
+    /// <summary>The steps an AI estimate can stand in for (R2b phase 6).</summary>
+    public static readonly MaterialStep[] AiSteps = [MaterialStep.Albedo, MaterialStep.Height, MaterialStep.Normal, MaterialStep.Roughness];
 
     /// <summary>A made map: the run, its size (the side asked for), the step (null: the ORM pack or the mask), the pixels, ms since the request; the height also as floats (the 16-bit save); the albedo's colour check.</summary>
     public sealed record Result(int Run, int Side, MaterialStep? Step, RgbaImage Image, double Ms, bool Last, ResultKind Kind = ResultKind.Map,
@@ -400,8 +404,14 @@ public sealed class MaterialPipeline
     public static string Text(PbrRecipe r, string name) =>
         Convert.ToString(Prop(name).GetValue(r), CultureInfo.InvariantCulture) ?? "";
 
-    public static StepMode ModeOf(PbrRecipe r, MaterialStep s) =>
-        s == MaterialStep.Source && r.SourceMode == StepMode.Skip ? StepMode.Generate : (StepMode)Prop(ModeProps(s).Mode).GetValue(r)!;
+    public static StepMode ModeOf(PbrRecipe r, MaterialStep s)
+    {
+        var m = (StepMode)Prop(ModeProps(s).Mode).GetValue(r)!;
+        // the source never skips; AI stands in only for the albedo, height, normal and roughness
+        if (s == MaterialStep.Source && m == StepMode.Skip || m == StepMode.Ai && !AiSteps.Contains(s))
+            return StepMode.Generate;
+        return m;
+    }
 
     /// <summary>Every file a recipe reads (the steps' imports, the detail's albedo and normal), by key.</summary>
     public static IEnumerable<string> Files(PbrRecipe r)
@@ -460,6 +470,9 @@ public sealed class MaterialPipeline
     /// <summary>The colour sample shown as a mask (the 2D view's isolate), or null.</summary>
     public (MaterialStep Step, int Sample)? Isolate { get; set; }
 
+    /// <summary>The region being edited (R2b phase 6; -1: the texture's own settings): its mask view and colour check.</summary>
+    public int Focus { get; set; } = -1;
+
     /// <summary>
     /// Asks for the maps of <paramref name="inputs"/> at each of <paramref name="sides"/>
     /// (smallest first), <paramref name="focus"/>'s chain first; the run before is cancelled
@@ -479,6 +492,7 @@ public sealed class MaterialPipeline
         var clock = Stopwatch.StartNew();
         var order = Chain(focus).Concat(Steps).Distinct().ToList();
         var isolate = Isolate;
+        var region = Focus;
         _chain = _chain.ContinueWith(_ =>
         {
             try
@@ -503,7 +517,7 @@ public sealed class MaterialPipeline
                     b.Cancel = cts.Token;
                     var (w, h, scale) = Size(inputs, sides[i]);
                     var outs = MaterializeGraph.Build(b, inputs.Key, inputs.Original, inputs.Imports, inputs.Recipe,
-                        new BuildRequest(w, h, scale, bake || small ? -1 : 1, isolate));
+                        new BuildRequest(w, h, scale, bake || small ? -1 : 1, isolate, region), inputs.Regions);
                     foreach (var s in order)
                         if (outs.Maps.ContainsKey(s))
                             Post(MakeResult(b, outs, run, sides[i], s, clock));
@@ -515,7 +529,7 @@ public sealed class MaterialPipeline
                     if (!bake && !small && outs.AoDone < outs.AoChunks)
                     {
                         // the occlusion's other directions
-                        outs = MaterializeGraph.Build(b, inputs.Key, inputs.Original, inputs.Imports, inputs.Recipe, new BuildRequest(w, h, scale, 64, isolate));
+                        outs = MaterializeGraph.Build(b, inputs.Key, inputs.Original, inputs.Imports, inputs.Recipe, new BuildRequest(w, h, scale, 64, isolate, region), inputs.Regions);
                         Post(MakeResult(b, outs, run, sides[i], MaterialStep.Occlusion, clock));
                         if (outs.Maps.ContainsKey(MaterialStep.BentNormal))
                             Post(MakeResult(b, outs, run, sides[i], MaterialStep.BentNormal, clock));

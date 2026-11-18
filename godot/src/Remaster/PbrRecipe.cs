@@ -12,6 +12,12 @@ public enum StepMode
     Import,
     /// <summary>A constant (flat height and normal, white occlusion, the base roughness, the metallic value, no emission; the albedo: the source as it is).</summary>
     Skip,
+    /// <summary>
+    /// R2b phase 6: estimated by an AI workflow on the user's own ComfyUI server (albedo, height,
+    /// normal, roughness only), the estimate the step's input, its settings applied on top; until
+    /// the estimate is cached, generated.
+    /// </summary>
+    Ai,
 }
 
 /// <summary>What the height step reads.</summary>

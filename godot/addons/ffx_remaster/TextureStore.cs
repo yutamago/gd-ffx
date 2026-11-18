@@ -78,6 +78,7 @@ public static class TextureStore
             var copy = (RemasterTexture)entry.Duplicate(true);
             copy.Id = id;
             copy.Exceptions = Sorted(entry.Exceptions);
+            copy.Regions = MaterialRegionStore.Copy(entry.Regions);
             set.Textures.Add(copy);
         }
         return Write();
@@ -90,6 +91,7 @@ public static class TextureStore
             return new RemasterTexture { Id = id.ToLowerInvariant() };
         var c = (RemasterTexture)t.Duplicate(true);
         c.Exceptions = Sorted(t.Exceptions);
+        c.Regions = MaterialRegionStore.Copy(t.Regions);
         return c;
     }
 
@@ -197,7 +199,8 @@ public static class TextureStore
                 continue;
             var v = r.Get(name);
             // a dictionary by value (the exceptions): an undo step must not share the entry's
-            d[name] = v.VariantType == Variant.Type.Dictionary ? Sorted(v.AsGodotDictionary()) : v;
+            d[name] = v.VariantType == Variant.Type.Dictionary ? Sorted(v.AsGodotDictionary())
+                : v.VariantType == Variant.Type.Array ? v.AsGodotArray().Duplicate(true) : v;
         }
         return d;
     }

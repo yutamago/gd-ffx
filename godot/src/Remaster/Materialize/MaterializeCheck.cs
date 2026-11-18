@@ -358,6 +358,23 @@ public sealed partial class MaterializeCheck : Node
         foreach (var x in MaterialPipeline.Extras)
             if (!cpuMaps.ContainsKey(x))
                 yield return $"the CPU made no {x} map";
+        // R2b phase 6: four regions over the texture (the CPU): the composite's normals, borders and height levels
+        var regions = CheckRegions(4, _texture.Width, _texture.Height, up);
+        {
+            var rc = new CpuBackend();
+            var t0 = Stopwatch.StartNew();
+            var ro = MaterializeGraph.Build(rc, inputs.Key, _texture, inputs.Imports, recipe, new BuildRequest(w, h, scale), regions);
+            foreach (var t in ro.Maps.Values)
+                rc.Get(t);
+            rc.Get(ro.Orm);
+            double rms = t0.Elapsed.TotalMilliseconds;
+            var (rfail, rline) = CompositeCheck(rc, ro, _ => MaterializeGraph.Build(rc, inputs.Key, _texture, inputs.Imports, recipe, new BuildRequest(w, h, scale, MatchHeights: false), regions));
+            Say($"regions (4, the CPU, every map in {rms:0} ms, {rc.Runs} passes): {rline}");
+            if (rfail != null)
+                yield return rfail;
+            if (!ro.Maps.ContainsKey(MaterialStep.Backlight) || ro.Regions.Count != 4)
+                yield return "the regions' composite misses a region's map (the grass region's backlight)";
+        }
         if (!GpuBackend.Available)
         {
             Say("no renderer (headless): the GPU parts skipped");
@@ -367,11 +384,11 @@ public sealed partial class MaterializeCheck : Node
 
         // 2. the GPU's bake of the same, its parity with the CPU's; then the other branches (scatter, ...)
         bool ok = true;
-        foreach (var (label, rec) in new[] { ("overlap", recipe), ("scatter", EverythingElse(up)) })
+        foreach (var (label, rec, regs) in new[] { ("overlap", recipe, (List<RegionInput>?)null), ("scatter", EverythingElse(up), null), ("regions", recipe, regions) })
         {
-            var ins = inputs with { Recipe = rec };
+            var ins = inputs with { Recipe = rec, Regions = regs };
             var c2 = label == "overlap" ? cpu : new CpuBackend();
-            var o2 = label == "overlap" ? co : MaterializeGraph.Build(c2, ins.Key, _texture, imports, rec, new BuildRequest(w, h, scale));
+            var o2 = label == "overlap" ? co : MaterializeGraph.Build(c2, ins.Key, _texture, imports, rec, new BuildRequest(w, h, scale), regs);
             var cm = o2.Maps.ToDictionary(kv => kv.Key, kv => c2.Get(kv.Value).ToRgba());
             var corm = c2.Get(o2.Orm).ToRgba();
             var caux = o2.Aux.ToDictionary(kv => kv.Key, kv => c2.Get(kv.Value).ToRgba());
@@ -546,6 +563,17 @@ public sealed partial class MaterializeCheck : Node
         pipe.Backend.Clear();
         pipe.Backend.QueueFree();
         yield return null;
+
+        // R2b phase 6: what regions cost on the GPU
+        {
+            var e = RegionCost(inputs, up);
+            while (e.MoveNext())
+            {
+                if (e.Current != null)
+                    yield return e.Current;
+                yield return null;
+            }
+        }
 
         // 4. bakes at 1024, 2048, 4096 (the GPU), 1024 and 2048 (the CPU): what a save reads back,
         // and every map (phase 4's measure); then where a 4096 px bake's time goes

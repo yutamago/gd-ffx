@@ -99,12 +99,18 @@ public sealed class MaterializeOutputs
     public int AoChunks, AoDone;
     /// <summary>Maps besides the steps' own (the detail's albedo and normal, <see cref="MaterialPipeline.DetailAlbedo"/>), each at its own size.</summary>
     public readonly Dictionary<string, Tex> Aux = new();
+    /// <summary>The regions' own maps before the composite and their feathered masks at the working size (R2b phase 6; empty without regions).</summary>
+    public readonly List<(Dictionary<MaterialStep, Tex> Maps, Tex Mask)> Regions = new();
+    /// <summary>The texture's own maps before the regions were composited over them (null: no regions, they are <see cref="Maps"/>).</summary>
+    public Dictionary<MaterialStep, Tex>? Base;
 }
 
 /// <summary>What a build is asked for.</summary>
 /// <param name="AoDone">The preview's progressive occlusion: how many chunks of four directions are in (the rest held); -1: the bake, every direction in one pass.</param>
 /// <param name="Isolate">The colour sample to show as a mask: (step, sample 1-3; the metal's and the mask steps' colour: 1).</param>
-public sealed record BuildRequest(int W, int H, double Scale, int AoDone = -1, (MaterialStep Step, int Sample)? Isolate = null);
+/// <param name="Focus">The region being edited (R2b phase 6; -1: the texture's own settings): its mask view and colour check are the outputs'.</param>
+/// <param name="MatchHeights">The regions' heights levelled to what lies under their border (off: the checks' comparison).</param>
+public sealed record BuildRequest(int W, int H, double Scale, int AoDone = -1, (MaterialStep Step, int Sample)? Isolate = null, int Focus = -1, bool MatchHeights = true);
 
 /// <summary>
 /// The material workbench's graph (docs/remaster-materials.md, "The steps", "Speed"; phase 2):
@@ -118,7 +124,7 @@ public sealed record BuildRequest(int W, int H, double Scale, int AoDone = -1, (
 /// such blurs of one image at radii doubling from half a classic texel to 16 (and a wide one at
 /// 32 to measure detail against); their pyramid is shared.</para>
 /// </summary>
-public sealed class MaterializeGraph
+public sealed partial class MaterializeGraph
 {
     /// <summary>The bands' radii (classic texels), fine to coarse; band 0 is the image itself.</summary>
     public static readonly float[] BandSigma = [0f, 0.5f, 1f, 2f, 4f, 8f, 16f];
@@ -146,21 +152,34 @@ public sealed class MaterializeGraph
     private readonly RgbaImage _original;
     private readonly IReadOnlyDictionary<string, RgbaImage> _imports;
     private Tex? _dummy, _flat;
+    /// <summary>A region's graph (R2b phase 6): its passes' slots begin with this; its source is the texture's (<see cref="_shared"/>).</summary>
+    private readonly string _prefix;
+    private readonly Tex? _shared;
 
-    private MaterializeGraph(IMaterializeBackend b, string key, RgbaImage original, IReadOnlyDictionary<string, RgbaImage> imports, PbrRecipe r, BuildRequest q)
+    private MaterializeGraph(IMaterializeBackend b, string key, RgbaImage original, IReadOnlyDictionary<string, RgbaImage> imports, PbrRecipe r, BuildRequest q,
+        string prefix = "", Tex? shared = null)
     {
-        (_b, _key, _original, _imports, _r, _q) = (b, key, original, imports, r, q);
+        (_b, _key, _original, _imports, _r, _q, _prefix, _shared) = (b, key, original, imports, r, q, prefix, shared);
         (_w, _h, _s, _wrap) = (q.W, q.H, (float)q.Scale, r.Wrap);
     }
 
-    /// <summary>Builds the graph over <paramref name="b"/> (the CPU runs passes when they are read; the GPU when it commits).</summary>
-    public static MaterializeOutputs Build(IMaterializeBackend b, string key, RgbaImage original, IReadOnlyDictionary<string, RgbaImage> imports, PbrRecipe r, BuildRequest q) =>
-        new MaterializeGraph(b, key, original, imports, r, q).Run();
+    /// <summary>
+    /// Builds the graph over <paramref name="b"/> (the CPU runs passes when they are read; the GPU
+    /// when it commits). With <paramref name="regions"/> (R2b phase 6): each region's maps by its
+    /// own settings over the same source, composited over the texture's in their order.
+    /// </summary>
+    public static MaterializeOutputs Build(IMaterializeBackend b, string key, RgbaImage original, IReadOnlyDictionary<string, RgbaImage> imports, PbrRecipe r, BuildRequest q,
+        IReadOnlyList<RegionInput>? regions = null)
+    {
+        if (regions is not { Count: > 0 })
+            return new MaterializeGraph(b, key, original, imports, r, q).Run();
+        return BuildRegions(b, key, original, imports, r, q, regions);
+    }
 
     // ---- helpers ------------------------------------------------------------------------------------
 
     private Tex P(string slot, string kernel, int w, int h, bool hdr, int ch, Tex?[] ins, Uni? u = null, bool hold = false) =>
-        _b.Pass(slot, kernel, w, h, hdr, ch, _wrap, ins, u ?? new Uni(), hold);
+        _b.Pass(_prefix + slot, kernel, w, h, hdr, ch, _wrap, ins, u ?? new Uni(), hold);
 
     private Tex F(string slot, string kernel, int ch, Tex?[] ins, Uni? u = null) => P(slot, kernel, _w, _h, true, ch, ins, u);
 
@@ -314,7 +333,7 @@ public sealed class MaterializeGraph
     private MaterializeOutputs Run()
     {
         var o = new MaterializeOutputs();
-        var src = Source();
+        var src = _shared ?? Source();
         o.Maps[MaterialStep.Source] = src;
         var srcLum = Ch(F("lum/src", "lum", 1, [src]), 1);
 
@@ -422,6 +441,15 @@ public sealed class MaterializeGraph
                 return M("albedo", "copy", [ImportTex(MaterialStep.Albedo, img)]);
             case StepMode.Import or StepMode.Skip:
                 return M("albedo", "copy", [src]);
+            case StepMode.Ai when AiTex(MaterialStep.Albedo) is { } ai:
+            {
+                // the estimate is the de-lit colour: the colour check's match on top
+                var aiPre = F("a/ai", "copy", 4, [ai]);
+                var aiStats = WMean("stats/pre", F("stats/pre/lc", "oklab_lc", 4, [aiPre]));
+                var aiAlb = M("albedo", "colour_match", [aiPre, o.SourceStats, aiStats], U().Add("match", Math.Clamp(r.AlbedoMatchClassic, 0, 1)));
+                o.AlbedoStats = WMean("stats/alb", F("stats/alb/lc", "oklab_lc", 4, [aiAlb]));
+                return aiAlb;
+            }
         }
         float sigma = MathF.Max(0.5f, r.DelightRadius * _s);
         float shading = Math.Clamp(r.Delight, 0, 1), ek = Math.Clamp(r.AlbedoEdgeKeep, 0, 1);
@@ -477,7 +505,9 @@ public sealed class MaterializeGraph
             case StepMode.Import or StepMode.Skip:
                 return F("height", "const", 4, [], U().Add("value", new System.Numerics.Vector4(0.5f, 0.5f, 0.5f, 1)));
         }
-        var input = r.HeightFrom == HeightInput.Albedo ? albedo : src;
+        // an AI estimate (R2b phase 6) is the step's input: its brightness, then the bands, contrast, bias, gain
+        var input = MaterialPipeline.ModeOf(r, MaterialStep.Height) == StepMode.Ai && AiTex(MaterialStep.Height) is { } aiH ? aiH
+            : r.HeightFrom == HeightInput.Albedo ? albedo : src;
         var u = U();
         for (int i = 1; i <= 3; i++)
             u.Add($"s{i}", C((Godot.Color)MaterialPipeline.Prop($"HeightSample{i}").GetValue(r)!)).Add($"v{i}", (float)MaterialPipeline.Prop($"HeightSampleValue{i}").GetValue(r)!);
@@ -510,16 +540,25 @@ public sealed class MaterializeGraph
             case StepMode.Import or StepMode.Skip:
                 return M("normal", "const", [], U().Add("value", new System.Numerics.Vector4(0.5f, 0.5f, 1f, 1f)));
         }
-        var hb = Blur("n/hb", height, r.NormalBlur * _s);
-        float shape = Math.Clamp(r.NormalShape, 0, 1);
-        Tex? lb = shape > 0 ? Blur("n/lb", srcLum, MathF.Max(0.5f, r.NormalShapeRadius * _s)) : null;
-        bool scharr = r.NormalFilter == GradientFilter.Scharr;
-        float k = r.NormalStrength * _s / (scharr ? 32f : 8f) * (r.NormalInvert ? -1 : 1);
-        // the painted light's direction in the image (x right, y down), from an angle counted anticlockwise from the right
-        float a = r.NormalLightAngle * MathF.PI / 180f;
-        var s0 = Ch(F("n/s", "n_slope", 2, [hb, lb != null ? srcLum : Dummy, lb ?? Dummy],
-            U().Add("k", k).Add("scharr", scharr).Add("shape", lb != null ? shape : 0f).Add("lx", MathF.Cos(a)).Add("ly", -MathF.Sin(a))
-                .Add("shape_k", r.NormalStrength)), 2);
+        Tex s0;
+        if (MaterialPipeline.ModeOf(r, MaterialStep.Normal) == StepMode.Ai && AiTex(MaterialStep.Normal) is { } aiN)
+        {
+            // an AI normal map (R2b phase 6) as slopes, scaled by the strength (4: as it is), then the bands, angularity, contrast
+            s0 = Ch(F("n/s", "n_from_map", 2, [aiN], U().Add("k", r.NormalStrength / 4f * (r.NormalInvert ? -1 : 1))), 2);
+        }
+        else
+        {
+            var hb = Blur("n/hb", height, r.NormalBlur * _s);
+            float shape = Math.Clamp(r.NormalShape, 0, 1);
+            Tex? lb = shape > 0 ? Blur("n/lb", srcLum, MathF.Max(0.5f, r.NormalShapeRadius * _s)) : null;
+            bool scharr = r.NormalFilter == GradientFilter.Scharr;
+            float k = r.NormalStrength * _s / (scharr ? 32f : 8f) * (r.NormalInvert ? -1 : 1);
+            // the painted light's direction in the image (x right, y down), from an angle counted anticlockwise from the right
+            float a = r.NormalLightAngle * MathF.PI / 180f;
+            s0 = Ch(F("n/s", "n_slope", 2, [hb, lb != null ? srcLum : Dummy, lb ?? Dummy],
+                U().Add("k", k).Add("scharr", scharr).Add("shape", lb != null ? shape : 0f).Add("lx", MathF.Cos(a)).Add("ly", -MathF.Sin(a))
+                    .Add("shape_k", r.NormalStrength)), 2);
+        }
         var bands = new Tex?[7];
         bands[0] = s0;
         for (int i = 1; i < 7; i++)
@@ -574,9 +613,11 @@ public sealed class MaterializeGraph
         var u = U().Add("base", r.RoughnessBase).Add("range", r.RoughnessRange).Add("dw", Math.Clamp(r.RoughnessDetail, 0, 1)).Add("invert", r.RoughnessInvert);
         for (int i = 1; i <= 3; i++)
             u.Add($"s{i}", C((Godot.Color)MaterialPipeline.Prop($"RoughnessSample{i}").GetValue(r)!)).Add($"v{i}", (float)MaterialPipeline.Prop($"RoughnessSampleValue{i}").GetValue(r)!);
+        // an AI estimate (R2b phase 6) in place of the brightness and detail; the rest on top
+        var aiR = MaterialPipeline.ModeOf(r, MaterialStep.Roughness) == StepMode.Ai ? AiTex(MaterialStep.Roughness) : null;
         u.Add("metal_r", r.RoughnessMetal).Add("contrast", r.RoughnessContrast).Add("bias", r.RoughnessBias)
-            .Add("overlay", hp != null ? r.RoughnessOverlay : 0f).Add("wear", curv != null ? r.RoughnessEdgeWear : 0f);
-        return M("roughness", "rough", [albedo, lumA, variance, hp ?? Dummy, metal, curv ?? Dummy], Mask(u, "Roughness"));
+            .Add("overlay", hp != null ? r.RoughnessOverlay : 0f).Add("wear", curv != null ? r.RoughnessEdgeWear : 0f).Add("ai", aiR != null);
+        return M("roughness", "rough", [albedo, lumA, variance, hp ?? Dummy, metal, curv ?? Dummy, aiR ?? Dummy], Mask(u, "Roughness"));
     }
 
     private Tex Occlusion(Tex height, Tex normal, MaterializeOutputs o)

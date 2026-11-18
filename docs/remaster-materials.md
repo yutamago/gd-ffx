@@ -7,9 +7,9 @@ R2b replaces that with a view built for the job: one texture, one map at a
 time, a big lit preview that changes while a slider moves, and profiles that
 carry the settings over to the next texture.
 
-Status: phases 1 to 5 implemented (2026-11-18, "Phase 1: what there is"
-to "Phase 5: what there is"); phase 6 planned. Decisions taken with the user are marked as such; the ones
-taken while implementing are in "Decisions".
+Status: R2b complete: phases 1 to 6 implemented (2026-11-18, "Phase 1: what
+there is" to "Phase 6: what there is"). Decisions taken with the user are
+marked as such; the ones taken while implementing are in "Decisions".
 
 ## What it reuses and what it learns from
 
@@ -290,10 +290,10 @@ Each phase is usable on its own.
    keyboard (1 to 8 and the strip for steps, Tab to compare, arrows for the
    queue, Ctrl+S to save, R to reset a setting), colour picking in the 2D
    view, ComfyUI upscaling in the source step.
-6. **Later.** Regions within one texture, each with its own profile: many
+6. **Regions and AI.** Regions within one texture, each with its own profile: many
    FFX textures are atlases with rock, grass and wood side by side. AI
    estimation of maps where a model's licence allows it (recorded per
-   texture, as R2 records upscaling).
+   texture, as R2 records upscaling). Done: "Phase 6: what there is".
 
 ## Phase 1: what there is
 
@@ -986,11 +986,237 @@ The parity is unchanged, to the digit (the passes are the same): on the Arc
 140T the overlap recipe's normal 0.56/2/2, ORM 0.24/1/3, refraction
 1.34/12/18, height 0.0019/0.0027, as phase 4's table.
 
-Not in phase 5: regions and AI estimation (phase 6); the In map copy follows
+Not in phase 5: regions and AI estimation (phase 6: done); the In map copy follows
 edits to the open map only when In map is chosen again; fog in the preview;
 ComfyUI against a real server.
 
+## Phase 6: what there is
+
+**Regions within one texture** (`godot/src/Remaster/Materialize/MaterialRegions.cs`,
+`MaterializeGraph.Regions.cs`; the tab's `MaterialsTab.Regions.cs`,
+`MaterialRegionStore.cs`). A texture's entry holds its regions in order
+(`RemasterTexture.Regions`, dictionaries in the index's text: name, colour,
+profile, the profile's hash at bake time, exceptions, the settings as made,
+the mask's file, feather, origin). The masks are 8-bit grey PNGs at the
+texture's own size in its folder, `region-mask.<hash>.png` (named by content,
+gitignored with the maps: they are made from the game's UVs and pixels);
+while edited a mask is held in memory under `mem:<key>`, so an undo step
+holds a name, not pixels.
+
+- **The graph.** The texture's own maps by its settings (the queue's with its
+  exceptions), then each region's by its own (its profile with its
+  exceptions; the Source step's settings and the material's own amounts are
+  the texture's: `MaterialRegions.Shared`), over the same source passes
+  (each region's passes under its own slot prefix, `rg<i>/`), then
+  composited in order, each over what is below it: the mask read bilinearly
+  at the working size (`rmask`), its border feathered by the pyramid's
+  Gaussian (**Feather**, classic texels), back at the working size; colour and
+  data blended by the mask (`rcomp`); normal maps blended as slopes (x/z, y/z)
+  and made unit length again; the height levelled first: the mean of the
+  region's height and of what lies below it, both weighted by 4m(1 - m) (the
+  border band; `rg_hstat`, the pyramid's weighted mean), and the region's
+  height moved by the difference, so parallax does not step at a border. A
+  map only one side makes (an added map; the emission; the height) takes its
+  neutral value on the other side (`MaterialRegions.Neutral`: no rim, no
+  coat, flat, no strength), and the material is written with every map any
+  region makes (`MaterialRegions.Union`). Both backends, in the parity check.
+- **Finding regions.** (a) **From UV islands**: every triangle surface of the
+  map that draws the texture (the open map, else the first map the
+  where-used index names, from the classic import), its UVs split into
+  islands (triangles sharing a UV point: a union-find), each island moved
+  into the texture by its own whole offset and rasterised (conservatively:
+  a pixel the triangle touches counts); the islands grouped by the part that
+  draws them (`ffx_parts`); groups over the same pixels (their overlap above
+  half the smaller one) joined; a group covering nearly all the texture (a
+  repeating use) or almost none dropped; largest first, at most six, each
+  without the pixels of those before it. (b) **By colour**: the samples'
+  colour mask (hue, saturation and lightness, a soft threshold) over a
+  slightly blurred copy of the texture, opened and closed by a pixel. (c) **By
+  hand**: rectangle, polygon, brush and eraser in the 2D map, with **Snap**
+  (a shape or stroke takes the whole islands it touches).
+- **The tab.** The Regions box in the Source step (the list, colour-coded in
+  the 2D map; + Region, From UV islands, Remove, Rename, the order, By
+  colour, the region's profile and feather, the tools), **Editing** atop every
+  step's panel: a region chosen, the steps edit its settings (every change its
+  exception; a ● beside the settings it has changed, a click drops it back to
+  its profile). One undo step per action (the list swapped as dictionaries;
+  a brush stroke: one). The preview, the objects and In map draw the
+  composite; the wipe compares it as before. Save, Apply to queue and Make
+  again write the regions (their imported files kept beside the maps, their
+  exceptions worked out again against their profiles); a region's changed
+  profile marks the texture as changed (`MaterialProfiles.StaleNames`,
+  `ProfileStore.Stale`), Rename renames it in regions too.
+
+**AI estimation of maps** (`ComfyAi.cs`, `MaterialsTab.Ai.cs`;
+`ComfyUpscaler.Run`, the client both use). A fourth step mode, **AI**
+(`StepMode.Ai`), for the albedo, height, normal and roughness: the texture
+(its own pixels, at its own size) goes to the user's ComfyUI server with the
+user's workflow for that map, in the background (one at a time; progress by
+stages and `GET /queue`, Cancel, Run again), the step generating meanwhile.
+The answer is cached per texture (its pixels), workflow (its text) and map,
+in memory and `user://remaster/comfyui-cache/`, and is the step's input (an
+import `ai:<map>:<texture>|<key>`, resized to the working size), its
+settings on top:
+
+| Step | The estimate as | Settings on top |
+|---|---|---|
+| Albedo | the de-lit colour | Match classic (the colour check) |
+| Height | the input whose brightness is read (bright is high) | the bands, contrast, bias, S-curve, invert |
+| Normal | slopes from the map (OpenGL), times Strength / 4 (`n_from_map`) | the band equaliser, angularity, contrast |
+| Roughness | the roughness before the rest (`rough`'s `ai`) | invert, the colour samples, the metal's roughness, contrast, bias, fine detail, edge wear |
+
+**AI estimation.** The workflow is the user's: an API-format workflow JSON
+(ComfyUI: Workflow, Export (API)) whose strings may hold three placeholders:
+`%gdffx_input%` (required: the uploaded texture's name, a LoadImage node's
+`image`), `%gdffx_output%` (required: the `filename_prefix` of the SaveImage
+node whose first image is the map; that node is the output), `%gdffx_map%`
+(optional: `albedo`, `height`, `normal`, `roughness`). Per map the editor
+settings `ffx_remaster/ai_<map>_workflow`, `_model` (its name, recorded) and
+`_licence` (the licence of the model or models the workflow runs); **a
+workflow whose licence is empty is refused** (the step says so; nothing is
+sent). Save and Apply to queue write a line per estimate into the texture's
+Source: `material ai normal: normal estimated by ComfyUI (workflow <file>,
+model <model>; licence: <licence>)`. gd-ffx ships no model and no
+third-party workflow: only `godot/addons/ffx_remaster/comfyui/example-map-workflow.json`
+(a LoadImage, a placeholder node `GdFfxPlaceholder_YourMapEstimator`, a
+SaveImage) and its README, written for gd-ffx. The client is checked against
+the editor check's fake server (which answers any workflow: an estimate's
+output prefix `gdffx/ai-<map>` gets a map made by plain image math), never
+against a real ComfyUI.
+
+**Measured** (2026-11-18).
+
+*Regions from UV islands on Besaid beach* (the editor check). Of the beach's
+textures (R2's test edits left out), the ones whose islands propose two or
+more regions: with R2's replaced texture left out, 1 of 50
+(`16128_20_000_000_4_128_128`, 512 px: 2 parts, 4 islands: two regions, 25.5 %
+and 18.2 % of the texture, each from one part, IoU with its part's islands
+1.00 and 0.85, no overlap); with every texture, 2 of 54 (the most drawn,
+`12544_19_000_000_8_128_64`, 128x64 px: 30 parts, 105 islands, grouped into
+two regions of 15 parts each, 64.3 % and 2.8 %, IoU 1.00 and 0.78: the second
+is what the first's parts leave of its own islands). The beach's textures are
+mostly whole-texture uses (sand, rock and wood that repeat), so few propose
+regions; the grouping joins parts that share pixels, so a region is "the
+parts drawn from this patch", not one part each. **By colour** on the 512 px
+texture: its sand colour picked in a region's middle covered 100 % at the
+default threshold 0.86, 78 % at 0.92 and 41 % at 0.96 (a texture of one colour
+needs the threshold up). **By hand**: a brush stroke, a rectangle, a polygon,
+the eraser: 0.67, 2.96, 3.64, 3.09 % of the texture, five undo steps.
+
+*Two profiles on one texture* (stone and concrete; metal on one region,
+grass and foliage on the other; the editor check, CPU and GPU the same):
+metallic 0.91 inside the metal region, 0.00 outside every region (beyond six
+texels of their borders); backlight (a map only the grass profile makes)
+0.298 inside the grass region, 0.000 away from it.
+
+*The composite* (normals' unit length; each border's step against the steps
+inside, 1: invisible; the height's level across a border, a fraction of its
+5 to 95 % spread):
+
+| | normals: 99.9th pct of abs(n) - 1 | height border | normal border | height level, matched (unmatched) |
+|---|---|---|---|---|
+| Besaid's 512 px texture, 3 regions (editor check, GPU under Xvfb and CPU) | 0.0039 (none above 0.03) | 0.97, 1.07, 1.12 | 0.88, 0.98, 2.22 | 0.000 (0.002), 0.001 (0.001), 0.017 (0.013) |
+| Besaid's sand, 1024 px, 4 synthetic regions (`--selftest-materialize`, CPU) | 0.0043 | 1.14, 0.83, 0.98, 0.81 | 1.27, 1.07, 1.62, 1.16 | 0.016 (0.112), 0.020 (0.167), 0.006 (0.194), 0.018 (0.023) |
+| synthetic bricks, 1024 px, 4 regions (`--no-game`, CPU) | 0.0044 | 0.69, 0.85, 1.10, 0.73 | 0.86, 0.89, 1.76, 0.90 | 0.005 (0.103), 0.027 (0.153), 0.013 (0.185), 0.032 (0.007) |
+
+The limits (the check fails above them): a border at most 2.5, a level at
+most 0.08, normals' 99.9th percentile at most 0.02. The level matching takes
+a region's height step of 10 to 19 % of the spread to 1 to 3 %; on Besaid's
+512 px atlas the profiles' heights were level already (0.002). The normal
+border of 2.22 is the hand-drawn region's: its rectangle's hard corners
+feathered by 1.5 texels against a stone texture's soft normals.
+
+*Parity* (`--selftest-materialize`, Mesa llvmpipe, Compatibility, Besaid's
+sand x2 to 1024 px, the regions recipe: four regions over every feature):
+normal 0.20/1/3, roughness 0.13/1/4, ORM 0.15/1/4, refraction 0.38/10/18,
+anisotropy 0.16/2/255 (the flowmap's sign, as before), height
+0.0019/0.0031; every map within the limits.
+
+*Cost.* Each region is a graph of its own: 160 passes without regions, 477
+with two, 791 with four at 1024 px. Mesa llvmpipe (Xvfb; the machine shared
+with other builds, so slower than phase 5's numbers): bakes 1.2 s, 3.2 s, 5.3 s
+at 1024 px and 2.7 s, 9.3 s, 11.2 s at 2048 px for 0, 2, 4 regions; a cheap
+change in one region of two in the preview 244 ms (66 of 489 passes: that
+region's and the composite after it). On the Intel Arc 140T
+(Vulkan, Forward+, the Windows export, `tools/compare-shot-win.sh`): bakes as
+a save reads them **274 ms, 761 ms, 876 ms** at 1024 px and **344 ms, 1164 ms,
+973 ms** at 2048 px for 0, 2 and 4 regions (the second region's bake costs
+the first's again; the 4-region bake at 2048 px under the 2-region one is the
+run-to-run spread of the Arc's shared memory: the passes are kept between
+bakes); a cheap change in one region of two **28 ms** in the preview (phase 5's
+cheap change without regions: 14 to 23 ms); the regions recipe's first bake,
+its kernels' shaders compiled, 15.4 s (the plain recipe's first: 3.1 s). The
+parity of the regions recipe on the Arc: normal 0.20/1/3, roughness 0.13/1/4,
+ORM 0.14/1/4, refraction 0.38/10/17, height 0.0019/0.0030; the core numbers of
+the other two recipes as in phase 4 and 5 (normal 0.56/2/2, ORM 0.24/1/3,
+height 0.0019/0.0027). So two to four regions stay interactive on the GPU and
+a save stays under the plan's 1 s at 2048 px.
+
+
 ## Decisions
+
+Taken while implementing phase 6 (2026-11-18):
+
+- **Regions are layers over the whole texture**, in order (a later one over
+  an earlier), not a partition: "Whole texture" (the queue's settings with the
+  texture's exceptions) is what lies under every region, so a texture with no
+  region is as before, and a region needs no complement.
+- **A region is a whole graph of its own** over the same source passes (its
+  slots prefixed `rg<i>/`), composited per map at the end, rather than one
+  graph with per-pixel settings: every kernel stays as it is (the parity and
+  the profiles' tuning hold), a cheap change in a region draws only its passes
+  and the composite after it; the cost is passes (each region about the
+  texture's own count).
+- **The Source step's settings and the material's own amounts are the
+  texture's** (`MaterialRegions.Shared`: the upscale, sizes, tiling, seam
+  tool, source import; parallax depth, emission energy, the added maps'
+  amounts): every region's maps must line up, and a texture has one
+  material. A region's exceptions never hold them.
+- **A region's every change is its exception** (no queue level for
+  regions: a region belongs to one texture); a new region starts as the
+  texture's settings (its profile, its differences as exceptions); choosing a
+  profile for it clears its exceptions.
+- **Normals composited as slopes** (x/z, y/z blended, renormalised: the
+  height's blend's normal), not as vectors; **heights levelled across the
+  border** by the border band's means (weights 4m(1 - m)): a constant offset
+  per region, so the region's normals are unchanged.
+- **A map one side does not make takes its neutral value there** (no rim, no
+  coat, flat, no strength); the material is written with every map any region
+  makes, so a grass region's backlight shows on a stone texture.
+- **The mask at the texture's own size**, 8-bit, read bilinearly at the
+  working size and feathered by the pyramid's Gaussian (Feather in classic
+  texels, default 1.5): resolution-free (an upscale, the working size), small
+  files. In the session a mask is held in memory by content (`mem:<key>`);
+  Save, Apply to queue and Make again write it as `region-mask.<hash>.png`.
+- **UV islands are grouped by the part that draws them** (`ffx_parts`, else
+  the node's part), not by material: FFX's parts of one atlas usually share a
+  material; groups over the same pixels (overlap above half the smaller) are
+  joined, a group over 97 % of the texture (a repeating use) or under 1 %
+  dropped; each proposal without the pixels of a larger one before it (no
+  overlap). Rasterised conservatively (a pixel the triangle touches), so thin
+  islands survive.
+- **Region by colour runs on the CPU** at the texture's size (the samples'
+  colour mask over a 1 px box blur, opened and closed by a pixel): a mask is
+  made once, not per frame.
+- **Snapping** takes the whole UV islands a shape or stroke touches (an
+  island counts when one of its pixels is drawn), rather than moving edges.
+- **The AI mode is a fourth step mode** (`StepMode.Ai`, the four steps an
+  estimator can make: albedo, height, normal, roughness), its estimate the
+  step's input (an import by content, as ComfyUI's upscale), generated until
+  it is cached; settings applied on top as the table in "Phase 6" says (the
+  normal's Strength over 4: 4 keeps the estimate as it is).
+- **One workflow file per map**, the licence per map's workflow
+  (`ffx_remaster/ai_<map>_licence`), refused when empty before anything is
+  sent; the placeholders are strings in the API JSON (`%gdffx_input%`,
+  `%gdffx_output%` as the SaveImage's prefix, which also names the output
+  node; `%gdffx_map%`), so any workflow exported from ComfyUI can be marked
+  by hand without gd-ffx knowing its nodes.
+- **The estimate is made from the texture's own pixels at its own size**
+  (the classic texture or its replacement), not the upscaled source: the
+  workflow upscales if it wants, the graph resizes the answer.
+- **The shipped template is placeholder nodes** (LoadImage, a
+  `GdFfxPlaceholder_YourMapEstimator`, SaveImage): no third-party node pack or
+  model is named; the check runs that very template against the fake server.
 
 Taken while implementing phase 5 (2026-11-18):
 
@@ -1280,6 +1506,15 @@ Taken while implementing phase 1 (2026-11-18):
   demand), ComfyUI through the check's fake server (progress, a cancel that
   fetches nothing, Run again, the answer as the source, from memory and from
   the cache folder with no request, the Source note on Save).
+  Phase 6's part (`--materials-only --materials-phase6`: straight there):
+  regions from the UV islands of the beach texture whose islands propose the
+  most (matched against their parts' islands), by a picked colour, by hand
+  (brush, rectangle, polygon, eraser), two profiles on one texture, a
+  region's own setting, the composite's normals, borders and height levels,
+  save (masks as files, read back), undo and redo, Apply to queue, Make again
+  after a region's profile changed; AI estimation of the normal through the
+  fake server with the shipped template (the licence refusal, progress,
+  cancel, run again, the cache, the strength on top, the Source note).
 - **A game-side check** on the GPU (`--selftest-materialize`, the Windows
   export through `tools/compare-shot-win.sh`; `--no-game`: a synthetic
   texture): the pipeline's time per slider change, per band rebuild and per
@@ -1301,6 +1536,14 @@ Taken while implementing phase 1 (2026-11-18):
   build per bake, then a profile of a 4096 px bake (the build, the draw, each
   read back, the large passes' GPU times where Godot's timestamps allow) and
   two warm bakes on the same targets.
+- **Regions in the pipeline's check** (`--selftest-materialize`, phase 6):
+  four synthetic regions (no game data: a rectangle, a painted disc, a
+  polygon, a stripe; rock-like, metal, grass with backlight, plaster) over the
+  texture on the CPU (the composite's normals unit length, each border's
+  step in the height and the normal against the steps inside at most 2.5,
+  the height's level across a border at most 0.08 of its spread), the parity
+  of the regions' composite (a third recipe), and on the GPU the bakes with
+  0, 2 and 4 regions and a cheap change in a region.
 - **The materials and lighting checks** (`--selftest-materials`,
   `--selftest-lighting`) with materials made by starter profiles (rock,
   stone and concrete) on the CPU graph.

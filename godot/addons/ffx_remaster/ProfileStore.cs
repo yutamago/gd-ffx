@@ -56,19 +56,22 @@ public static class ProfileStore
 
     /// <summary>The textures of the project's index made with profile <paramref name="name"/>.</summary>
     public static List<RemasterTexture> Users(string name) =>
-        TextureStore.Set.Textures.Where(t => t != null && t.Profile == name).ToList();
+        TextureStore.Set.Textures.Where(t => t != null && (t.Profile == name
+            || t.Regions.Any(v => v.VariantType == Variant.Type.Dictionary && MaterialRegionStore.ProfileOf(v.AsGodotDictionary()) == name))).ToList();
 
     /// <summary>The project's textures whose profile changed since they were made, by profile name.</summary>
     public static SortedDictionary<string, List<string>> Stale()
     {
         var r = new SortedDictionary<string, List<string>>(System.StringComparer.Ordinal);
         foreach (var t in TextureStore.Set.Textures)
-            if (t != null && MaterialProfiles.Stale(t))
-            {
-                if (!r.TryGetValue(t.Profile, out var l))
-                    r[t.Profile] = l = new List<string>();
-                l.Add(t.Id);
-            }
+            if (t != null)
+                // the texture's own profile and its regions' (R2b phase 6)
+                foreach (var name in MaterialProfiles.StaleNames(t))
+                {
+                    if (!r.TryGetValue(name, out var l))
+                        r[name] = l = new List<string>();
+                    l.Add(t.Id);
+                }
         return r;
     }
 
