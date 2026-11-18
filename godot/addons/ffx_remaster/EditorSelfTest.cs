@@ -70,7 +70,12 @@ public sealed class EditorSelfTest
         GD.Print($"ffx editortest: start (overrides into {MapStore.Dir})");
         if (MapStore.Dir == RemasterOverrides.BaseDir)
             Finish(false, "--remaster-maps=DIR is required (the check must not write the project's overrides)");
-        // the game's look of Besaid beach as a stand-in (the editor runs no game): with --remaster-looks=DIR only
+        WriteStandInLook();
+    }
+
+    /// <summary>The game's look of Besaid beach as a stand-in (the editor runs no game), into <c>--remaster-looks=DIR</c> only.</summary>
+    public static void WriteStandInLook()
+    {
         if (GameSettings.Arg("remaster-looks") is { Length: > 0 })
         {
             var look = new GdFfx.Api.Look

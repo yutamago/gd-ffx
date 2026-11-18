@@ -69,7 +69,9 @@ public static class MapTextures
         Aabb? box = null;
         foreach (var (mi, b, world) in meshes)
         {
-            box = box is { } a ? a.Merge(b) : b;
+            // the map's box without its sky (a dome reaches far beyond the ground)
+            if (!sky.Contains(mi))
+                box = box is { } a ? a.Merge(b) : b;
             for (int s = 0; s < mi.Mesh.GetSurfaceCount(); s++)
             {
                 var mat = mi.GetSurfaceOverrideMaterial(s) ?? mi.Mesh.SurfaceGetMaterial(s);

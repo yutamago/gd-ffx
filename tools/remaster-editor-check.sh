@@ -42,6 +42,9 @@
 #  6. R7: the game's effect recordings, then the Media dock (--remaster-editor-media: the Effects,
 #     Audio and Movies tabs: list, open, assign, undo/redo, read back; into OUT_DIR/media), then the
 #     game with the editor's effect scene, sounds and movie (see step 6 below).
+#  7. R4: the remaster wizard (tools/remaster-wizard-check.sh OUT_DIR: Besaid beach's pass staged,
+#     reviewed, accepted, undone and redone in the editor under Xvfb; the game with it; a batch paused
+#     and resumed across editor sessions; the classifier's accuracy on its labelled set).
 #  R5 (before 1): the game's --selftest-alignment on developer save 7 (the game
 #  data against the running game, the alignment check) leaves its capture of
 #  Besaid beach in OUT_DIR/captures, which every editor run reads: the editor
@@ -177,4 +180,7 @@ mmv=$?
 rm -rf "$out/docs"
 grep -E '^ffx selftest: (PASS|FAIL)' "$out/media-movie.log" | tail -1 | cut -c1-300 || echo "ffx selftest: no result (exit $mmv, see $out/media-movie.log)"
 [[ $mmv -eq 0 ]] || exit 1
+# 7. R4: the remaster wizard (tools/remaster-wizard-check.sh: the editor under Xvfb, the game with what
+#    it accepted, a batch paused and resumed across editor sessions, the classifier's accuracy)
+"$repo/tools/remaster-wizard-check.sh" "$out" || exit 1
 echo "remaster-editor-check: PASS (logs and files in $out)"

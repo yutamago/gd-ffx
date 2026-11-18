@@ -58,3 +58,5 @@ Thumbs.db
 # the remaster's textures and materials made in this checkout (replacements, generated maps: made from
 # the player's game, so never in git; a remaster project keeps them in its own pack: docs/remaster-editor.md)
 /godot/remaster/textures/
+# the remaster wizard's state in this checkout (its batch and staged passes: docs/remaster-editor.md, "The remaster wizard")
+/godot/remaster/wizard/
