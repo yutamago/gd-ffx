@@ -132,14 +132,26 @@ public sealed partial class EditorSelfTest
         var picked = tab.RegionColour;
         int before = tab.Regions.Count;
         v = global.GetVersion();
-        var cerr = tab.AddRegionByColour(picked);
+        // as a user would: the threshold raised until the colour is a part of the texture, not all of it (a texture of one colour)
+        var tried = new List<string>();
+        string? cerr = null;
+        foreach (var th in new[] { 0.86f, 0.92f, 0.96f, 0.98f })
+        {
+            tab.RegionThreshold = th;
+            var trial = MaterialRegions.ByColour(PbrBuilder.From(TextureActions.Source(atlas)!), new System.Numerics.Vector3(picked.R, picked.G, picked.B), th, Mathf.Min(1, th + 0.09f));
+            tried.Add($"{th:0.00}: {MaterialRegions.Coverage(trial) * 100:0} %");
+            if (MaterialRegions.Coverage(trial) < 0.6)
+                break;
+        }
+        cerr = tab.AddRegionByColour(picked);
         if (cerr != null || tab.Regions.Count != before + 1 || global.GetVersion() != v + 1)
         { fail($"by colour: {cerr}"); yield break; }
         var colourMask = tab.RegionMask(tab.Regions.Count - 1)!;
         double colourCov = MaterialRegions.Coverage(colourMask), inRegion0 = 0;
         for (int k = 0; k < colourMask.Length; k++)
             inRegion0 += colourMask[k] > 127 && m0[k] > 127 ? 1 : 0;
-        notes.Add($"by colour: #{picked.ToHtml(false)} picked in the 2D map at UV {at.X:0.00},{at.Y:0.00} (region 0's middle): {colourCov * 100:0.#} % of the texture, "
+        tab.RegionThreshold = 0.86f;
+        notes.Add($"by colour: #{picked.ToHtml(false)} picked in the 2D map at UV {at.X:0.00},{at.Y:0.00} (region 0's middle), the threshold {string.Join(", ", tried)}: {colourCov * 100:0.#} % of the texture, "
             + $"{inRegion0 / System.Math.Max(1, colourMask.Count(b => b > 127)) * 100:0} % of it inside region 0; one undo step");
 
         // ---- (c) by hand: brush, rectangle, polygon, eraser (each one undo step) ----
