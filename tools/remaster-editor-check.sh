@@ -28,6 +28,11 @@
 #     edits, and saved back with the same meaning (--remaster-editor-roundtrip);
 #     R5: the alignment check on its additions and replacement, and a misplaced
 #     test box flagged.
+#  5. R6: the character tools (--remaster-editor-character: the character list, c001 opened
+#     with its motions played and scrubbed, the original stand-in humanoid assigned as its remake,
+#     the automatic mapping, one bone mapped by hand, save, undo/redo, opened again; into
+#     OUT_DIR/characters), then the game with that scene and rig (--selftest-character
+#     --character-scene: the stand-in retargeted on Tidus, walking).
 #  R5 (before 1): the game's --selftest-alignment on developer save 7 (the game
 #  data against the running game, the alignment check) leaves its capture of
 #  Besaid beach in OUT_DIR/captures, which every editor run reads: the editor
@@ -102,4 +107,26 @@ timeout 400 "$repo/tools/capped.sh" "$godot" --headless --editor --path . -- --r
 rt=$?
 grep -E '^ffx editortest: (PASS|FAIL)' "$out/roundtrip.log" | tail -1 || echo "ffx editortest: no result (exit $rt, see $out/roundtrip.log)"
 [[ $rt -eq 0 ]] || exit 1
+# 5. R6: the character tools in the editor (the list, c001 opened with its motions, the stand-in
+#    humanoid assigned, the automatic mapping, one bone mapped by hand, save, undo/redo, opened
+#    again: into OUT_DIR/characters), then the game with the scene and rig the editor saved
+mkdir -p "$out/characters"
+cargs=(--path . -- --remaster-editor-character --remaster-characters="$out/characters")
+if [[ -n "${FFX_EDITOR_SHOT:-}" ]]; then
+    env -u WAYLAND_DISPLAY -u DISPLAY timeout 400 "$repo/tools/capped.sh" xvfb-run -a -s "-screen 0 1600x900x24" \
+        "$godot" --editor --display-driver x11 --rendering-driver opengl3 --audio-driver Dummy \
+        "${cargs[@]}" --editor-shot="$out/editor-character.png" >"$out/characters.log" 2>&1
+else
+    timeout 400 "$repo/tools/capped.sh" "$godot" --headless --editor "${cargs[@]}" >"$out/characters.log" 2>&1
+fi
+chr=$?
+grep -E '^ffx editortest: (PASS|FAIL)' "$out/characters.log" | tail -1 || echo "ffx editortest: no result (exit $chr, see $out/characters.log)"
+[[ $chr -eq 0 ]] || exit 1
+timeout 300 "$repo/tools/capped.sh" "$godot" --headless --path . -- --selftest-character \
+    --character-scene="$out/characters/c001.tscn" --character-expect="$out/characters/expect.json" \
+    --devsave=7 --documents="$out/docs" --selftest-timeout=200 >"$out/character-game.log" 2>&1
+cg=$?
+rm -rf "$out/docs"
+grep -E '^ffx selftest: (PASS|FAIL)' "$out/character-game.log" | tail -1 || echo "ffx selftest: no result (exit $cg, see $out/character-game.log)"
+[[ $cg -eq 0 ]] || exit 1
 echo "remaster-editor-check: PASS (logs and files in $out)"

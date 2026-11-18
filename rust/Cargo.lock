@@ -904,6 +904,7 @@ version = "0.1.0"
 dependencies = [
  "ffx-dxbc",
  "ffx-kernel",
+ "ffx-motion",
  "ffx-phyre",
  "ffx-scene",
  "ffx-script",
@@ -951,6 +952,15 @@ dependencies = [
  "ffx-sg",
  "ffx-system",
  "ffx-text",
+]
+
+[[package]]
+name = "ffx-motion"
+version = "0.1.0"
+source = "git+https://github.com/yutamago/ffx-rust?branch=main#d16f7fca4a5e379c57d2c8900f356e19e5f15217"
+dependencies = [
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]

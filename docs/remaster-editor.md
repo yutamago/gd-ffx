@@ -1,6 +1,6 @@
 # The remaster editor
 
-gd-ffx's editor plugin for the remaster (docs/remaster-plan.md, R1b to R3, R5):
+gd-ffx's editor plugin for the remaster (docs/remaster-plan.md, R1b to R3, R5, R6):
 browse the game's maps, open one as an editable scene of its classic parts,
 move, hide, remove, replace and add parts with Godot's own tools, and save
 the edits as the map's override files (docs/remake.md, "Overrides"), which
@@ -8,7 +8,8 @@ the game applies; replace textures, make physically based materials for them
 and draw a map remastered ("Textures" and below), and light it: the game's
 lights and fog as nodes, sky, GI, volumes ("Lighting"); see the game's own data on
 the map (walk mesh, triggers, entrances, cameras) and check that remade geometry
-lines up with it ("The game's data"). What it writes into the
+lines up with it ("The game's data"); remake characters: open one with its motions, assign a
+remade model with a skeleton of its own and map it onto the game's ("Characters"). What it writes into the
 project is IDs and your own work; images made from the game's textures are
 your work products too, but never belong in gd-ffx's git ("Your work and
 git").
@@ -640,6 +641,96 @@ root) the same way without keeping it. A node with the metadata
 fog volumes always are. The game's check runs it too (`--selftest-alignment`,
 "Checks").
 
+## Characters
+
+The **Characters** dock (beside **Remaster** and **Textures**; R6) works on the
+game's characters by their model id (`c001`), the id the game's `Actor.model`
+names and the remake registry keys (docs/remake.md, "Retargeting").
+
+- **The list**: every character model of the player's archive (872 in the
+  HD archive: `c` the party and other people of `chr/pc`, `m` monsters, `n`
+  people, `s` aeons, `w` weapons, `f` objects, `k` skeletons), with the game's
+  name where the kernel gives one (the party's from `ply_save`, a monster's
+  from the monster table record of its number; 348 named), its kind, whether
+  it has motions of its own, and its remake (status, `rig`). **Search**
+  matches the id and the names in every language; the kind box and
+  **Remade** filter it. From `FfxGame.classic_characters` (`ffx-import
+  characters`).
+- **Open** (or a double click) writes `res://remaster/edit/chr/<id>.tscn` (the
+  root and the id only; gitignored, not exported) and opens it. Its root
+  (`CharacterEditRoot`) builds, in the game's character space (half a turn
+  about z, as the game places characters): the classic import *with its
+  motions* (the `chr-motions` import: the model and every clip of its own
+  motion groups as glTF animations, named `<group>/<clip> (<motions>)`, the
+  motion numbers that play the clip; 140 for Tidus, 22 MB, editor only), and
+  the remade scene when one is assigned, 14 units beside it, driven each
+  frame by the classic skeleton's animated pose through the same retargeter
+  as in the game.
+- **Motions**: the motion box plays one (looping), **Pause**/**Play**, the
+  slider scrubs it.
+- **Assign model...**: a `.tscn`, `.scn` or `.glb` (any skeleton) becomes the
+  open character's remake: its rig is made automatically (below) and the
+  scene `<id>.tscn` (a `RemadeCharacter` root over an instance of your scene)
+  and its rig `<id>.rig.tres` are written into `res://remake/chr/`, where the
+  remake convention finds them (a pack ships them at the same paths, or under
+  `res://mods/<pack>/` with a `remake.json` entry). One undo step (the files as
+  they were).
+- **Bones**: the mapping, one row per remade bone: the game's element
+  (`SkeletonNode_i`), the body part it was found as (`hips`, `upperarm.L`,
+  `spine1`...; "by hand"), where its position comes from (`Rotation`: the
+  remade bone's own proportions; `Game`: on the game's joint; the hips take the
+  game's). **Auto map** maps again (rows set by hand stay), **Auto align**
+  turns and scales the model to the game's (up, facing, head height, feet);
+  **Set element** maps the selected bone by hand (-1: none). Each is one undo
+  step, and the rest offsets are made again after it.
+- The cloth chains (each `Game` or `Godot`, with the game's cloth segment it
+  follows), the face table and the attachments are listed under the bones;
+  status and notes are set below. **Save** (or Ctrl+S on the scene) writes the
+  rig.
+
+The automatic rig (`RigBuilder`):
+
+- **Body parts**, on both skeletons: by name patterns first (`hips`/`pelvis`,
+  `spine*`, `chest`, `neck`, `head`, `jaw`, `clavicle`/`shoulder`,
+  `upperarm`/`arm`, `forearm`/`lowerarm`, `hand`, `thigh`/`upleg`,
+  `shin`/`calf`/`leg`, `foot`, `toe`, each with its side: `.L`, `_R`,
+  `Left...`, `mixamorig:` prefixes dropped) when they give the hips, the head,
+  both upper arms and both thighs; else by the hierarchy and rest positions:
+  the feet are the lowest leaves (the second at the first one's height), the
+  hands the widest pair of leaves above the hips outside the legs, the head
+  the highest leaf under the chest between them; each limb's joints are its
+  bones grouped by place (the deepest of each group drives it), its upper and
+  lower parts the longest consecutive pair. Leaves at the skeleton's origin
+  or on their parent are left out (the classic models' unused face bones).
+  The game's skeleton has no names: it is labelled this way, with its
+  attachment points as hints (9 the head, 13 the jaw). For Tidus: hips 1,
+  spine 3, 6, 7, neck 60, head 61, jaw 63, clavicles 9 and 35, upper arms 12
+  and 38, forearms 13 and 39, hands 16 and 42, thighs 78 and 91, shins 79 and
+  92, feet 82 and 95.
+- **Mapping**: part to part; the spines by order (first to first, last to
+  last), every neck bone to the game's neck, the jaw to point 13's element.
+- **Alignment**: the remade up and facing turned onto the game's (y down,
+  facing -z), the head height scaled to the game's, the feet put on the
+  game's (`CharacterRig.Align`).
+- **Rest offsets**: each mapped bone with one branch of mapped bones under it
+  is turned, at the rest, so the next mapped bone (at a place of its own in
+  the game) lies where the game's next element does (a T pose meets the
+  game's A pose); its rotation is then taken relative to its element's rest
+  (`RigBone.Rest`).
+- **Cloth**: bones named as cloth (hair, tail, hood, cape, skirt...) and not
+  mapped make chains; a chain whose bones each have a classic cloth vertex of
+  one segment within 12 % of the body follows the game's cloth (each bone a
+  vertex, half a bone's length apart at least), else Godot's spring bones.
+- **Face**: the game's jaw onto a blend shape named as a mouth opening
+  (`mouth_open`, `jaw_open`...), from the jaw's rest angle to 7° more.
+- **Attachments**: the party's hand points (4 and 5, where the game binds
+  weapons) onto a remade bone named as a weapon socket on that side, else the
+  remade hand; the side is the mapped hand above the point in the PS2
+  skeleton (`FfxGame.classic_character_skeleton`: the points are ends the HD
+  model has no node for), whose bind pose also gives the point's rest frame.
+  Elements without an attachment carry what the game binds to them on the
+  remade bone mapped to them.
+
 ## Your work and git
 
 Replacements and generated maps are your own work products, but the ones
@@ -652,6 +743,12 @@ move the folder to `res://mods/<pack>/remaster/textures/` (its paths are
 relative) and export it with the pack's other files. Whether you may
 publish such a pack depends on what it holds; textures made by hand from
 nothing of the game's are yours.
+
+A character's rig (`<id>.rig.tres`) holds names, element numbers and numbers
+(the alignment, the rest offsets: turns between your bones and the game's
+rests, the cloth vertices' numbers and their rest directions): your work, fine
+in a pack. The classic import with its motions (`chr-motions`) stays in the
+classic cache on the player's machine.
 
 The game's data in the editor is read from the player's archive each time a
 map opens and never stored; the captures (`user://remaster/captures/`) stay on
@@ -833,6 +930,25 @@ Compatibility scales); `--lighting-debug` prints each map surface's colours.
 
 The pictures show the player's game: keep them out of git.
 
+### The character check
+
+5. R6 (`--editor -- --remaster-editor-character --remaster-characters=DIR`):
+   the character list (872 characters, Tidus by his name, the search), c001
+   opened (140 motions), the longest motion of its first group played and
+   scrubbed (the hips move, scrubbing back gives the same pose), the original
+   stand-in humanoid (docs/remake.md, "The stand-in humanoid") saved into
+   `DIR/standin` and assigned (21 bones mapped automatically, 2 cloth chains,
+   the mouth row, 2 attachments; one undo step, undone and redone), the
+   remake driven by the playing motion (its bones within 0.01° of the
+   classic skeleton's directions), the automatic mapping, `Spine_Upper` mapped
+   by hand to element 5 (the automatic mapping keeps it), saved, both undone
+   and redone, saved again byte for byte the same, the character opened again
+   with the hand-set row; `DIR/expect.json`. With `--editor-shot=FILE.png` a
+   picture of the 3D view. Then the game takes that scene and rig
+   (`--selftest-character --character-scene=DIR/c001.tscn
+   --character-expect=DIR/expect.json --devsave=7`: docs/remake.md,
+   "Retargeting").
+
 ## Exports
 
 The plugin is editor only: its C# is compiled only with `TOOLS` (the
@@ -862,6 +978,13 @@ export that holds either (`project.godot` still names the plugin's
   water bits are in the data, not coloured.
 - The where-used index covers the maps' 3D models only (not characters,
   2D layers, effects or menus).
+- Characters (R6): the dock edits the project's characters only (a pack's are
+  shown when the registry finds them, not edited); the mapping UI is a list
+  with a number per bone (no picking bones in the 3D view, no gizmo for a
+  bone's offset: set `Offset` in the rig's inspector); the alignment is
+  automatic or the rig's `Align` by hand; the face table's rows other than the
+  mouth are added in the rig's inspector; the motions are the character's own
+  groups (not the events' or battles' `.mgrp` files).
 - Godot prints a few "Failed loading resource" lines while new PNGs are
   being imported (a scan and an import after a texture's first edit); they
   load from the files meanwhile.
@@ -909,6 +1032,11 @@ export that holds either (`project.godot` still names the plugin's
 | `VolumeNode.cs` | a lighting volume's node (the box) |
 | `GameDataEdit.cs` | the game's data as nodes (R5): walk meshes, triggers, entrances, actors, cameras, the capture's characters and placements; the alignment check's marks |
 | `EditorSelfTest.cs` | the check |
+| `CharacterDock.cs` | the Characters dock (R6): the list, motions, mapping, cloth, face, attachments, status |
+| `CharacterEditRoot.cs` | a character's edit scene: the classic import with its motions, the remake beside it, driven |
+| `CharacterStore.cs` | the project's character scenes and rigs, held while edited |
+| `RemasterPlugin.Characters.cs` | the character actions (open, assign, map, align, positions, cloth mode, status, save; one undo step each) |
+| `CharacterEditorTest.cs` | the character check |
 
 Game side (R2): `RemasterTexture`, `RemasterTextureSet`, `PbrRecipe` (the
 resources), `RemasterTextures` (the layers, the merge, the images and
@@ -925,6 +1053,15 @@ the defaults from the look, the volumes, GI, the quality), `LookCache` (the
 looks for the editor), `ColourBalance` (the colour check), `LightingTest`;
 `RemasterLook` (`ffx_lit_gamma`, the blended parts), `ClassicMaterials`
 (premultiplied output under the linear one).
+
+Game side (R6, `godot/src/Characters/`): `CharacterRig`, `RigBone`,
+`ClothChain`, `FaceMap`, `AttachMap` (the rig's resources), `RemadeCharacter`
+(the remade scene's root), `Retargeter` (the driver), `RigBuilder` (the
+automatic rig), `CharacterScene` (scene and rig files), `CharacterCatalogue`
+(the character list), `CharacterMaterials` (the presets), `StandInHumanoid`,
+`CharacterTest`; `StateView3D` drives remade characters and their
+attachments, `ClothView` gives the game's cloth points and the classic cloth
+vertices.
 
 Game side (R5): `MapGameData` (the archive's walk meshes, scene cameras,
 entrances and workers in render space, from `FfxGame.classic_map_game_data`),

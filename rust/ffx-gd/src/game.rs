@@ -566,7 +566,7 @@ impl FfxGame {
     }
 
     /// Imports `name` (`kind`: `map` with a level name, `chr` with a model
-    /// name) in the background; `classic_finished` reports it.
+    /// name, `chr-motions` a model with its motions) in the background; `classic_finished` reports it.
     #[func]
     fn classic_request(&mut self, kind: GString, name: GString) -> bool {
         crate::classic::Kind::parse(&kind.to_string())
@@ -789,6 +789,34 @@ impl FfxGame {
         let langs: Vec<&str> = langs.iter().map(String::as_str).collect();
         classic()
             .map_catalogue(&langs)
+            .map_or_else(GString::new, |s| GString::from(s.as_str()))
+    }
+
+    /// The archive's characters as JSON (docs/remaster-editor.md,
+    /// "Characters"): `[{"name", "kind", "motions", "names": {lang: name},
+    /// "points": [{"id", "kind", "element", "offset"}]}]`, the game's names
+    /// in `languages` where it gives one (the party, monsters); empty
+    /// without the archive (`classic_open`).
+    #[func]
+    fn classic_characters(&self, languages: PackedStringArray) -> GString {
+        let langs: Vec<String> = languages
+            .as_slice()
+            .iter()
+            .map(GString::to_string)
+            .collect();
+        let langs: Vec<&str> = langs.iter().map(String::as_str).collect();
+        classic()
+            .character_list(&langs)
+            .map_or_else(GString::new, |s| GString::from(s.as_str()))
+    }
+
+    /// Model `name`'s PS2 skeleton as JSON (the bind pose its motions
+    /// animate, every element: `[{"parent", "t", "r", "s"}]`); empty
+    /// without the archive or the model's `.chr`.
+    #[func]
+    fn classic_character_skeleton(&self, name: GString) -> GString {
+        classic()
+            .character_skeleton(&name.to_string())
             .map_or_else(GString::new, |s| GString::from(s.as_str()))
     }
 

@@ -19,6 +19,9 @@ pub enum Kind {
     MapLayers,
     /// A character model, by its name (`c001`).
     Character,
+    /// A character model with its motions as glTF animations (the editor's
+    /// preview: `ffx_import::Importer::import_character_motions`).
+    CharacterMotions,
 }
 
 impl Kind {
@@ -29,6 +32,7 @@ impl Kind {
             "map" => Some(Self::Map),
             "map2d" => Some(Self::MapLayers),
             "chr" => Some(Self::Character),
+            "chr-motions" => Some(Self::CharacterMotions),
             _ => None,
         }
     }
@@ -40,6 +44,7 @@ impl Kind {
             Self::Map => "map",
             Self::MapLayers => "map2d",
             Self::Character => "chr",
+            Self::CharacterMotions => "chr-motions",
         }
     }
 }
@@ -320,6 +325,41 @@ impl Classic {
         o.importer.map_game_data(level).map(|v| v.to_string())
     }
 
+    /// The archive's characters as JSON (`ffx_import::Importer::character_list`:
+    /// model, kind, motions, the game's names in `languages`, attachment
+    /// points); `None` without the archive.
+    #[must_use]
+    pub fn character_list(&self, languages: &[&str]) -> Option<String> {
+        let o = lock(&self.open).clone()?;
+        let charsets: Vec<(&str, ffx_text::Charset)> = languages
+            .iter()
+            .filter_map(|l| o.importer.charset(l).ok().map(|c| (*l, c)))
+            .collect();
+        let decode = |lang: &str, b: &[u8]| {
+            charsets
+                .iter()
+                .find(|(l, _)| *l == lang)
+                .map(|(_, c)| c.decode(b))
+        };
+        Some(o.importer.character_list(languages, decode).to_string())
+    }
+
+    /// Model `name`'s PS2 skeleton as JSON (`ffx_import::Importer::character_skeleton`):
+    /// `[{"parent", "t", "r", "s"}]` per element (`parent` -1 for a root);
+    /// `None` without the archive or the `.chr`.
+    #[must_use]
+    pub fn character_skeleton(&self, name: &str) -> Option<String> {
+        let o = lock(&self.open).clone()?;
+        let bones = o.importer.character_skeleton(name)?;
+        let list: Vec<serde_json::Value> = bones
+            .iter()
+            .map(|b| {
+                serde_json::json!({"parent": b.parent.map_or(-1, i32::from), "t": b.translation, "r": b.rotation, "s": b.scale})
+            })
+            .collect();
+        Some(serde_json::Value::Array(list).to_string())
+    }
+
     /// The developers' saves (`ffx_import::Importer::dev_saves`); empty
     /// without the archive.
     #[must_use]
@@ -355,6 +395,9 @@ impl Classic {
                     Kind::Map => open.importer.import_map(&name, &open.cache),
                     Kind::MapLayers => open.importer.import_map_layers(&name, &open.cache),
                     Kind::Character => open.importer.import_character(&name, &open.cache),
+                    Kind::CharacterMotions => {
+                        open.importer.import_character_motions(&name, &open.cache)
+                    }
                 };
                 lock(&done).push(Done {
                     kind,
