@@ -63,6 +63,8 @@ pub struct Done {
 struct Open {
     importer: Arc<Importer>,
     cache: PathBuf,
+    /// The game folder (its `FFX.exe`: the music id table).
+    game_dir: PathBuf,
 }
 
 /// The game's character set, once loaded ([`Classic::decode`]).
@@ -120,6 +122,7 @@ impl Classic {
         *lock(&self.open) = Some(Arc::new(Open {
             importer: Arc::new(importer),
             cache,
+            game_dir: game_dir.to_path_buf(),
         }));
         Ok(())
     }
@@ -205,6 +208,38 @@ impl Classic {
     pub fn flash_movie(&self, name: &str) -> Option<Arc<ffx_import::flash::Movie>> {
         let open = lock(&self.open).clone()?;
         open.importer.flash_movie(name)
+    }
+
+    /// The game's sounds of kind `kind` (`music`, `sfx`, `voice`) by id, with
+    /// their names and samples (`ffx_import::sounds`; `language` for sound
+    /// effects and voice: `us`, `jp`).
+    #[must_use]
+    pub fn sounds(&self, kind: &str, language: &str) -> Vec<ffx_import::sounds::Sound> {
+        let Some(open) = lock(&self.open).clone() else {
+            return Vec::new();
+        };
+        match kind {
+            "music" => open.importer.music_sounds(&open.game_dir.join("FFX.exe")),
+            "sfx" => open.importer.sfx_sounds(language),
+            "voice" => open.importer.voice_sounds(language),
+            _ => Vec::new(),
+        }
+    }
+
+    /// The archive's paths containing `needle` (lower case), sorted.
+    #[must_use]
+    pub fn list(&self, needle: &str) -> Vec<String> {
+        lock(&self.open)
+            .clone()
+            .map(|o| o.importer.list(needle))
+            .unwrap_or_default()
+    }
+
+    /// Sample `sample` of the archive's bank `bank`, decoded.
+    #[must_use]
+    pub fn sound_pcm(&self, bank: &str, sample: u32) -> Option<ffx_import::sounds::Pcm> {
+        let open = lock(&self.open).clone()?;
+        open.importer.sound_pcm(bank, sample)
     }
 
     /// A material texture's face as PNG (`ffx_import::Importer::texture_png`).

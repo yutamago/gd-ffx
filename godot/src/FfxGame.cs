@@ -46,6 +46,9 @@ public partial class FfxGame : RefCounted
         public static readonly StringName set_movie_muted = "set_movie_muted";
         public static readonly StringName audio_mix_level = "audio_mix_level";
         public static readonly StringName audio_holds = "audio_holds";
+        public static readonly StringName classic_sounds = "classic_sounds";
+        public static readonly StringName classic_list = "classic_list";
+        public static readonly StringName classic_sound_pcm = "classic_sound_pcm";
         public static readonly StringName encounter_maps = "encounter_maps";
         public static readonly StringName esc_button = "esc_button";
         public static readonly StringName esc_popup_answer = "esc_popup_answer";
@@ -403,6 +406,45 @@ public partial class FfxGame : RefCounted
 
     /// <summary>The game's FMOD volumes (<c>master</c>, <c>music</c>, <c>voice</c>, <c>sfx</c>, 0..1) and whether the music and voice are held silent (<c>music_held</c>, <c>voice_held</c>).</summary>
     public Dictionary AudioHolds() => Node.Call(M.audio_holds).AsGodotDictionary();
+
+    /// <summary>The game's sounds of <paramref name="kind"/> (<c>music</c>, <c>sfx</c>, <c>voice</c>) by id: (id, name, bank, sample); empty without the archive.</summary>
+    public System.Collections.Generic.List<(int Id, string Name, string Bank, int Sample)> ClassicSounds(string kind, string language)
+    {
+        var list = new System.Collections.Generic.List<(int, string, string, int)>();
+        foreach (var line in Node.Call(M.classic_sounds, kind, language).AsStringArray())
+        {
+            var p = line.Split('\t');
+            if (p.Length == 4 && int.TryParse(p[0], out var id) && int.TryParse(p[3], out var sample))
+                list.Add((id, p[1], p[2], sample));
+        }
+        return list;
+    }
+
+    /// <summary>The archive's paths containing <paramref name="needle"/> (lower case); empty without the archive.</summary>
+    public string[] ClassicList(string needle) => Node.Call(M.classic_list, needle).AsStringArray();
+
+    /// <summary>A sample of the archive's bank as a stream (16-bit, its loop points), null when it is not there.</summary>
+    public AudioStreamWav? ClassicSound(string bank, int sample)
+    {
+        var d = Node.Call(M.classic_sound_pcm, bank, sample).AsGodotDictionary();
+        if (!d.TryGetValue("found", out var f) || !f.AsBool())
+            return null;
+        var wav = new AudioStreamWav
+        {
+            Format = AudioStreamWav.FormatEnum.Format16Bits,
+            MixRate = d["rate"].AsInt32(),
+            Stereo = d["channels"].AsInt32() == 2,
+            Data = d["pcm"].AsByteArray(),
+        };
+        int lb = d["loop_begin"].AsInt32(), le = d["loop_end"].AsInt32();
+        if (lb >= 0 && le > lb)
+        {
+            wav.LoopMode = AudioStreamWav.LoopModeEnum.Forward;
+            wav.LoopBegin = lb;
+            wav.LoopEnd = le;
+        }
+        return wav;
+    }
 
     /// <summary>Silences the game's movie sound while a replacement plays.</summary>
     public void SetMovieMuted(bool on) => Node.Call(M.set_movie_muted, on);

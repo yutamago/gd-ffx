@@ -838,6 +838,53 @@ impl FfxGame {
             .collect()
     }
 
+    /// The game's sounds of kind `kind` (`music`, `sfx`, `voice`) by the ids
+    /// it plays them by (R7's Audio browser), one line each: id, name, bank,
+    /// sample, tab-separated; `language` (`us`, `jp`) for sound effects and
+    /// voice. Empty without the archive (`classic_open`).
+    #[func]
+    fn classic_sounds(&self, kind: GString, language: GString) -> PackedStringArray {
+        classic()
+            .sounds(&kind.to_string(), &language.to_string())
+            .iter()
+            .map(|s| GString::from(format!("{}\t{}\t{}\t{}", s.id, s.name, s.bank, s.sample).as_str()))
+            .collect()
+    }
+
+    /// The archive's paths containing `needle` (lower case), sorted (the
+    /// editor's movie list: `ps3data/video/`); empty without the archive.
+    #[func]
+    fn classic_list(&self, needle: GString) -> PackedStringArray {
+        classic()
+            .list(&needle.to_string())
+            .iter()
+            .map(|p| GString::from(p.as_str()))
+            .collect()
+    }
+
+    /// Sample `sample` of the archive's bank `bank` decoded: `rate`,
+    /// `channels`, `pcm` (16-bit little-endian interleaved), `loop_begin`,
+    /// `loop_end` (frames; -1 none); `found` false when it is not there.
+    #[func]
+    fn classic_sound_pcm(&self, bank: GString, sample: i64) -> VarDictionary {
+        let Some(p) = u32::try_from(sample)
+            .ok()
+            .and_then(|s| classic().sound_pcm(&bank.to_string(), s))
+        else {
+            return vdict! { "found" => false };
+        };
+        let bytes: Vec<u8> = p.samples.iter().flat_map(|v| v.to_le_bytes()).collect();
+        let (lb, le) = p.looped.map_or((-1, -1), |(a, b)| (i64::from(a), i64::from(b)));
+        vdict! {
+            "found" => true,
+            "rate" => i64::from(p.rate),
+            "channels" => i64::from(p.channels),
+            "pcm" => &PackedByteArray::from(bytes.as_slice()),
+            "loop_begin" => lb,
+            "loop_end" => le,
+        }
+    }
+
     /// The textures `level`'s 3D model samples and the parts drawn with
     /// each, as JSON (`{"model", "textures": [{"id", "samplers", "parts"}]}`,
     /// parts relative to the model): the remaster's where-used index

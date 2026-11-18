@@ -546,23 +546,36 @@ void fragment() {
             return null;
         if (look.Textured && texture != FrameBufferName && t == null)
             return null;
-        m = new ShaderMaterial { Shader = ShaderOf(look), RenderPriority = Priority };
+        m = MakeMaterial(look, t, texture == FrameBufferName);
+        _materials[(texture, look)] = m;
+        return m;
+    }
+
+    /// <summary>
+    /// A material that draws an effect draw of <paramref name="look"/> with texture
+    /// <paramref name="t"/> as the game does (<paramref name="frameBuffer"/>: the DTT pass's frame
+    /// copy); the editor's classic effect replay uses it too (R7).
+    /// </summary>
+    public static ShaderMaterial MakeMaterial(Look look, Texture2D? t, bool frameBuffer = false)
+    {
+        var m = new ShaderMaterial { Shader = ShaderOf(look), RenderPriority = Priority };
         m.SetShaderParameter("form", look.Form);
         m.SetShaderParameter("alpha_one", look.AlphaOne);
         m.SetShaderParameter("zero_colour", look.ZeroColour);
         m.SetShaderParameter("address_u", look.AddressU);
         m.SetShaderParameter("address_v", look.AddressV);
         // the DTT pass's draws sample the frame copy (the picture so far)
-        if (texture == FrameBufferName)
+        if (frameBuffer)
         {
             m.SetShaderParameter("frame_buffer", true);
-            _materials[(texture, look)] = m;
             return m;
         }
         m.SetShaderParameter("textured", t != null);
         if (t != null)
-            { m.SetShaderParameter("tex", t); m.SetShaderParameter("tex_clamp", t); }
-        _materials[(texture, look)] = m;
+        {
+            m.SetShaderParameter("tex", t);
+            m.SetShaderParameter("tex_clamp", t);
+        }
         return m;
     }
 

@@ -33,6 +33,9 @@
 #     the automatic mapping, one bone mapped by hand, save, undo/redo, opened again; into
 #     OUT_DIR/characters), then the game with that scene and rig (--selftest-character
 #     --character-scene: the stand-in retargeted on Tidus, walking).
+#  6. R7: the game's effect recordings, then the Media dock (--remaster-editor-media: the Effects,
+#     Audio and Movies tabs: list, open, assign, undo/redo, read back; into OUT_DIR/media), then the
+#     game with the editor's effect scene, sounds and movie (see step 6 below).
 #  R5 (before 1): the game's --selftest-alignment on developer save 7 (the game
 #  data against the running game, the alignment check) leaves its capture of
 #  Besaid beach in OUT_DIR/captures, which every editor run reads: the editor
@@ -129,4 +132,43 @@ cg=$?
 rm -rf "$out/docs"
 grep -E '^ffx selftest: (PASS|FAIL)' "$out/character-game.log" | tail -1 || echo "ffx selftest: no result (exit $cg, see $out/character-game.log)"
 [[ $cg -eq 0 ]] || exit 1
+# 6. R7: effects, audio and movies. The game records Besaid's effects (--selftest-effects: the
+#    example remake on the save sphere's glow, F8, the recording) into OUT_DIR/effects; a test
+#    video is made (tools/make-test-movie.sh, Xvfb); the editor (--remaster-editor-media) lists the
+#    recordings, opens bsil00-fp15 (its replay, scrubbed), assigns the example as its remake, the
+#    battle music and the sea effect stand-ins, the test video to LCI, each undone and redone,
+#    read back (into OUT_DIR/media); then the game with what it saved: the editor's effect scene
+#    on the save sphere, its music in the deck battle, its movie on developer save 22.
+mkdir -p "$out/media"
+timeout 300 "$repo/tools/capped.sh" "$godot" --headless --path . -- --selftest-effects --remaster-effects="$out/effects" \
+    --devsave=7 --documents="$out/docs" --selftest-timeout=150 >"$out/effects.log" 2>&1
+fx=$?
+rm -rf "$out/docs"
+grep -E '^ffx selftest: (PASS|FAIL)' "$out/effects.log" | tail -1 | cut -c1-300 || echo "ffx selftest: no result (exit $fx, see $out/effects.log)"
+[[ $fx -eq 0 ]] || exit 1
+"$repo/tools/make-test-movie.sh" "$out/media/test.ogv" 40 >"$out/movie-make.log" 2>&1 || { echo "make-test-movie failed (see $out/movie-make.log)"; exit 1; }
+margs=(--path . -- --remaster-editor-media --remaster-effects="$out/effects" --remaster-effect-scenes="$out/media/effect"
+    --remaster-audio="$out/media/audio/audio.tres" --remaster-movies="$out/media/movies/movies.tres" --media-video="$out/media/test.ogv")
+timeout 400 "$repo/tools/capped.sh" "$godot" --headless --editor "${margs[@]}" >"$out/media.log" 2>&1
+med=$?
+grep -E '^ffx editortest: (PASS|FAIL)' "$out/media.log" | tail -1 || echo "ffx editortest: no result (exit $med, see $out/media.log)"
+[[ $med -eq 0 ]] || exit 1
+timeout 300 "$repo/tools/capped.sh" "$godot" --headless --path . -- --selftest-effects --effect-scene="$out/media/effect/bsil00-fp15.tscn" \
+    --remaster-effects="$out/effects-game" --devsave=7 --documents="$out/docs" --selftest-timeout=150 >"$out/media-effects.log" 2>&1
+mfx=$?
+rm -rf "$out/docs"
+grep -E '^ffx selftest: (PASS|FAIL)' "$out/media-effects.log" | tail -1 | cut -c1-300 || echo "ffx selftest: no result (exit $mfx, see $out/media-effects.log)"
+[[ $mfx -eq 0 ]] || exit 1
+timeout 300 "$repo/tools/capped.sh" "$godot" --headless --path . -- --selftest-audio --audio-file="$out/media/audio/audio.tres" \
+    --devsave=7 --documents="$out/docs" --selftest-timeout=150 >"$out/media-audio.log" 2>&1
+mau=$?
+rm -rf "$out/docs"
+grep -E '^ffx selftest: (PASS|FAIL)' "$out/media-audio.log" | tail -1 | cut -c1-300 || echo "ffx selftest: no result (exit $mau, see $out/media-audio.log)"
+[[ $mau -eq 0 ]] || exit 1
+timeout 400 "$repo/tools/capped.sh" "$godot" --headless --path . -- --selftest-movie --movies-file="$out/media/movies/movies.tres" \
+    --devsave=22 --documents="$out/docs" --selftest-timeout=200 >"$out/media-movie.log" 2>&1
+mmv=$?
+rm -rf "$out/docs"
+grep -E '^ffx selftest: (PASS|FAIL)' "$out/media-movie.log" | tail -1 | cut -c1-300 || echo "ffx selftest: no result (exit $mmv, see $out/media-movie.log)"
+[[ $mmv -eq 0 ]] || exit 1
 echo "remaster-editor-check: PASS (logs and files in $out)"
