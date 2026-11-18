@@ -5,7 +5,8 @@ here: `docs/architecture.md`, `docs/building.md`, `docs/running.md`,
 `docs/exporting.md`, `docs/launcher.md` (the main scene; skipped with
 `--game-dir`, `FFX_GAME_DIR`, `--devsave`, `--selftest*`, `--no-launcher`),
 `docs/remaster-plan.md`, `docs/remaster-editor.md` (the editor plugin,
-`godot/addons/ffx_remaster`; R2's textures, materials and render path).
+`godot/addons/ffx_remaster`; R2's textures, materials and render path),
+`docs/remaster-materials.md` (R2b, the material workbench: planned).
 
 ## Rules
 

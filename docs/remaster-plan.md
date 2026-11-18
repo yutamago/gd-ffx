@@ -43,8 +43,9 @@ not: Godot is the renderer and the editor.
 |---|---|---|
 | R1 | Foundation: stable part IDs, the map catalogue with status, the editor plugin (map browser, open a map, edit/delete/add parts, save), overrides applied in the game, play from the editor | G6 |
 | R2 | Textures and materials: replacement by texture ID, where-used, upscaling, PBR materials per texture (generators, optional AI), batch conversion, the per-map render path | R1 |
+| R2b | The material workbench: a Materials tab with one texture and one map at a time, a big lit preview that changes as a slider moves, every map Godot's materials take, GPU generators, profiles applied to a queue (docs/remaster-materials.md) | R2, R3 |
 | R3 | Lighting and atmosphere: the game's lights and fog as editable objects, Godot lights, sky, GI (SDFGI/VoxelGI/lightmaps), volumetric fog, reflection probes, settings per map and per volume | R2 |
-| R4 | The remaster wizard: a first automated pass per map (de-light, PBR, sun from the game's light, sky, GI) with a review step; batch over all maps | R3 |
+| R4 | The remaster wizard: a first automated pass per map (de-light, PBR by a profile chosen per texture, sun from the game's light, sky, GI) with a review step; batch over all maps | R2b, R3 |
 | R5 | The game's data in the editor: walkmesh and collision, triggers, entrances and events, script-moved objects, map cameras; checks that remade geometry lines up | R1 |
 | R6 | Characters: higher-detail models, retargeting to the game's bones, skin/hair/eye shaders, cloth (the game's simulation or Godot's), faces | R1 |
 | R7 | The rest: effects as Godot particles by effect id, 2D rooms rebuilt in 3D, movies, audio replacement by id, UI art | R1-R3 |
