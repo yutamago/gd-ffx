@@ -639,7 +639,32 @@ the classic texture's, the chroma within 20 %), the roughness's mean in its
 kind's range, the metallic's mean (metal 0.5 to 1, the others under 0.05),
 and a contact sheet per texture in DIR (classic, albedo, height, normal,
 roughness, occlusion, metallic, the classic and the material lit by one
-light), looked at. PROFILE_NUMBERS
+light), looked at. Measured (2026-11-18, 512 px at most,
+the CPU; the means over each profile's five textures, the colour check within
+0.003 of lightness and 3 % of chroma on every texture):
+
+| Profile | Roughness (range) | Spread (p90 - p10) | Metallic | Normals' tilt (1 - z) | Height (parallax) |
+|---|---|---|---|---|---|
+| rock | 0.83 (0.70 to 0.95) | 0.13 | 0 | 0.064 (about 21°) | 0.03 |
+| stone and concrete | 0.80 (0.75 to 0.97) | 0.12 | 0 | 0.017 | 0.015 |
+| sand and dirt | 0.91 (0.85 to 1) | 0.07 | 0 | 0.016 | 0.012 |
+| grass and foliage | 0.72 (0.50 to 0.85) | 0.18 | 0 | 0.012 | none |
+| wood | 0.70 (0.55 to 0.85) | 0.13 | 0 | 0.013 | 0.012 |
+| metal | 0.38 (0.25 to 0.65) | 0.08 | 0.61 (0.5 to 1) | 0.010 | 0.008 |
+| fabric | 0.89 (0.80 to 1) | 0.06 | 0 | 0.012 | 0.006 |
+| plaster and painted walls | 0.82 (0.75 to 0.95) | 0.13 | 0 | 0.011 | 0.008 |
+
+The first settings (R2's normal strengths, roughness ranges of 0.1 to 0.4)
+gave normals tilted 2 to 4 degrees and roughness maps of one grey (spread
+0.02 to 0.05): the slopes are per pixel of a smooth height, so the starter
+profiles' normal strengths are 4 to 14 and their roughness ranges 0.5 to
+1.4, with a bias where the range moved the mean. Metal's spread stays low
+(its metallic parts take one roughness, and FFX's metal panels are painted
+evenly; its limit is 0.07); its metallic mask is the brightness one (dark
+parts are rust and dirt), pre-blurred, which is crude: a colour sample does
+better per texture. The lit columns of the sheets, and the editor check's
+`profile-<name>.png` (each profile on a Besaid texture, the studio, Godot's
+renderer), are the pictures looked at.
 
 Not in phase 3: the other maps (phase 4), regions with their own profile
 (phase 6), choosing a profile per texture automatically (R4).

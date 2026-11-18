@@ -1802,7 +1802,7 @@ public sealed class EditorSelfTest
         global.Undo();
         if (ids.Any(id => Snap(id) != afterCancel[id]))
         {
-            fail("undo of the apply did not give the entries back as they were");
+            fail($"undo of the apply did not give the entries back as they were: {string.Join("; ", ids.Where(id => Snap(id) != afterCancel[id]).Select(id => $"{RemasterTextures.ShortName(id)} now {Snap(id)}, after the cancel {afterCancel[id]}, applied {afterApply[id]}"))}");
             yield break;
         }
         global.Redo();
@@ -1887,27 +1887,33 @@ public sealed class EditorSelfTest
             yield break;
         }
         notes.Add("an R2-era entry (version 1, no profile) loaded migrated (version 3, emission on), edited, saved");
-        // 11. a pack's profile over the starter one: a pack mounted with its own rock
+        // 11. a pack's profile over the starter one. Godot keeps packs out of the editor (its packed
+        // data is off there: a .pck does not mount), so the folder a pack's profiles come from is
+        // registered as the layer after the project's, as ModLoader's packs are; --selftest-mods
+        // mounts real packs
         var rock = (MaterialProfile)MaterialProfiles.Load("rock")!.Duplicate();
         rock.Title = "Rock (pack)";
         rock.RoughnessBase = 0.42f;
-        var src = GameSettings.Globalize($"{MapStore.Dir}/pack-rock.tres");
-        System.IO.File.WriteAllText(src, MaterialProfiles.ToText(rock));
-        var pck = GameSettings.Globalize($"{MapStore.Dir}/r2b3pack.pck");
-        GdFfx.Remake.ModSelfTest.Build(pck, new() { ["res://mods/r2b3pack/remaster/profiles/rock.tres"] = src });
-        if (!GdFfx.Remake.ModLoader.Mount(pck))
-        {
-            fail("the pack did not mount");
-            yield break;
-        }
+        var packDir = $"{MapStore.Dir}/r2b3pack/remaster/profiles";
+        DirAccess.MakeDirRecursiveAbsolute(packDir);
+        System.IO.File.WriteAllText(GameSettings.Globalize($"{packDir}/rock.tres"), MaterialProfiles.ToText(rock));
+        MaterialProfiles.Register(packDir, "r2b3pack");
         tab.ProfilesChanged();
+        var lpk = tab.LoadProfile("rock");
         if (MaterialProfiles.Find("rock") is not { Layer: "r2b3pack" } pr || MaterialProfiles.Load("rock") is not { RoughnessBase: 0.42f, Title: "Rock (pack)" }
-            || MaterialProfiles.Find("wood")?.Layer != "base" || tab.LoadProfile("rock") != null || !Mathf.IsEqualApprox(tab.QueueSettings.RoughnessBase, 0.42f))
+            || MaterialProfiles.Find("wood")?.Layer != "base" || lpk != null || !Mathf.IsEqualApprox(tab.QueueSettings.RoughnessBase, 0.42f))
         {
             fail($"the pack's profile: rock from {MaterialProfiles.Find("rock")?.Layer}, base {MaterialProfiles.Load("rock")?.RoughnessBase}");
             yield break;
         }
-        notes.Add($"a pack's rock ({pr.Path}) over the starter one, loaded");
+        MaterialProfiles.Unregister("r2b3pack");
+        tab.ProfilesChanged();
+        if (MaterialProfiles.Find("rock")?.Layer != "base")
+        {
+            fail("the pack's layer taken away: rock is not the starter one again");
+            yield break;
+        }
+        notes.Add($"a pack's rock (its layer, {pr.Path.GetFile()}) over the starter one, loaded; taken away, the starter one again");
         if (shots)
         {
             // each starter profile on the first texture, the material in the studio (pictures to look at)
