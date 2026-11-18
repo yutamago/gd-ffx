@@ -787,7 +787,7 @@ docs/remake.md, "Rebuilt 2D rooms"; docs/architecture.md, "The 2D layers" and
 | the same without the hold (the game moving on between pictures) | `ptkl14` 1.75 against 1.50 rebuilt-to-rebuilt; `slik04` 19.2 against 14.1 (the ship's sway) |
 | the game's camera against the scene camera the planes were made from | 0.000 units, 0.000°, field of view 0.000° (`ptkl14`) |
 | R3's sky rule, ground kept classic as sky (level and within 30 units of the walk mesh) | `lchb00` before 11,028 units² of 74,501 (14.8 %; `lchb00_brickground_07`, 4 sky meshes), after 0 (3 sky meshes); `lchb02` (save 22) 0 and `lchb08` (save 29) 0 before and after (4 and 12 sky meshes, unchanged); `bsil00` 0, its 5 sky meshes kept |
-| Besaid's field programs' display flags | all 15 entries 0x0 (the save sphere's entry 15 too: at the origin, its draws at the sphere), none with `0x100` or a sticking bit |
+| Besaid's field programs' display flags | when the beach starts all 15 entries 0x0 (the save sphere's entry 15 too: at the origin, its draws at the sphere); once the player uses the save sphere (the save, UX and classifier checks), entry 15 and the sphere's entry 16 (a `bat_eff` texture) have 0x1 (stuck to a character); none with `0x100` over the quick sweep's 10 saves and the checks |
 
 ### Decisions (R7b)
 
@@ -829,11 +829,13 @@ docs/remake.md, "Rebuilt 2D rooms"; docs/architecture.md, "The 2D layers" and
   the meshes' normals do not tell sky from ground (Luca's dome has all of them
   up), so a sky group must have vertices in 6 of the 8 sectors round the vertical
   axis (Besaid's cloud quarters, one texture, all 8).
-- **0x100 counted, the workaround kept.** No field-program entry on Besaid has
-  `0x100` or a sticking bit (all 0x0), the save sphere's entry 15 included: its
-  program places its draws itself (its table place the origin), so
-  `EffectRemakeView`'s rule (the table place only when it is not the origin and
-  near the draws) stays.
+- **0x100 counted, the workaround kept.** No field-program entry seen has
+  `0x100`; Besaid's save sphere glow (entry 15) starts with flags 0x0 at the
+  table's origin while its draws are at the sphere, and gets the sticking bit 1
+  only once the sphere is used: before that its program places its draws itself,
+  so `EffectRemakeView`'s rule (the table place only when it is not the origin
+  and near the draws) stays; stuck or matrix-placed entries take their draws'
+  centre.
 - **The spell test as documented.** The object, or its birth record's program list
   (object `+8`, then `+0`); before, the birth record itself was tested. ffx-rust's
   census found the two documented tests never disagree (4,680 entries); no spell
@@ -856,7 +858,7 @@ Open after R7b:
 - UI art for the autosave chocobo and the opening's chocobo and notice, per-screen
   fonts, the Flash movies' own bitmap text;
 - a spell cast in a check, to see the documented test on gd-ffx's side;
-- a field-program entry with `0x100` (none on Besaid; `rcbgFPmRestart`'s maps).
+- a field-program entry with `0x100` (none seen; `rcbgFPmRestart`'s maps).
 
 ## Beyond the milestones
 
