@@ -7,8 +7,8 @@ R2b replaces that with a view built for the job: one texture, one map at a
 time, a big lit preview that changes while a slider moves, and profiles that
 carry the settings over to the next texture.
 
-Status: phases 1 and 2 implemented (2026-11-18, "Phase 1: what there is",
-"Phase 2: what there is"); phases 3 to 6 planned. Decisions taken with the user are marked as such; the ones
+Status: phases 1 to 3 implemented (2026-11-18, "Phase 1: what there is",
+"Phase 2: what there is", "Phase 3: what there is"); phases 4 to 6 planned. Decisions taken with the user are marked as such; the ones
 taken while implementing are in "Decisions".
 
 ## What it reuses and what it learns from
@@ -535,7 +535,163 @@ Not in phase 2: the seam tool, profiles and the queue's apply (phase 3), the
 other maps (phase 4), height from a normal map and the bent normal (they come
 with phase 4's maps).
 
+## Phase 3: what there is
+
+**Profiles** (`godot/src/Remaster/MaterialProfile.cs`, `MaterialProfiles.cs`).
+A `MaterialProfile` is a `PbrRecipe` with a `Title` and a `Note`: every
+step's settings and the material's (`MaterialProfiles.Props`: all of
+`PbrRecipe`'s settings but the imported files, the preview's working size and
+the version). Saved as `res://remaster/profiles/<name>.tres`, the name made
+from the title (`Stone and concrete` → `stone-and-concrete.tres`), as text
+written by `MaterialProfiles.ToText`: the title, the note, then only the
+settings that differ from the defaults, in `PbrRecipe`'s order, floats as
+their shortest decimals; the same settings give the same bytes, and a diff
+shows what a change did. Layers as the textures': the project's folder, the
+editor's own folder when it is elsewhere (`--remaster-profiles=DIR`, the
+editor check's), each mounted pack's `res://mods/<pack>/remaster/profiles/`
+in load order, folders registered at run time; the later layer wins per
+name. A profile's **hash** (`MaterialProfiles.Hash`: the settings' values,
+not the title, the note or the file's form) is what a texture remembers.
+
+**In the tab** (under the queue): the profile picker (every layer's, the
+pack named; loading one sets the queue's settings, one undo step), the state
+("● 3 settings differ from Rock"), **Save** (the queue's settings over the
+profile), **Save as...**, **Revert** (the queue back to the profile),
+**Rename...** (the file, the title, and every texture of the project made
+with it, all one undo step), **Delete** (the textures made with it keep
+their settings and show "no such profile"). Each is one undo step of the
+global history that swaps the file's text (`RemasterPlugin.SaveProfile`,
+`RenameProfile`, `DeleteProfile`; `ProfileStore`), so undo and redo give the
+same bytes back.
+
+**The queue's settings and the exceptions.** The tab keeps the queue's
+settings (`MaterialsTab.QueueSettings`: what a change edits, kept when the
+texture changes) and each texture's exceptions (settings pinned to it). The
+current texture is shown and made with the queue's settings and its
+exceptions over them (`Recipe`). Beside every setting (and every band
+equaliser, every colour sample) a pin: ○ the queue's (a click pins the value
+now to the texture, and the queue's value goes back to what it was before
+its last change, so "I changed it for this one" becomes an exception), ● the
+texture's (marked on the label too; a click unpins it). A pinned setting's
+changes go to the texture's exception, the others to the queue; **Clear**
+unpins all. Each pin, unpin and change is one undo step. The queue shows
+`● n` beside a texture with exceptions.
+
+**A texture's entry** (`RemasterTexture`) keeps, besides the `Recipe` (every
+setting as baked, as before): `Profile` (the profile's name: the winning
+layer's is meant, so a pack's profile of the same name takes its place),
+`ProfileHash` (its hash at bake time) and `Exceptions` (setting → value: the
+settings that differed from the profile when it was made, the steps'
+imported files among them). Colour samples are settings like the others
+(colours, not positions), so they carry over with the queue's settings, or
+stay with one texture as exceptions. Without a profile, the entry has none
+of the three and its recipe is its own.
+
+**Apply to queue** (`QueueBake`): every texture of the queue made with the
+queue's settings and its own exceptions, at the full size, one after
+another: on the GPU (a `GpuBake` each: one frame, the read back) when the
+tab has a renderer, else on the CPU (`MaterialBaker.Cpu`, the same graph, on
+a worker); the texture's pixels and imported files read on the main thread
+first. A progress bar, **Cancel** (the texture being made is dropped, the
+rest not made; what was made is kept, as one undo step), each result's
+albedo as the texture's icon in the queue and in the strip ("2/3: name") as
+it comes. Each result's files are written as it comes (content-named, so
+undo and redo never overwrite one; the steps' imported files copied beside
+the maps), and the entries are set as **one undo step** at the end.
+
+**Profile changed.** A texture whose profile's hash is not the one it
+remembers is marked in the queue (`⟳ Rock changed`) and the Textures dock
+(the Edits column, and "Rock changed: 37 textures" under the list), and
+**Make again** (in either) makes every such texture with the profile as it
+is now and its own exceptions (in the background, one undo step). The
+exceptions are worked out again against the new profile, so one that the
+profile has taken over stops being an exception. `MakeWith(ids, profile)`
+makes textures with a profile without the queue (the editor check; R4's
+wizard will choose a profile per texture).
+
+**Migration.** An entry's `Recipe` of R2 (`Version` 1: the dock's Generate
+and the batch) and of phases 1 and 2 (2, 3) is a texture's own setting set:
+**Its settings** loads it as the queue's (migrated: `MaterialPipeline.Migrate`,
+R2's emission threshold turned into the emission step), with no profile;
+saved again it is a version 3 recipe, linked to a profile if one is chosen.
+Nothing is rewritten unasked: old entries load and draw as they were.
+
+**The Textures dock** is a browser now: the list (open map, where used,
+project; search), the before/after compare, the uses, **Replace...**,
+**Upscale**, **Revert**, **Edit material**, **Materialize** (the selected
+textures into the tab's queue), the profile marks and Make again. Its
+recipe, **Generate material** and the batch panel went (`BatchPanel.cs`
+removed; `PbrBuilder.Make`, R2's chain, removed with them: the game's checks
+make their materials by a starter profile on the CPU graph,
+`MaterialBaker.CpuImages`).
+
+**The starter profiles** (`godot/remaster/profiles/`, committed: settings,
+original work; no texture or picture in git): rock, stone and concrete, sand
+and dirt, grass and foliage, wood, metal, fabric, plaster and painted walls.
+Each was tuned on the game's textures of its kind (each profile's `Note`
+names them; found through the where-used index, in Luca, Besaid, Baaj,
+Mi'ihen and Zanarkand: FFX's own texture names say what they are only in
+the HD remaster's re-made maps, `lchb00_rockwall_06` and the like) with
+`--selftest-materialize --materialize-profiles=DIR`
+(`Materialize/ProfileSheet.cs`): every profile baked on the CPU on its four
+textures, the colour check (the albedo's mean OKLab lightness within 0.03 of
+the classic texture's, the chroma within 20 %), the roughness's mean in its
+kind's range, the metallic's mean (metal 0.5 to 1, the others under 0.05),
+and a contact sheet per texture in DIR (classic, albedo, height, normal,
+roughness, occlusion, metallic, the classic and the material lit by one
+light), looked at. PROFILE_NUMBERS
+
+Not in phase 3: the other maps (phase 4), regions with their own profile
+(phase 6), choosing a profile per texture automatically (R4).
+
 ## Decisions
+
+Taken while implementing phase 3 (2026-11-18):
+
+- **A profile is a `PbrRecipe` subclass** (`MaterialProfile`: a title and a
+  note more), not a resource holding one: one flat text file, the same
+  settings code (copy, hash, migration) for both.
+- **Profiles are written by our own text writer** (`MaterialProfiles.ToText`),
+  not `ResourceSaver`: only the settings that differ from the defaults, in
+  `PbrRecipe`'s order, floats as their shortest decimals (`1.65`, not
+  `1.64999997615814`), no `uid`; Godot loads it as any `.tres`. Short files,
+  readable diffs, the same bytes for the same settings.
+- **A profile holds no imported files and no working size**: an import is a
+  texture's own (Save as profile turns a step on Import into Generate; the
+  file stays a texture's exception), the working size is the view's.
+- **Textures name their profile by name**, not by path: the winning layer's
+  is meant, so a pack's profile of the same name takes the project's place
+  (as a pack's texture entry does), and a texture made with the project's
+  shows as changed under a pack whose profile differs.
+- **The entry keeps the whole recipe as baked** besides the profile, its hash
+  and the exceptions: an entry loads and can be made again without its
+  profile (a pack without it, a deleted profile), and an R2-era entry is
+  simply one without a profile.
+- **Exceptions are the settings that differ from the profile at bake time**:
+  the pinned ones and also the queue's changes not saved into the profile
+  (so Make again gives the same material until the profile changes). Made
+  again, they are worked out anew against the profile, so one the profile
+  has taken over is dropped.
+- **Pinning gives the queue its value before the last change back** (else
+  the profile's): "I changed this for this texture" in one click; pinning a
+  setting never changed keeps the queue's value as it is.
+- **Cancel keeps what was made** (one undo step for it): with a long queue,
+  most of the work is not thrown away; Apply again makes the rest (and the
+  same settings give the same files: nothing written twice).
+- **Profile operations are global-history undo steps that swap the file's
+  text**, and Rename moves the textures that name the profile in the same
+  step.
+- **The textures' alpha mode is not a profile's** (it comes from the texture
+  and its classic material); the grass and foliage profile is tuned for
+  cut-out textures (no parallax, soft normals).
+- **The starter profiles leave the upscale at 1**: the upscale is a
+  remaster's choice of size, not a material's kind.
+- **The game's checks make their materials by a starter profile** on the CPU
+  graph (`MaterialBaker`), and R2's chain (`PbrBuilder.Make`) went with the
+  dock's Generate and the batch: one way to make a material.
+- **The editor check mounts a real pack** (`ModLoader.Mount` of a `.pck` it
+  builds) to see a pack's profile win; mounting also invalidates the
+  profiles' listing (`ModLoader.Mount`).
 
 Taken while implementing phase 2 (2026-11-18):
 
@@ -582,7 +738,7 @@ Taken while implementing phase 2 (2026-11-18):
 - **The preview's lights on both views' layers** (the compare side was lit
   by the ambient light only).
 - **R2's dock and batch** (`PbrBuilder.Make`) keep R2's generators until
-  phase 3 removes them.
+  phase 3 removes them (done: phase 3).
 
 Taken while implementing phase 1 (2026-11-18):
 
@@ -633,9 +789,10 @@ Taken while implementing phase 1 (2026-11-18):
 - **The editor check** (`tools/remaster-editor-check.sh`) drives the tab on
   Besaid: queue three textures, step through, change a setting and see the
   preview's pixels change, import and skip a map, save, undo and redo, save
-  a profile, switch texture with it, apply to the queue, a profile changed
-  and made again; pictures under Xvfb (`FFX_EDITOR_SHOT=1`). Phase 1 has the
-  parts without profiles and the queue's apply (docs/remaster-editor.md,
+  a profile, switch texture with it, pin an exception and clear it, apply to
+  the queue (a cancelled run, then whole), undo and redo, a profile changed
+  and made again, an R2-era entry migrated, a pack's profile over a starter
+  one; pictures under Xvfb (`FFX_EDITOR_SHOT=1`) (docs/remaster-editor.md,
   "Checks").
 - **A game-side check** on the GPU (`--selftest-materialize`, the Windows
   export through `tools/compare-shot-win.sh`; `--no-game`: a synthetic
@@ -655,7 +812,14 @@ Taken while implementing phase 1 (2026-11-18):
   bake at 2048 px too), `--shot=FILE.png` (the GPU's maps side by side, and
   the maps that miss the parity beside it).
 - **The materials and lighting checks** (`--selftest-materials`,
-  `--selftest-lighting`) with a material made by a profile.
+  `--selftest-lighting`) with materials made by starter profiles (rock,
+  stone and concrete) on the CPU graph.
+- **The starter profiles' measure** (`--selftest-materialize
+  --materialize-profiles[=DIR] [--materialize-profile-size=N]`): every starter
+  profile on its kind's textures, the colour check and the roughness and
+  metallic ranges; DIR: contact sheets (keep them out of git);
+  `--materialize-atlas=DIR --materialize-ids=FILE`: thumbnails of the listed
+  textures, to choose by eye.
 - The quick sweep (`tools/sweep-devsaves.sh`) for anything that touches the
   game's drawing.
 

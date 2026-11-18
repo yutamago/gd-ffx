@@ -83,6 +83,7 @@ public static class ModSelfTest
                 [TexturesPath("alpha")] = Src("alpha-textures.tres", Textures(
                     (T1, "Replacement = \"r.png\"\nMaterial = \"m.tres\""), (T2, "Replacement = \"a2.png\""), (T4, "Mode = 1"))),
                 ["res://mods/alpha/remaster/textures/r.png"] = Png(Src, "r.png"),
+                ["res://mods/alpha/remaster/profiles/rock.tres"] = Src("alpha-rock.tres", Profile("Rock (alpha)", 0.41f)),
                 [OverridesPath("alpha")] = Src("alpha.tres", Overrides(
                     ("#a/*", "Remove = 2"), ("#b/0", "Visibility = 1"), ("#c/*", "Remove = 1"))
                     + "Status = 2\nRenderPath = 1\nNotes = \"alpha\"\n"),
@@ -93,6 +94,8 @@ public static class ModSelfTest
                     "{ \"chr\": { \"c999\": \"res://mods/beta/stand_in.tscn\", \"c997\": \"res://mods/beta/stand_in.tscn\" } }"),
                 ["res://mods/beta/stand_in.tscn"] = sceneSrc,
                 ["res://mods/selftest_shared.txt"] = Src("beta.txt", "beta"),
+                ["res://mods/beta/remaster/profiles/rock.tres"] = Src("beta-rock.tres", Profile("Rock (beta)", 0.52f)),
+                ["res://mods/beta/remaster/profiles/zz-beta-only.tres"] = Src("beta-only.tres", Profile("Beta only", 0.6f)),
                 [TexturesPath("beta")] = Src("beta-textures.tres", Textures(
                     (T1, "Replacement = \"b.png\""), (T2, "Replacement = \"b2.png\"\nMaterial = \"res://mods/beta/m2.tres\""),
                     (T3, "Material = \"m.tres\""), (T4, "Replacement = \"b4.png\""))),
@@ -177,6 +180,15 @@ public static class ModSelfTest
                 $"per field: the later pack's replacement, the earlier one's material ({Remaster.RemasterTextures.For(T2)})");
             Check(Remaster.RemasterTextures.For(T3) is { Replaced: false, Material: B + "m.tres", Layer: "beta" }, "a texture in one pack");
             Check(Remaster.RemasterTextures.For(T4) == null, "a later pack's Classic undoes an earlier replacement");
+            // material profiles: the later pack's per name, over the project's starter ones
+            Remaster.MaterialProfiles.Invalidate();
+            Check(Remaster.MaterialProfiles.Find("rock") is { Layer: "alpha", Title: "Rock (alpha)" }
+                && Remaster.MaterialProfiles.Load("rock") is { RoughnessBase: 0.41f },
+                $"a profile in two packs and the project: the later pack's ({Remaster.MaterialProfiles.Find("rock")})");
+            Check(Remaster.MaterialProfiles.Find("zz-beta-only") is { Layer: "beta" } && Remaster.MaterialProfiles.Find("wood") is { Layer: "base" },
+                "a profile in one pack; a starter profile no pack has stays the project's");
+            Check(Remaster.MaterialProfiles.Hash(Remaster.MaterialProfiles.Load("rock")!) != Remaster.MaterialProfiles.Hash(Remaster.MaterialProfiles.LoadPath(Remaster.MaterialProfiles.BaseDir + "/rock.tres")!),
+                "a pack's profile of the same name has its own settings (its own hash: textures made with the project's show as changed)");
             Check(Remaster.RemasterTextures.Texture(A + "r.png") is { } packed && packed.GetWidth() == 4,
                 "a replacement PNG loads from inside its pack");
             Check(Remaster.RemasterOverrides.Levels().Contains("zzzz00") && Remaster.RemasterOverrides.Exists("zzzz00")
@@ -245,6 +257,10 @@ public static class ModSelfTest
         t.Append($"Textures = Array[ExtResource(\"2\")]([{string.Join(", ", Enumerable.Range(0, entries.Length).Select(i => $"SubResource(\"t{i}\")"))}])\n");
         return t.ToString();
     }
+
+    /// <summary>A material profile's text: a title and the roughness's base (the rest the defaults).</summary>
+    private static string Profile(string title, float roughness) =>
+        Remaster.MaterialProfiles.ToText(new Remaster.MaterialProfile { Title = title, RoughnessBase = roughness });
 
     /// <summary>A 4 x 4 test PNG (synthetic) written by <paramref name="src"/>'s folder; its path.</summary>
     private static string Png(System.Func<string, string, string> src, string name)

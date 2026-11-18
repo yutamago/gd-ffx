@@ -1,0 +1,43 @@
+[gd_resource type="Resource" script_class="MaterialProfile" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://src/Remaster/MaterialProfile.cs" id="1"]
+
+[resource]
+script = ExtResource("1")
+Title = "Rock"
+Note = "Rough natural rock: cliffs, boulders, cave walls. Coarse relief, shape from the painted light, deep occlusion. Tuned on lchb00_rockwall_06 and _01, bjyt04_rockwall_01, znkd06_stone_01 and Macalania's crystal rock (mcfr00)."
+Version = 3
+Delight = 0.7
+DelightRadius = 12.0
+HeightContrast = 1.3
+HeightScale = 0.03
+NormalStrength = 11.0
+RoughnessBase = 0.9
+RoughnessRange = 1.3
+OcclusionRadius = 10.0
+OcclusionStrength = 1.2
+AlbedoEdgeKeep = 0.4
+AlbedoOcclusion = 0.35
+AlbedoCavity = 0.3
+AlbedoHighlights = 0.6
+HeightBlur = 0.8
+HeightBand0 = 0.1
+HeightBand1 = 0.15
+HeightBand2 = 0.25
+HeightBand3 = 0.5
+HeightBand4 = 0.8
+HeightBand5 = 1.0
+HeightBand6 = 1.0
+NormalBand0 = 0.6
+NormalBand1 = 0.7
+NormalBand2 = 0.8
+NormalBand3 = 0.6
+NormalBand4 = 0.4
+NormalBand5 = 0.25
+NormalBand6 = 0.15
+NormalShape = 0.35
+NormalAngularity = 0.2
+NormalContrast = 1.2
+RoughnessBias = 0.16
+RoughnessOverlay = 0.3
+OcclusionDepth = 20.0

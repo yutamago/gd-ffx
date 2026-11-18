@@ -77,14 +77,32 @@ public static class TextureStore
         {
             var copy = (RemasterTexture)entry.Duplicate(true);
             copy.Id = id;
+            copy.Exceptions = Sorted(entry.Exceptions);
             set.Textures.Add(copy);
         }
         return Write();
     }
 
     /// <summary>A copy of <paramref name="id"/>'s entry, or a new empty one (for an edit to start from).</summary>
-    public static RemasterTexture Copy(string id) =>
-        Find(id) is { } t ? (RemasterTexture)t.Duplicate(true) : new RemasterTexture { Id = id.ToLowerInvariant() };
+    public static RemasterTexture Copy(string id)
+    {
+        if (Find(id) is not { } t)
+            return new RemasterTexture { Id = id.ToLowerInvariant() };
+        var c = (RemasterTexture)t.Duplicate(true);
+        c.Exceptions = Sorted(t.Exceptions);
+        return c;
+    }
+
+    /// <summary>A copy of <paramref name="d"/> with its keys in order (the index's text stays the same for the same exceptions).</summary>
+    public static Godot.Collections.Dictionary Sorted(Godot.Collections.Dictionary? d)
+    {
+        var r = new Godot.Collections.Dictionary();
+        if (d == null)
+            return r;
+        foreach (var k in d.Keys.Select(k => k.AsString()).OrderBy(k => k, System.StringComparer.Ordinal))
+            r[k] = d[k];
+        return r;
+    }
 
     /// <summary>
     /// Writes the index: the entries sorted by ID, stable resource IDs (the entry's
@@ -175,8 +193,11 @@ public static class TextureStore
         {
             var usage = (PropertyUsageFlags)p["usage"].AsInt64();
             var name = p["name"].AsString();
-            if ((usage & PropertyUsageFlags.ScriptVariable) != 0 && name != "Recipe")
-                d[name] = r.Get(name);
+            if ((usage & PropertyUsageFlags.ScriptVariable) == 0 || name == "Recipe")
+                continue;
+            var v = r.Get(name);
+            // a dictionary by value (the exceptions): an undo step must not share the entry's
+            d[name] = v.VariantType == Variant.Type.Dictionary ? Sorted(v.AsGodotDictionary()) : v;
         }
         return d;
     }

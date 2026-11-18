@@ -213,10 +213,11 @@ public sealed class MaterialsTest : ITest
         _seen.Add($"where-used: {ranked.Count} colour textures, {RemasterTextures.ShortName(_first)} on {ranked[0].Parts} parts, "
             + $"{RemasterTextures.ShortName(_second)} on {ranked[1].Parts}");
         var albedo = AddReplacement(_first, "first", new Color(0.85f, 0.75f, 0.35f), new Color(0.25f, 0.45f, 0.75f));
-        // the material from the replacement, by the ported generators
-        var recipe = new PbrRecipe { Upscale = 2, HeightScale = 0.03f, Wrap = true };
+        // the material from the replacement, by a starter profile (R2b phase 3) on the CPU graph
+        if (ByProfile("stone-and-concrete", 2, 4096) is not { } recipe)
+            return "no starter profile stone-and-concrete";
         var t0 = Time.GetTicksMsec();
-        var maps = PbrBuilder.Make(PbrBuilder.From(albedo), recipe);
+        var maps = Materialize.MaterialBaker.CpuImages(_first, PbrBuilder.From(albedo), recipe);
         var (a, n, o, h, e) = PbrBuilder.InMemory(maps);
         var mat = PbrBuilder.Material(a, n, o, h, e, recipe);
         var matPath = $"{_dir}/material.tres";
@@ -224,12 +225,26 @@ public sealed class MaterialsTest : ITest
             return $"cannot write {matPath}";
         _set.Textures[0].Material = "material.tres";
         _set.Textures[0].Recipe = recipe;
-        _seen.Add($"material made in {Time.GetTicksMsec() - t0} ms ({maps.Albedo.GetWidth()}x{maps.Albedo.GetHeight()}, "
+        (_set.Textures[0].Profile, _set.Textures[0].ProfileHash) = ("stone-and-concrete", MaterialProfiles.Hash(MaterialProfiles.Load("stone-and-concrete")!));
+        _seen.Add($"material made by the profile stone-and-concrete in {Time.GetTicksMsec() - t0} ms ({maps.Albedo.GetWidth()}x{maps.Albedo.GetHeight()}, "
             + $"{PbrBuilder.Files(maps).Count()} maps)");
         RemasterTextures.Register(_set, "selftest-materials", _dir);
         RenderPaths.Set("classic");
         GD.Print($"ffx selftest: textures registered: {_first} replaced (and a material), render path classic");
         return null;
+    }
+
+    /// <summary>
+    /// A starter profile's settings (docs/remaster-materials.md, "Profiles") with the check's
+    /// upscale and size, as a texture made with it is (null: no such profile).
+    /// </summary>
+    public static PbrRecipe? ByProfile(string name, int upscale, int maxSide)
+    {
+        if (MaterialProfiles.Load(name) is not { } p)
+            return null;
+        var r = MaterialProfiles.Effective(p, null);
+        (r.Upscale, r.MaxSide) = (upscale, maxSide);
+        return r;
     }
 
     /// <summary>A synthetic replacement for <paramref name="id"/> (a checker with a frame), written into the temporary folder and added to the set.</summary>
@@ -274,17 +289,18 @@ public sealed class MaterialsTest : ITest
         {
             if (RemasterTextures.ClassicImage(id) is not { } img)
                 return $"{id}: no classic pixels";
-            var recipe = new PbrRecipe { Upscale = 2, MaxSide = 1024 };
-            var maps = PbrBuilder.Make(PbrBuilder.From(img), recipe);
+            if (ByProfile("rock", 1, 1024) is not { } recipe)
+                return "no starter profile rock";
+            var maps = Materialize.MaterialBaker.CpuImages(id, PbrBuilder.From(img), recipe);
             var (a, n, o, h, e) = PbrBuilder.InMemory(maps);
             var file = $"{RemasterTextures.ShortName(id)}.material.tres";
             if (ResourceSaver.Save(PbrBuilder.Material(a, n, o, h, e, recipe), $"{_dir}/{file}") != Error.Ok)
                 return $"cannot write {file}";
-            _set.Textures.Add(new RemasterTexture { Id = id, Material = file, Recipe = recipe, Source = "generated from the classic texture (MaterialsTest)" });
+            _set.Textures.Add(new RemasterTexture { Id = id, Material = file, Recipe = recipe, Profile = "rock", Source = "generated from the classic texture by the profile rock (MaterialsTest)" });
             _made.Add(id);
         }
         RemasterTextures.Register(_set, "selftest-materials", _dir);
-        _seen.Add($"materials made from the classic pixels of {_made.Count} texture(s) in {Time.GetTicksMsec() - t0} ms");
+        _seen.Add($"materials made by the profile rock from the classic pixels of {_made.Count} texture(s) in {Time.GetTicksMsec() - t0} ms");
         return _made.Count > 0 ? null : "no colour texture to make a material of";
     }
 

@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="MaterialProfile" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://src/Remaster/MaterialProfile.cs" id="1"]
+
+[resource]
+script = ExtResource("1")
+Title = "Stone and concrete"
+Note = "Cut stone, bricks, paving, concrete: flatter than rock, fine pores, mortar lines. Tuned on lchb00_concretewall_01, znkd08_concreteground_01, lchb00_brickground_04, bjyt04_brickwall_01 and Bevelle's concrete (bvyt00)."
+Version = 3
+HeightScale = 0.015
+NormalStrength = 13.5
+RoughnessBase = 0.92
+RoughnessRange = 1.0
+OcclusionRadius = 6.0
+AlbedoEdgeKeep = 0.3
+NormalShape = 0.15
+RoughnessBias = 0.06
+RoughnessOverlay = 0.4

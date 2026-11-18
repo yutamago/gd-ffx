@@ -244,7 +244,7 @@ public sealed class EditorSelfTest
                 Next(Phase.Batch);
                 return null;
             case Phase.Batch:
-                if (Batch(_plugin.Current!) is { } batchFail)
+                if (ProfileBake(_plugin.Current!) is { } batchFail)
                     return batchFail;
                 if (_batchDone)
                     Next(Phase.Imported);
@@ -790,8 +790,9 @@ public sealed class EditorSelfTest
 
     // ---- R2: textures and materials ------------------------------------------------------------
 
-    private string _replaced = "", _material = "";
+    private string _replaced = "", _material = "", _materialOther = "";
     private bool _batchStarted, _batchDone;
+    private ulong _batchVersion;
 
     /// <summary>The where-used index: Besaid beach's textures, each with its parts; the cache written.</summary>
     private string? CheckUses()
@@ -834,9 +835,9 @@ public sealed class EditorSelfTest
     }
 
     /// <summary>
-    /// A texture replaced by a generated test image, a material generated for another, each one
-    /// undo step (undone and redone); the map's render path set to remastered and the 3D view's
-    /// toggle; the index saved twice the same, without a path of this machine.
+    /// A texture replaced by a generated test image, one undo step (undone and redone); the map's
+    /// render path set to remastered and the 3D view's toggle; the index saved twice the same,
+    /// without a path of this machine. (The material of another: <see cref="ProfileBake"/>.)
     /// </summary>
     private string? Textures(MapEditRoot root)
     {
@@ -878,26 +879,9 @@ public sealed class EditorSelfTest
             return "the texture browser does not list the replaced texture";
         _plugin.Textures.Select(_replaced);
         _seen.Add($"replaced {RemasterTextures.ShortName(_replaced)} ({bound.Count} surface(s), {file.GetFile()}, imported), undone, redone");
-        // 2. a material generated from the classic pixels
-        v = global.GetVersion();
-        var t0 = Time.GetTicksMsec();
-        if (TextureActions.GenerateMaterial(_plugin, _material, new PbrRecipe { Upscale = 2, MaxSide = 1024 }) is { } genFail)
-            return genFail;
-        if (global.GetVersion() != v + 1)
-            return "the material is not one undo step";
-        // the maps are imported in the background (a scan): the material's own check waits for it (CheckImported)
-        if (TextureStore.Find(_material) is not { Material.Length: > 0 } me
-            || FileAccess.GetFileAsString(TextureStore.Absolute(me.Material)) is not { } matText
-            || !matText.Contains("orm_texture = ExtResource") || !matText.Contains("normal_texture = ExtResource") || !matText.Contains("heightmap_texture"))
-            return "the material file does not name its maps";
-        global.Undo();
-        if (TextureStore.Find(_material) != null)
-            return "undo did not take the material back";
-        global.Redo();
-        _seen.Add($"material of {RemasterTextures.ShortName(_material)} made ({Time.GetTicksMsec() - t0} ms, "
-            + $"{TextureStore.Find(_material)!.Material.GetFile()}), undone, redone");
         // 3. the render path: remastered (written), the view follows; the toggle both ways
         _plugin.SetMapState(Key, MapStatus.InProgress, RenderPath.Remastered, "editor check: moved, hidden, removed, replaced, added; textures");
+        _materialOther = ranked[2];
         if ((ResourceLoader.Load(MapStore.PathOf(Key), "", ResourceLoader.CacheMode.Ignore) as MapOverrides)?.RenderPath != RenderPath.Remastered)
             return "the render path is not written";
         if (MapLook.Find(root.Map!) is not { Remastered: true } look || !_plugin.EditorRemastered)
@@ -948,34 +932,43 @@ public sealed class EditorSelfTest
         return null;
     }
 
-    /// <summary>The batch over the open map: two materials generated for review, one unticked, the other accepted as one undo step.</summary>
-    private string? Batch(MapEditRoot root)
+    /// <summary>
+    /// R2's material step on R2b phase 3's flow (R2's Generate and batch went): two of the open
+    /// map's textures made by a starter profile through the Materials tab's run (the textures not
+    /// queued), in the background, one undo step; the entries name the profile and its hash, the
+    /// material its maps (the height too); undone, redone.
+    /// </summary>
+    private string? ProfileBake(MapEditRoot root)
     {
-        var batch = _plugin.Textures!.Batch;
+        var tab = _plugin.Materials!;
+        var global = Undo.GetHistoryUndoRedo((int)EditorUndoRedoManager.SpecialHistory.GlobalHistory);
         if (!_batchStarted)
         {
             _batchStarted = true;
-            return batch.Start(BatchPanel.ScopeMap, 2);
+            _batchVersion = global.GetVersion();
+            return tab.MakeWith([_material, _materialOther], "stone-and-concrete");
         }
-        if (batch.Running)
-            return _phaseT > 120 ? "the batch did not finish" : null;
-        if (batch.Made.Count != 2)
-            return $"the batch made {batch.Made.Count} material(s) for review, not 2";
-        var (keep, drop) = (batch.Made[0].Id, batch.Made[1].Id);
-        if (TextureStore.Find(keep) != null || TextureStore.Find(drop) != null)
-            return "the batch wrote before the review";
-        batch.Untick(drop);
-        var global = Undo.GetHistoryUndoRedo((int)EditorUndoRedoManager.SpecialHistory.GlobalHistory);
-        var v = global.GetVersion();
-        batch.Accept();
-        if (global.GetVersion() != v + 1 || TextureStore.Find(keep)?.Material is not { Length: > 0 } || TextureStore.Find(drop) != null)
-            return "the batch's accept: not one step, or the unticked one kept";
+        if (tab.BakeRun != null)
+            return _phaseT > 180 ? "the profile's run did not finish" : null;
+        var hash = MaterialProfiles.Hash(MaterialProfiles.Load("stone-and-concrete")!);
+        foreach (var id in new[] { _material, _materialOther })
+            if (TextureStore.Find(id) is not { Material.Length: > 0, Profile: "stone-and-concrete" } e || e.ProfileHash != hash || e.Recipe?.Version != 3)
+                return $"{RemasterTextures.ShortName(id)}: not made by the profile ({tab.BakeResult})";
+        if (global.GetVersion() != _batchVersion + 1)
+            return $"the profile's run: {global.GetVersion() - _batchVersion} undo step(s), not one";
+        var me = TextureStore.Find(_material)!;
+        var matText = FileAccess.GetFileAsString(TextureStore.Absolute(me.Material));
+        if (!matText.Contains("orm_texture = ExtResource") || !matText.Contains("normal_texture = ExtResource") || !matText.Contains("heightmap_texture"))
+            return "the material file does not name its maps";
         global.Undo();
-        if (TextureStore.Find(keep) != null)
-            return "undo did not take the batch back";
+        if (TextureStore.Find(_material) != null || TextureStore.Find(_materialOther) != null)
+            return "undo did not take the profile's materials back";
         global.Redo();
+        if (TextureStore.Find(_material)?.Material != me.Material)
+            return "redo did not set the material again";
         WriteTexturesExpect();
-        _seen.Add($"batch: 2 made for review, {RemasterTextures.ShortName(keep)} kept, {RemasterTextures.ShortName(drop)} unticked; undone, redone");
+        _seen.Add($"materials of {RemasterTextures.ShortName(_material)} and {RemasterTextures.ShortName(_materialOther)} made by the starter profile stone-and-concrete "
+            + $"({tab.BakeResult}; {me.Material.GetFile()}, profile hash {hash}), one undo step, undone, redone");
         _batchDone = true;
         return null;
     }
@@ -1565,6 +1558,10 @@ public sealed class EditorSelfTest
             yield return "redo did not save the material again";
             yield break;
         }
+        // R2b phase 3: profiles, exceptions, Apply to queue, a changed profile made again, an R2-era entry, a pack's profile
+        string? p3fail = null;
+        foreach (var w in Phase3(tab, global, ids, shots, shotDir, f => p3fail = f)) yield return w;
+        if (p3fail != null) { yield return p3fail; yield break; }
         // the open map's textures
         int more = tab.AddOpenMap();
         if (tab.Queue.Count != onMap.Count)
@@ -1583,6 +1580,353 @@ public sealed class EditorSelfTest
         // the 3D view again for the pictures after
         EditorInterface.Singleton.SetMainScreenEditor("3D");
         yield return null;
+    }
+
+    /// <summary>
+    /// R2b phase 3 in the tab (docs/remaster-materials.md, phase 3): the starter profiles listed
+    /// and loaded; a profile saved (one undo step, its file's text stable), loaded, kept when the
+    /// texture changes; a setting pinned to a texture (an exception) and cleared; Apply to queue
+    /// on the three (progress, a cancelled run keeping what it made, then the whole), undone and
+    /// redone; the profile changed and the textures marked (queue and dock), made again; an
+    /// R2-era entry (a version 1 recipe, no profile) migrated, loaded and saved again; a pack's
+    /// profile layered over the starter one.
+    /// </summary>
+    private IEnumerable<string?> Phase3(MaterialsTab tab, UndoRedo global, List<string> ids, bool shots, string shotDir, System.Action<string> fail)
+    {
+        string? f = null;
+        IEnumerable<string?> Idle(string what)
+        {
+            double t0 = _t;
+            while (!tab.Idle)
+            {
+                if (_t - t0 > 120) { f = $"{what}: the maps were not made in 120 s"; yield break; }
+                yield return null;
+            }
+        }
+        var progress = new List<double>();
+        IEnumerable<string?> Run(string what, System.Func<QueueBake, bool>? until = null)
+        {
+            double t0 = _t;
+            while (tab.BakeRun is { } run)
+            {
+                if (run.Progress > 0 && run.Progress < 1 && (progress.Count == 0 || progress[^1] != run.Progress))
+                    progress.Add(run.Progress);
+                if (until != null && until(run))
+                    yield break;
+                if (_t - t0 > 300) { f = $"{what}: the run did not finish in 300 s"; yield break; }
+                yield return null;
+            }
+        }
+        string Snap(string id) => TextureStore.Find(id) is { } e ? $"{e.Material}|{e.Profile}|{e.ProfileHash}|{e.Exceptions.Count}" : "none";
+        var notes = new List<string>();
+        // 1. the starter profiles: listed (the project's layer), each loads
+        string[] starters = ["rock", "stone-and-concrete", "sand-and-dirt", "grass-and-foliage", "wood", "metal", "fabric", "plaster-and-painted-walls"];
+        foreach (var name in starters)
+            if (MaterialProfiles.Find(name) is not { Layer: "base" } r || MaterialProfiles.Load(name) is not { Title.Length: > 0 })
+            {
+                fail($"the starter profile {name}: {(MaterialProfiles.Find(name) is { } x ? $"layer {x.Layer}" : "not listed")}");
+                yield break;
+            }
+        var v = global.GetVersion();
+        var lp = tab.LoadProfile("rock");
+        if (lp != null || global.GetVersion() != v + 1 || tab.ProfileName != "rock"
+            || MaterialProfiles.Hash(tab.QueueSettings) != MaterialProfiles.Hash(MaterialProfiles.Load("rock")!))
+        {
+            fail($"load rock: {lp}, {global.GetVersion() - v} undo step(s), profile '{tab.ProfileName}'");
+            yield break;
+        }
+        foreach (var w in Idle("rock")) yield return w;
+        if (f != null) { fail(f); yield break; }
+        notes.Add($"{starters.Length} starter profiles listed and loaded ({string.Join(", ", starters.Select(n => MaterialProfiles.Find(n)!.Title))})");
+        // 2. a profile saved: the queue's settings (rock, the height's contrast changed), one undo step, stable text
+        tab.SelectStep(MaterialStep.Height);
+        tab.Drag("HeightContrast", 1.3, 1.65);
+        v = global.GetVersion();
+        var sa = tab.SaveAsProfile("Check rock");
+        if (sa != null || global.GetVersion() != v + 1 || tab.ProfileName != "check-rock")
+        {
+            fail($"save as: {sa}, {global.GetVersion() - v} undo step(s), profile '{tab.ProfileName}'");
+            yield break;
+        }
+        var profPath = ProfileStore.PathOf("check-rock");
+        var text = FileAccess.GetFileAsString(profPath);
+        if (!profPath.StartsWith(ProfileStore.Dir) || ProfileStore.Dir == MaterialProfiles.BaseDir || !text.Contains("Title = \"Check rock\"") || !text.Contains("HeightContrast = 1.65")
+            || MaterialProfiles.Find("check-rock")?.Layer != "project")
+        {
+            fail($"the saved profile {profPath}: {text.Length} bytes, layer {MaterialProfiles.Find("check-rock")?.Layer}");
+            yield break;
+        }
+        global.Undo();
+        if (FileAccess.FileExists(profPath) || MaterialProfiles.Find("check-rock") != null)
+        {
+            fail("undo did not take the saved profile back");
+            yield break;
+        }
+        global.Redo();
+        if (FileAccess.GetFileAsString(profPath) != text)
+        {
+            fail("redo did not write the same profile again");
+            yield break;
+        }
+        // written twice from the same settings: the same bytes
+        if (MaterialProfiles.ToText(MaterialProfiles.Load("check-rock")!) != text)
+        {
+            fail("the profile's text is not stable (read and written again it differs)");
+            yield break;
+        }
+        notes.Add($"profile saved ({profPath.GetFile()}, {text.Split('\n').Length} lines, one undo step, undone, redone, the same bytes)");
+        // 3. loaded: rock, then the saved one
+        tab.LoadProfile("rock");
+        if (!Mathf.IsEqualApprox(tab.QueueSettings.HeightContrast, MaterialProfiles.Load("rock")!.HeightContrast))
+        {
+            fail("loading rock did not set its contrast");
+            yield break;
+        }
+        tab.LoadProfile("check-rock");
+        if (!Mathf.IsEqualApprox(tab.QueueSettings.HeightContrast, 1.65f) || tab.ProfileName != "check-rock")
+        {
+            fail($"loading check-rock: contrast {tab.QueueSettings.HeightContrast}");
+            yield break;
+        }
+        // 4. the next texture keeps it
+        tab.Open(ids[0]);
+        foreach (var w in Idle("the first texture")) yield return w;
+        if (f != null) { fail(f); yield break; }
+        if (!Mathf.IsEqualApprox(tab.Recipe.HeightContrast, 1.65f))
+        {
+            fail("the profile's settings did not stay with the texture switch");
+            yield break;
+        }
+        // 5. an exception: the roughness's base changed, pinned to this texture (the queue's back to the profile's), kept apart, cleared
+        tab.SelectStep(MaterialStep.Roughness);
+        float profBase = tab.QueueSettings.RoughnessBase;
+        tab.Drag("RoughnessBase", 0.4, 0.33);
+        v = global.GetVersion();
+        var pe = tab.Pin("RoughnessBase");
+        if (pe != null || global.GetVersion() != v + 1 || !tab.Pinned("RoughnessBase")
+            || !Mathf.IsEqualApprox(tab.Recipe.RoughnessBase, 0.33f) || !Mathf.IsEqualApprox(tab.QueueSettings.RoughnessBase, profBase))
+        {
+            fail($"pin: {pe}, {global.GetVersion() - v} undo step(s), pinned {tab.Pinned("RoughnessBase")}, texture {tab.Recipe.RoughnessBase}, queue {tab.QueueSettings.RoughnessBase}");
+            yield break;
+        }
+        tab.Next(1);
+        bool apart = Mathf.IsEqualApprox(tab.Recipe.RoughnessBase, profBase) && !tab.Pinned("RoughnessBase");
+        tab.Next(-1);
+        if (!apart || !Mathf.IsEqualApprox(tab.Recipe.RoughnessBase, 0.33f))
+        {
+            fail($"the exception: the next texture's base {(apart ? "the queue's" : "not the queue's")}, back {tab.Recipe.RoughnessBase}");
+            yield break;
+        }
+        // an exception's value edited in place, then cleared
+        tab.Drag("RoughnessBase", 0.3);
+        if (!Mathf.IsEqualApprox(tab.ExceptionsOf(ids[0])["RoughnessBase"].AsSingle(), 0.3f) || !Mathf.IsEqualApprox(tab.QueueSettings.RoughnessBase, profBase))
+        {
+            fail("a pinned setting's change went to the queue");
+            yield break;
+        }
+        v = global.GetVersion();
+        var ce = tab.ClearException("RoughnessBase");
+        if (ce != null || global.GetVersion() != v + 1 || tab.Pinned("RoughnessBase") || !Mathf.IsEqualApprox(tab.Recipe.RoughnessBase, profBase))
+        {
+            fail($"clear: {ce}, pinned {tab.Pinned("RoughnessBase")}, base {tab.Recipe.RoughnessBase}");
+            yield break;
+        }
+        // one kept for the apply: the normal's strength on the first texture
+        tab.SelectStep(MaterialStep.Normal);
+        tab.Drag("NormalStrength", 7);
+        tab.Pin("NormalStrength");
+        if (!tab.Pinned("NormalStrength") || Mathf.IsEqualApprox(tab.QueueSettings.NormalStrength, 7f))
+        {
+            fail("the normal's strength was not pinned apart");
+            yield break;
+        }
+        notes.Add("an exception pinned (one undo step; the queue's value back to the profile's, the next texture without it), edited, cleared; another kept");
+        if (tab.Queue.Count != 3)
+        {
+            fail($"the queue has {tab.Queue.Count} textures, not 3");
+            yield break;
+        }
+        // 6. Apply to queue: cancelled after the first, then the whole
+        var before = ids.ToDictionary(id => id, Snap);
+        v = global.GetVersion();
+        if (tab.ApplyToQueue() is { } ae)
+        {
+            fail(ae);
+            yield break;
+        }
+        foreach (var w in Run("the cancelled run", r => r.Made >= 1)) yield return w;
+        if (f != null) { fail(f); yield break; }
+        tab.CancelBake();
+        foreach (var w in Run("the cancel")) yield return w;
+        if (f != null) { fail(f); yield break; }
+        var madeFirst = ids.Where(id => Snap(id) != before[id] && TextureStore.Find(id)?.Profile == "check-rock").ToList();
+        if (!(tab.BakeResult ?? "").Contains("cancelled") || madeFirst.Count < 1 || madeFirst.Count > 2 || global.GetVersion() != v + 1)
+        {
+            fail($"cancel: {tab.BakeResult}; {madeFirst.Count} made; {global.GetVersion() - v} undo step(s)");
+            yield break;
+        }
+        var cancelNote = tab.BakeResult;
+        var afterCancel = ids.ToDictionary(id => id, Snap);
+        v = global.GetVersion();
+        var t0 = _t;
+        tab.ApplyToQueue();
+        foreach (var w in Run("the apply")) yield return w;
+        if (f != null) { fail(f); yield break; }
+        var hash = MaterialProfiles.Hash(MaterialProfiles.Load("check-rock")!);
+        foreach (var id in ids)
+            if (TextureStore.Find(id) is not { Material.Length: > 0, Profile: "check-rock" } e || e.ProfileHash != hash)
+            {
+                fail($"apply: {RemasterTextures.ShortName(id)} not made with check-rock ({Snap(id)}; {tab.BakeResult})");
+                yield break;
+            }
+        var ex0 = TextureStore.Find(ids[0])!.Exceptions;
+        if (global.GetVersion() != v + 1 || !ex0.ContainsKey("NormalStrength") || !Mathf.IsEqualApprox(ex0["NormalStrength"].AsSingle(), 7f)
+            || TextureStore.Find(ids[1])!.Exceptions.Count != 0 || TextureStore.Find(ids[0])!.Recipe is not { NormalStrength: 7f })
+        {
+            fail($"apply: {global.GetVersion() - v} undo step(s); the first's exceptions {string.Join(",", ex0.Keys)}; the second's {TextureStore.Find(ids[1])!.Exceptions.Count}");
+            yield break;
+        }
+        var applyNote = $"{tab.BakeResult} ({string.Join("/", tab.LastBakeTimes.Select(x => $"{x:0}"))} ms each), progress seen at {string.Join(", ", progress.Select(x => $"{x:0.00}"))}";
+        if (progress.Count < 2)
+        {
+            fail($"the progress was seen {progress.Count} time(s)");
+            yield break;
+        }
+        var afterApply = ids.ToDictionary(id => id, Snap);
+        if (shots)
+        {
+            for (int i = 0; i < 10; i++) yield return null;
+            Window($"{shotDir}/materials-applied.png");
+        }
+        // 7. undo and redo the apply: the entries as they were after the cancel, then as applied; no file overwritten
+        global.Undo();
+        if (ids.Any(id => Snap(id) != afterCancel[id]))
+        {
+            fail("undo of the apply did not give the entries back as they were");
+            yield break;
+        }
+        global.Redo();
+        if (ids.Any(id => Snap(id) != afterApply[id]) || ids.Any(id => !FileAccess.FileExists(TextureStore.Absolute(TextureStore.Find(id)!.Material))))
+        {
+            fail("redo of the apply did not set the entries again (or a file is gone)");
+            yield break;
+        }
+        notes.Add($"cancelled run: {cancelNote}; Apply to queue: {applyNote}; one undo step each, undone, redone");
+        // 8. the profile changed (saved over: one undo step), the textures marked in the queue and the dock
+        tab.SelectStep(MaterialStep.Height);
+        tab.Drag("HeightContrast", 1.9);
+        v = global.GetVersion();
+        var se = tab.SaveProfile();
+        if (se != null || global.GetVersion() != v + 1)
+        {
+            fail($"save the profile: {se}");
+            yield break;
+        }
+        var stale = ProfileStore.Stale();
+        _plugin.TexturesChanged();
+        var dockLine = _plugin.Textures!.StaleText;
+        if (!stale.TryGetValue("check-rock", out var staleIds) || staleIds.Count < 3 || !ids.All(staleIds.Contains)
+            || !dockLine.Contains("Check rock changed: ") || !TextureDock.MarksOf(ids[0]).Contains("changed"))
+        {
+            fail($"the changed profile: {ProfileStore.StaleText(stale)}; the dock says '{dockLine}', marks '{TextureDock.MarksOf(ids[0])}'");
+            yield break;
+        }
+        if (shots)
+        {
+            for (int i = 0; i < 10; i++) yield return null;
+            Window($"{shotDir}/materials-changed.png");
+        }
+        // 9. made again: the profile as it is now, the exceptions kept, one undo step
+        v = global.GetVersion();
+        if (tab.MakeAgainStale() is { } ma)
+        {
+            fail(ma);
+            yield break;
+        }
+        foreach (var w in Run("make again")) yield return w;
+        if (f != null) { fail(f); yield break; }
+        var newHash = MaterialProfiles.Hash(MaterialProfiles.Load("check-rock")!);
+        if (ProfileStore.Stale().Count != 0 || global.GetVersion() != v + 1 || ids.Any(id => TextureStore.Find(id)?.ProfileHash != newHash)
+            || TextureStore.Find(ids[0])!.Recipe is not { NormalStrength: 7f } r0 || !Mathf.IsEqualApprox(r0.HeightContrast, 1.9f))
+        {
+            fail($"make again: {tab.BakeResult}; still changed: {ProfileStore.StaleText(ProfileStore.Stale())}; {global.GetVersion() - v} undo step(s)");
+            yield break;
+        }
+        notes.Add($"profile changed: '{dockLine}' (queue and dock marked); {tab.BakeResult}, the exception kept");
+        // 10. an R2-era entry: R2's recipe (version 1), no profile; loaded into the tab (migrated), edited and saved again
+        var oldId = ids[2];
+        var old = TextureStore.Copy(oldId);
+        (old.Profile, old.ProfileHash) = ("", "");
+        old.Exceptions = new Godot.Collections.Dictionary();
+        old.Recipe = new PbrRecipe { Version = 1, Upscale = 1, Delight = 0.7f, NormalStrength = 5.5f, HeightContrast = 1.7f, EmissionThreshold = 0.9f, RoughnessBase = 0.8f };
+        _plugin.SetTexture(oldId, old, "editor check: an R2-era entry");
+        TextureStore.Write();
+        tab.Open(oldId);
+        foreach (var w in Idle("the R2-era texture")) yield return w;
+        if (f != null) { fail(f); yield break; }
+        if (tab.ExceptionsOf(oldId).Count != 0 || tab.LoadSaved() is { } ls || tab.QueueSettings.Version != 3 || tab.QueueSettings.EmissionMode != StepMode.Generate
+            || !Mathf.IsEqualApprox(tab.QueueSettings.Delight, 0.7f) || !Mathf.IsEqualApprox(tab.Recipe.NormalStrength, 5.5f) || tab.ProfileName != "")
+        {
+            fail($"the R2-era entry in the tab: version {tab.QueueSettings.Version}, emission {tab.QueueSettings.EmissionMode}, de-lighting {tab.QueueSettings.Delight}, profile '{tab.ProfileName}'");
+            yield break;
+        }
+        tab.SelectStep(MaterialStep.Height);
+        tab.Drag("HeightContrast", 1.95);
+        foreach (var w in Idle("the R2-era edit")) yield return w;
+        if (f != null) { fail(f); yield break; }
+        tab.Save();
+        double ts = _t;
+        while (tab.Saving)
+        {
+            if (_t - ts > 120) { fail("the R2-era save did not finish"); yield break; }
+            yield return null;
+        }
+        if (TextureStore.Find(oldId) is not { Recipe: { Version: 3 } saved3, Profile: "" } || !Mathf.IsEqualApprox(saved3.HeightContrast, 1.95f) || saved3.EmissionMode != StepMode.Generate)
+        {
+            fail($"the R2-era entry saved again: {tab.SaveResult}");
+            yield break;
+        }
+        notes.Add("an R2-era entry (version 1, no profile) loaded migrated (version 3, emission on), edited, saved");
+        // 11. a pack's profile over the starter one: a pack mounted with its own rock
+        var rock = (MaterialProfile)MaterialProfiles.Load("rock")!.Duplicate();
+        rock.Title = "Rock (pack)";
+        rock.RoughnessBase = 0.42f;
+        var src = GameSettings.Globalize($"{MapStore.Dir}/pack-rock.tres");
+        System.IO.File.WriteAllText(src, MaterialProfiles.ToText(rock));
+        var pck = GameSettings.Globalize($"{MapStore.Dir}/r2b3pack.pck");
+        GdFfx.Remake.ModSelfTest.Build(pck, new() { ["res://mods/r2b3pack/remaster/profiles/rock.tres"] = src });
+        if (!GdFfx.Remake.ModLoader.Mount(pck))
+        {
+            fail("the pack did not mount");
+            yield break;
+        }
+        tab.ProfilesChanged();
+        if (MaterialProfiles.Find("rock") is not { Layer: "r2b3pack" } pr || MaterialProfiles.Load("rock") is not { RoughnessBase: 0.42f, Title: "Rock (pack)" }
+            || MaterialProfiles.Find("wood")?.Layer != "base" || tab.LoadProfile("rock") != null || !Mathf.IsEqualApprox(tab.QueueSettings.RoughnessBase, 0.42f))
+        {
+            fail($"the pack's profile: rock from {MaterialProfiles.Find("rock")?.Layer}, base {MaterialProfiles.Load("rock")?.RoughnessBase}");
+            yield break;
+        }
+        notes.Add($"a pack's rock ({pr.Path}) over the starter one, loaded");
+        if (shots)
+        {
+            // each starter profile on the first texture, the material in the studio (pictures to look at)
+            tab.Open(ids[0]);
+            tab.ClearExceptions();
+            tab.SetShapeForCheck(MaterialPreview.Sphere);
+            tab.SetCompareForCheck(0);
+            tab.SetLightForCheck(PreviewLight.Studio, 0);
+            foreach (var name in starters)
+            {
+                tab.LoadProfile(name);
+                foreach (var w in Idle(name)) yield return w;
+                for (int i = 0; i < 12; i++) yield return null;
+                tab.Preview.CaptureMaterial()?.SavePng($"{shotDir}/profile-{name}.png");
+            }
+            Window($"{shotDir}/materials-profile-last.png");
+        }
+        GD.Print($"ffx editortest: materials phase 3: {string.Join("; ", notes)}");
+        _seen.Add($"materials phase 3: {string.Join("; ", notes)}");
     }
 
     /// <summary>

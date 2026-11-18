@@ -11,9 +11,11 @@ namespace GdFfx.RemasterEditor;
 /// map's textures, a search over the where-used index, or the project's edited ones), the
 /// selected texture's before/after compare (a split slider over the classic texture and its
 /// replacement or its material's maps), its uses (a map and its parts: double click opens the
-/// map and selects the part), and the actions: replace, upscale, generate the material, edit it
-/// in the inspector, revert; the batch with its review step. Every edit is one undo step
-/// (<see cref="RemasterPlugin.SetTexture"/>).
+/// map and selects the part), and the actions: replace, upscale, revert, open the material in
+/// the inspector, and <b>Materialize</b> (the selected textures into the Materials tab's queue,
+/// where materials are made: R2b phase 3 took the dock's recipe and Generate and the batch
+/// there). The textures whose profile changed since they were made are marked, with Make again.
+/// Every edit is one undo step (<see cref="RemasterPlugin.SetTexture"/>).
 /// </summary>
 [Tool]
 public partial class TextureDock : EditorDock
@@ -31,18 +33,20 @@ public partial class TextureDock : EditorDock
     private ItemList _uses = null!;
     private Label _message = null!;
     private EditorFileDialog? _fileDialog;
-    private BatchPanel _batch = null!;
+    private Label _stale = null!;
+    private Button _makeAgain = null!;
     private string? _selected;
     private bool _dirty = true;
 
     public const int ModeMap = 0, ModeSearch = 1, ModeProject = 2;
 
+    /// <summary>The marks of a texture as the list shows them (the checks).</summary>
+    public static string MarksOf(string id) => Marks(id);
+
     /// <summary>The texture IDs listed now (for the checks).</summary>
     public List<string> Listed { get; } = new();
 
     public string? Selected => _selected;
-
-    public BatchPanel Batch => _batch;
 
     public TextureDock(RemasterPlugin plugin)
     {
@@ -145,20 +149,26 @@ void fragment() {
         Add(row, "Revert", "Back to the classic texture: no replacement, no material", () => Act(id => TextureActions.Revert(_plugin, id)));
         row = new HBoxContainer();
         col.AddChild(row);
-        Add(row, "Generate material", "Make its PBR material from it (de-lighting, normal, roughness, occlusion, height; its recipe, else the defaults)",
-            () => Act(id => Say(TextureActions.GenerateMaterial(_plugin, id, _pendingRecipe.GetValueOrDefault(id)?.Duplicate() as PbrRecipe)
-                ?? $"{RemasterTextures.ShortName(id)}: material generated")));
+        var mat = new Button
+        {
+            Text = "Materialize", SizeFlagsHorizontal = SizeFlags.ExpandFill,
+            TooltipText = "Add the selected textures (several: Ctrl/Shift+click) to the Materials tab's queue and open the tab: materials are made there (a profile, Apply to queue)",
+        };
+        mat.Pressed += () => Say(SelectedIds() is { Count: > 0 } ids ? $"{_plugin.Materialize(ids)} texture(s) added to the Materials tab" : "select a texture first");
+        row.AddChild(mat);
         Add(row, "Edit material", "Open its material in the inspector", () => Act(id => Say(TextureActions.EditMaterial(id) ? "" : "no material yet")));
-        Add(row, "Recipe", "Open its material's recipe in the inspector (Generate uses it)", EditRecipe);
-        Add(row, "Materialize", "Add the selected textures (several: Ctrl/Shift+click) to the Materials tab's queue and open the tab",
-            () => Say(SelectedIds() is { Count: > 0 } ids ? $"{_plugin.Materialize(ids)} texture(s) added to the Materials tab" : "select a texture first"));
         col.AddChild(new Label { Text = "Used by (double click: open the map, select the part)" });
         _uses = new ItemList { CustomMinimumSize = new Vector2(0, 110), SizeFlagsVertical = SizeFlags.ExpandFill };
         _uses.ItemActivated += i => OpenUse((int)i);
         col.AddChild(_uses);
-        col.AddChild(new HSeparator());
-        _batch = new BatchPanel(_plugin, this);
-        col.AddChild(_batch);
+        // the textures whose profile changed since they were made (R2b phase 3), and Make again
+        row = new HBoxContainer();
+        col.AddChild(row);
+        _stale = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart, SizeFlagsHorizontal = SizeFlags.ExpandFill, Modulate = new Color(1f, 0.85f, 0.5f) };
+        row.AddChild(_stale);
+        _makeAgain = new Button { Text = "Make again", Visible = false, TooltipText = "Make them again in the Materials tab: the profile as it is now, each texture's own exceptions (background, one undo step)" };
+        _makeAgain.Pressed += () => Say(_plugin.Materials?.MakeAgainStale() ?? "making again in the Materials tab...");
+        row.AddChild(_makeAgain);
         _message = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart };
         col.AddChild(_message);
     }
@@ -193,7 +203,6 @@ void fragment() {
     {
         if (_plugin.Uses.Building)
             _index.Text = $"Building the where-used index: {_plugin.Uses.Progress.Done} / {_plugin.Uses.Progress.Total} maps...";
-        _batch.Tick();
         if (_dirty && IsVisibleInTree())
         {
             _dirty = false;
@@ -220,7 +229,13 @@ void fragment() {
     {
         Fill();
         ShowPreview();
+        var stale = ProfileStore.Stale();
+        _stale.Text = ProfileStore.StaleText(stale);
+        _makeAgain.Visible = stale.Count > 0;
     }
+
+    /// <summary>The changed profiles' line as shown (the checks).</summary>
+    public string StaleText => _stale.Text;
 
     /// <summary>Sets the browser's mode and search (the checks).</summary>
     public void SetFilter(int mode, string search)
@@ -239,6 +254,8 @@ void fragment() {
         var m = new List<string>();
         if (e?.Replaced == true) m.Add("replaced");
         if (e?.HasMaterial == true) m.Add("PBR");
+        if (own is { Profile.Length: > 0, Material.Length: > 0 })
+            m.Add(MaterialProfiles.Stale(own) ? $"⟳ {MaterialProfiles.Find(own.Profile)?.Title ?? own.Profile} changed" : own.Profile);
         if (e != null && own == null) m.Add($"({e.Layer})");
         return string.Join(", ", m);
     }
@@ -357,21 +374,6 @@ void fragment() {
         Say(ComfyUpscaler.Configured ? $"upscaling x{factor} with ComfyUI..." : "");
         TextureActions.Upscale(_plugin, id, factor, Say);
     });
-
-    private void EditRecipe() => Act(id =>
-    {
-        // the recipe the next Generate uses: the entry's (a copy, edited in place), else a new one kept for it
-        var entry = TextureStore.Find(id);
-        if (entry?.Recipe is { } r)
-            EditorInterface.Singleton.EditResource(r);
-        else
-        {
-            _pendingRecipe[id] = _pendingRecipe.GetValueOrDefault(id) ?? new PbrRecipe();
-            EditorInterface.Singleton.EditResource(_pendingRecipe[id]);
-        }
-    });
-
-    private readonly Dictionary<string, PbrRecipe> _pendingRecipe = new();
 
     private void OpenUse(int index)
     {

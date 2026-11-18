@@ -179,8 +179,9 @@ replacement and its material are project-wide, not per map.
 - **The list**: **Open map** (the textures the open map draws, with how many
   surfaces), **Where used** (every texture of every map: "Where used"), or
   **Project** (the ones the project changes). The search matches the ID and
-  the maps using it. **Edits** says `replaced`, `PBR`, or the pack a change
-  comes from.
+  the maps using it. **Edits** says `replaced`, `PBR`, the profile the
+  material was made with (`⟳ Rock changed` when the profile changed since),
+  or the pack a change comes from.
 - **The compare**: the classic texture (read from the player's archive) left
   of the split, the replacement or the material's albedo, normal or ORM map
   right of it; the slider moves the split.
@@ -193,8 +194,17 @@ replacement and its material are project-wide, not per map.
   alpha is all 0 or 255, else colour.
 - **Upscale x2**, **x4**: the colour texture (the replacement, else the
   classic one) upscaled as the replacement ("Upscaling").
-- **Generate material**, **Edit material**, **Recipe**: "Materials".
+- **Materialize**: the selected textures (several: Ctrl or Shift+click) into
+  the Materials tab's queue, where materials are made ("The Materials tab").
+- **Edit material**: the material in the inspector.
 - **Revert**: back to the classic texture (no replacement, no material).
+- Below: the textures whose profile changed since they were made ("Rock
+  changed: 37 textures") and **Make again** (in the Materials tab: the
+  profile as it is now, each texture's own exceptions, one undo step).
+
+Since R2b's phase 3 the dock is a browser: the recipe sliders, **Generate
+material** and the batch went; materials are made in the Materials tab, with
+a profile, one texture (**Save**) or the whole queue (**Apply to queue**).
 
 Every edit is one step of the editor's (global) undo history; undo and redo
 touch no file, the images being written once under their content's name.
@@ -218,7 +228,10 @@ A `RemasterTexture` (`godot/src/Remaster/RemasterTexture.cs`): `Id`, `Mode`
 (`Edit`; `Classic` undoes an earlier layer's), `Replacement` (an image or
 texture resource), `Preset` (`Colour`, `CutOut`, `Normal`, `Mask`), `Material`
 (an `ORMMaterial3D`, a `StandardMaterial3D` or a `ShaderMaterial` of your
-own), `Recipe` (how the material was made, `PbrRecipe`), `Source` (where the
+own), `Recipe` (every setting the material was made with, `PbrRecipe`),
+`Profile` (the material profile, by name), `ProfileHash` (the profile's
+content hash when the maps were made), `Exceptions` (the settings that
+differed from the profile: setting to value), `Source` (where the
 replacement comes from: by hand, upscaled how, the tool, model and licence of
 an AI step) and `Note`. Paths are relative to the index's folder (or
 `res://`, `user://`, absolute), so the folder moves into a pack as it is.
@@ -260,12 +273,15 @@ Characters, menus and effects are not in it yet.
 
 ## Materials
 
-**Generate material** makes the texture's physically based material from
-its colour texture (the replacement, else the classic one) with the
-generators ported from ffx-remix (MIT, the same author;
-`godot/src/Remaster/Texturing/`: `MapGenerator`, `Lanczos`), as its
-`PbrRecipe` says (the texture's recipe, the one **Recipe** opened in the
-inspector, else the defaults):
+A texture's physically based material is made from its colour texture (the
+replacement, else the classic one) in the Materials tab (below), by the
+workbench's pass graph (R2b; docs/remaster-materials.md, "The steps"), as a
+`PbrRecipe`'s settings say, usually a material profile's. R2's own chain
+(the generators ported from ffx-remix, MIT, the same author;
+`godot/src/Remaster/Texturing/`: `MapGenerator`, `Lanczos`) was the first
+form of it: the dock's **Generate material** with these settings, which an
+R2-era entry still holds (`Version` 1: loaded migrated, "Profiles and the
+queue"):
 
 | Step | Recipe | How |
 |---|---|---|
@@ -308,19 +324,38 @@ one step of the global undo history (a slider drag: one). The HDRIs of its
 preview are four CC0 ones from Poly Haven in
 `godot/addons/ffx_remaster/hdri/` (editor only, out of exports with the
 plugin) and those of the folder in the editor setting
-`ffx_remaster/hdri_dir`. The recipe sliders below and the batch stay until
-R2b's phase 3.
+`ffx_remaster/hdri_dir`.
 
-### The batch
+### Profiles and the queue
 
-Below the dock: materials for many textures at once. The scope is the open
-map's textures, the selected map's area, every map the project changes, or
-every map (the where-used index); **Skip done** leaves out textures that
-have a material. **Generate** makes up to 48 into the review list, one at a time
-on a worker thread so the editor stays usable (each with its albedo;
-nothing is written yet); untick the bad
-ones, **Accept ticked** writes the rest as one undo step, **Discard** drops
-them all. Run again for the next 48.
+R2b's phase 3 (docs/remaster-materials.md, "Profiles", "Phase 3: what there
+is"). A **material profile** is every step's settings and the material's
+under a name (`MaterialProfile`, a `PbrRecipe` with a title and a note),
+`res://remaster/profiles/<name>.tres`: text, only the settings that differ
+from the defaults, in a stable order; original work, so in git and in packs
+(`res://mods/<pack>/remaster/profiles/`, the later pack winning per name, as
+for textures). Eight starter profiles are committed: rock, stone and
+concrete, sand and dirt, grass and foliage, wood, metal, fabric, plaster and
+painted walls.
+
+In the tab, under the queue: the profile picker (loading a profile sets the
+queue's settings: one undo step), **Save** (over the profile), **Save
+as...**, **Revert** (the queue back to the profile), **Rename...** (the file
+and every texture made with it), **Delete**; each one undo step that swaps
+the file's text. A setting changed while a texture is current can be
+**pinned** to it (○ beside the setting; ● when pinned): an exception, made
+with its own value, the queue's going back to what it was before; **Clear**
+unpins all. **Apply to queue** makes every queued texture with the queue's
+settings and its own exceptions at the full size in the background (the GPU
+when there is one, one texture a frame or two; else the CPU on a worker), a
+progress bar, **Cancel** (what was made is kept), each result's albedo in
+the queue and the strip as it comes, the entries set as one undo step at the
+end (files named by content: undo and redo overwrite none). A texture's
+entry keeps its profile, the profile's hash and the settings that differ
+from it; when a profile changes, the queue and the Textures dock mark its
+textures ("Rock changed: 37 textures") and **Make again** makes them with
+the profile as it is now and their own exceptions. R2's batch (a review list
+of up to 48) is gone: the queue and a profile do its job.
 
 ### Upscaling
 
@@ -705,12 +740,13 @@ FFX_EDITOR_SHOT=1 FFX_GAME_DIR=<game> tools/remaster-editor-check.sh [OUT_DIR]  
    project so Godot imports the PNGs; gitignored, removed at the end): the
    where-used index (Besaid's textures, the cache), the open map's most drawn
    texture replaced by a generated test image (a checker) and its surfaces
-   drawing it, a material generated for the second from its classic pixels,
-   each one undo step, undone and redone; Besaid's render path set to
+   drawing it, one undo step, undone and redone; Besaid's render path set to
    remastered (written), the map drawn remastered, the view's toggle both
    ways; the index saved twice the same and without a path of this machine;
-   the batch over the open map (two made for review, one unticked, the other
-   kept as one undo step, undone, redone); then every PNG and material
+   the second and third most drawn textures made by the starter profile
+   stone-and-concrete through the Materials tab's run (R2b phase 3, in the
+   place of R2's Generate and batch: the entries name the profile and its
+   hash, one undo step, undone, redone); then every PNG and material
    imported, the material an ORMMaterial3D over its imported maps, drawn by
    the map. It writes `DIR/textures-expect.json`.
    Then R2b's Materials tab (after R3 below): three of Besaid's textures
@@ -737,7 +773,25 @@ FFX_EDITOR_SHOT=1 FFX_GAME_DIR=<game> tools/remaster-editor-check.sh [OUT_DIR]  
    (the mean OKLab lightness and chroma of the sphere, the line `materials
    lit`), and `materials-isolate.png`, `materials-normal-light.png`,
    `materials-occlusion.png`, `materials-defaults.png`, `materials-bands.png`,
-   `materials-lit-raw.png`, `materials-lit-material.png`. With
+   `materials-lit-raw.png`, `materials-lit-material.png`.
+   Phase 3 (after the save; profiles into `--remaster-profiles=res://remaster/check/profiles`,
+   a layer after the project's, gitignored, removed at the end): the eight
+   starter profiles listed (the project's layer) and loaded (one undo step);
+   the queue's settings saved as a profile (one undo step, undone and redone
+   to the same bytes, written again from what it reads the same), loaded,
+   kept when the texture changes; a setting pinned to a texture (one undo
+   step, the queue's value back to the profile's, the next texture without
+   it), edited, cleared, another kept; Apply to queue on the three, cancelled
+   after the first (what was made kept, one undo step), then whole (one undo
+   step; the entries with the profile, its hash, the kept exception; the
+   progress seen), undone and redone; the profile changed (Save, one undo
+   step) and its textures marked in the queue and the dock ("Check rock
+   changed: 3 textures"), made again (one undo step, the exception kept); an
+   R2-era entry (a version 1 recipe, no profile) loaded into the tab
+   migrated, edited, saved again; a pack mounted with its own `rock`, which
+   then wins over the starter one. Under a renderer `materials-applied.png`,
+   `materials-changed.png`, `profile-<name>.png` (each starter profile on a
+   Besaid texture, the studio) and `materials-profile-last.png`. With
    `--materials-only` the editor runs only the map's opening, the where-used
    index and this part (working on the tab).
    Then R3 (`--remaster-looks=DIR/looks`: a stand-in look of Besaid beach
@@ -899,8 +953,8 @@ export that holds either (`project.godot` still names the plugin's
   `BlendedParts = Lit` choice) and in linear light they come out paler, so
   they stay classic by default, and the shore under them stays paler than
   the classic one (Besaid's lagoon).
-- The dock's recipe has no live preview (the Materials tab has); the batch
-  has no per-texture recipe.
+- A pack mounted while the editor runs (the editor check's) stays mounted
+  until the editor quits (Godot cannot unmount a pack).
 - A headless editor save prints Godot's own "Parameter "t" is null" (no
   thumbnail without a renderer).
 
@@ -916,10 +970,11 @@ export that holds either (`project.godot` still names the plugin's
 | `MapStore.cs` | the project's per-map files, held while the editor runs; the stable text |
 | `PartInspector.cs` | the part's inspector section |
 | `TextureDock.cs` | the Textures dock: the browser, the compare, the uses, the actions |
-| `BatchPanel.cs` | the batch and its review |
-| `TextureActions.cs` | replace, upscale, generate, revert, edit (one undo step each, through `RemasterPlugin.SetTexture`) |
+| `TextureActions.cs` | replace, upscale, revert, edit, the entry of a made material (one undo step each, through `RemasterPlugin.SetTexture`) |
+| `ProfileStore.cs` | the project's material profiles as the editor writes them (R2b phase 3), the textures whose profile changed |
+| `QueueBake.cs` | a run of Apply to queue or Make again: one texture after another at the full size, GPU or CPU |
 | `TextureStore.cs` | the project's texture index and files, the import |
-| `MaterialsTab.cs` | the Materials tab (R2b): the queue, the steps and their settings, undo, the pipeline's results, save |
+| `MaterialsTab.cs` | the Materials tab (R2b): the queue, the steps and their settings, undo, the pipeline's results, save; profiles, exceptions, Apply to queue, Make again |
 | `MaterialPreview.cs` | the tab's 3D preview: the objects, the camera, the compare wipe, studio, HDRI and the map's light |
 | `MapView2D.cs` | the tab's map in 2D (zoom, pan, 2x2, the split, picking, the painted light's arrow) |
 | `PreviewObject.cs` | the game piece that draws a texture, as one mesh |
@@ -934,12 +989,16 @@ export that holds either (`project.godot` still names the plugin's
 
 Game side (R2): `RemasterTexture`, `RemasterTextureSet`, `PbrRecipe` (the
 resources), `RemasterTextures` (the layers, the merge, the images and
-materials, the binding on the classic materials), `PbrBuilder` and
-`Texturing/` (the generators), `MaterialPipeline` (R2b: the steps, their
+materials, the binding on the classic materials), `PbrBuilder` (images, the
+material over the maps) and `Texturing/` (R2's generators, Lanczos),
+`MaterialProfile` and `MaterialProfiles` (R2b phase 3: a profile, the
+profiles' layers, the hash, a texture's exceptions), `MaterialPipeline` (R2b: the steps, their
 settings, the CPU's runs off the main thread), `Materialize/` (R2b phase 2:
 `MaterializeGraph` the passes of every map, `CpuBackend` and `Kernels` the
 CPU's kernels, `GpuBackend`, `GpuKernels` and `GpuPipeline` the GPU's,
-`MaterializeCheck` the parity and speed check, `--selftest-materialize`), `RemasterLook` and `MapLook` (the lit
+`MaterializeCheck` the parity and speed check, `--selftest-materialize`; phase 3:
+`MaterialBaker` a bake on the CPU and the files' images, `ProfileSheet` the starter
+profiles measured, `--materialize-profiles`), `RemasterLook` and `MapLook` (the lit
 materials, the swap), `RemasterLighting` and `RenderPaths` (the rig, the
 choice), `MaterialsTest`; `ClassicMaterials` binds the replacements and
 notes each map material's modes and defines (`ffx_map_shader`).

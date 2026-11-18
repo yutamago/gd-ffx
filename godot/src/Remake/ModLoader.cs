@@ -186,8 +186,9 @@ public partial class ModLoader : Node
             GD.PrintErr($"ffx: mods: cannot load {file}");
             return false;
         }
-        // the pack may bring or replace convention files
+        // the pack may bring or replace convention files, and material profiles
         RemakeRegistry.Invalidate();
+        Remaster.MaterialProfiles.Invalidate();
         var fragment = $"res://mods/{name}/remake.json";
         var n = RemakeRegistry.LoadJson(fragment, name);
         Mounted.Add(new Pack(name, file, Math.Max(n, 0)));

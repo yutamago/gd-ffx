@@ -7,7 +7,7 @@ using Godot;
 namespace GdFfx.RemasterEditor;
 
 /// <summary>
-/// What the texture dock and the batch do to a texture (docs/remaster-editor.md, "Textures",
+/// What the texture dock and the Materials tab do to a texture (docs/remaster-editor.md, "Textures",
 /// "Materials"): each makes its files (<see cref="TextureStore"/>: content-named, written once)
 /// and then one undo step that sets the texture's entry (<see cref="RemasterPlugin.SetTexture"/>).
 /// The colour texture an operation starts from is the replacement when there is one, else the
@@ -98,29 +98,25 @@ public static class TextureActions
         done?.Invoke($"upscaled x{factor} (Lanczos)");
     }
 
-    /// <summary>The maps of <paramref name="id"/> by <paramref name="recipe"/> (no files yet: the batch reviews them first); null when no pixels.</summary>
-    public static PbrImages? Make(string id, PbrRecipe recipe) =>
-        Source(id) is { } img ? PbrBuilder.Make(PbrBuilder.From(img), recipe) : null;
-
-    /// <summary>The entry that gives <paramref name="id"/> the material over <paramref name="maps"/> (files written now).</summary>
-    public static RemasterTexture WithMaterial(string id, PbrImages maps, PbrRecipe recipe)
+    /// <summary>
+    /// The entry that gives <paramref name="id"/> the material over <paramref name="maps"/> (files
+    /// written now): the settings as baked, and the profile they came from (its name and hash
+    /// now; empty: none) with the texture's own exceptions over it.
+    /// </summary>
+    public static RemasterTexture WithMaterial(string id, PbrImages maps, PbrRecipe recipe, string profile = "", string profileHash = "",
+        Godot.Collections.Dictionary? exceptions = null)
     {
         var entry = TextureStore.Copy(id);
         entry.Mode = TextureMode.Edit;
         var (material, _) = TextureStore.WriteMaterial(id, maps, recipe);
         entry.Material = material;
-        entry.Recipe = (PbrRecipe)recipe.Duplicate();
+        var baked = (PbrRecipe)recipe.Duplicate();
+        baked.Version = 3;
+        entry.Recipe = baked;
+        entry.Profile = profile;
+        entry.ProfileHash = profile.Length > 0 ? profileHash : "";
+        entry.Exceptions = profile.Length > 0 && exceptions != null ? TextureStore.Sorted(exceptions) : new Godot.Collections.Dictionary();
         return entry;
-    }
-
-    /// <summary>Generates <paramref name="id"/>'s material (one undo step); an error or null.</summary>
-    public static string? GenerateMaterial(RemasterPlugin plugin, string id, PbrRecipe? recipe = null)
-    {
-        recipe ??= TextureStore.Find(id)?.Recipe is { } r ? (PbrRecipe)r.Duplicate() : new PbrRecipe();
-        if (Make(id, recipe) is not { } maps)
-            return $"{id}: no pixels to make a material of";
-        plugin.SetTexture(id, WithMaterial(id, maps, recipe), $"Generate the material of {RemasterTextures.ShortName(id)}");
-        return null;
     }
 
     /// <summary>Drops <paramref name="id"/>'s replacement, its material, or both (one undo step).</summary>
@@ -130,7 +126,10 @@ public static class TextureActions
         if (replacement)
             (entry.Replacement, entry.Source) = ("", "");
         if (material)
-            (entry.Material, entry.Recipe) = ("", null);
+        {
+            (entry.Material, entry.Recipe, entry.Profile, entry.ProfileHash) = ("", null, "", "");
+            entry.Exceptions = new Godot.Collections.Dictionary();
+        }
         plugin.SetTexture(id, entry, $"Revert {RemasterTextures.ShortName(id)}{(replacement && material ? "" : replacement ? "'s replacement" : "'s material")}");
     }
 
