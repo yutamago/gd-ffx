@@ -1083,7 +1083,74 @@ the editor check's fake server (which answers any workflow: an estimate's
 output prefix `gdffx/ai-<map>` gets a map made by plain image math), never
 against a real ComfyUI.
 
-PHASE6_MEASURES
+**Measured** (2026-11-18).
+
+*Regions from UV islands on Besaid beach* (the editor check). Of the beach's
+textures (R2's test edits left out), the ones whose islands propose two or
+more regions: with R2's replaced texture left out, 1 of 50
+(`16128_20_000_000_4_128_128`, 512 px: 2 parts, 4 islands: two regions, 25.5 %
+and 18.2 % of the texture, each from one part, IoU with its part's islands
+1.00 and 0.85, no overlap); with every texture, 2 of 54 (the most drawn,
+`12544_19_000_000_8_128_64`, 128x64 px: 30 parts, 105 islands, grouped into
+two regions of 15 parts each, 64.3 % and 2.8 %, IoU 1.00 and 0.78: the second
+is what the first's parts leave of its own islands). The beach's textures are
+mostly whole-texture uses (sand, rock and wood that repeat), so few propose
+regions; the grouping joins parts that share pixels, so a region is "the
+parts drawn from this patch", not one part each. **By colour** on the 512 px
+texture: its sand colour picked in a region's middle covered 100 % at the
+default threshold 0.86, 78 % at 0.92 and 41 % at 0.96 (a texture of one colour
+needs the threshold up). **By hand**: a brush stroke, a rectangle, a polygon,
+the eraser: 0.67, 2.96, 3.64, 3.09 % of the texture, five undo steps.
+
+*Two profiles on one texture* (stone and concrete; metal on one region,
+grass and foliage on the other; the editor check, CPU and GPU the same):
+metallic 0.91 inside the metal region, 0.00 outside every region (beyond six
+texels of their borders); backlight (a map only the grass profile makes)
+0.298 inside the grass region, 0.000 away from it.
+
+*The composite* (normals' unit length; each border's step against the steps
+inside, 1: invisible; the height's level across a border, a fraction of its
+5 to 95 % spread):
+
+| | normals: 99.9th pct of abs(n) - 1 | height border | normal border | height level, matched (unmatched) |
+|---|---|---|---|---|
+| Besaid's 512 px texture, 3 regions (editor check, GPU under Xvfb and CPU) | 0.0039 (none above 0.03) | 0.97, 1.07, 1.12 | 0.88, 0.98, 2.22 | 0.000 (0.002), 0.001 (0.001), 0.017 (0.013) |
+| Besaid's sand, 1024 px, 4 synthetic regions (`--selftest-materialize`, CPU) | 0.0043 | 1.14, 0.83, 0.98, 0.81 | 1.27, 1.07, 1.62, 1.16 | 0.016 (0.112), 0.020 (0.167), 0.006 (0.194), 0.018 (0.023) |
+| synthetic bricks, 1024 px, 4 regions (`--no-game`, CPU) | 0.0044 | 0.69, 0.85, 1.10, 0.73 | 0.86, 0.89, 1.76, 0.90 | 0.005 (0.103), 0.027 (0.153), 0.013 (0.185), 0.032 (0.007) |
+
+The limits (the check fails above them): a border at most 2.5, a level at
+most 0.08, normals' 99.9th percentile at most 0.02. The level matching takes
+a region's height step of 10 to 19 % of the spread to 1 to 3 %; on Besaid's
+512 px atlas the profiles' heights were level already (0.002). The normal
+border of 2.22 is the hand-drawn region's: its rectangle's hard corners
+feathered by 1.5 texels against a stone texture's soft normals.
+
+*Parity* (`--selftest-materialize`, Mesa llvmpipe, Compatibility, Besaid's
+sand x2 to 1024 px, the regions recipe: four regions over every feature):
+normal 0.20/1/3, roughness 0.13/1/4, ORM 0.15/1/4, refraction 0.38/10/18,
+anisotropy 0.16/2/255 (the flowmap's sign, as before), height
+0.0019/0.0031; every map within the limits.
+
+*Cost.* Each region is a graph of its own: 160 passes without regions, 477
+with two, 791 with four at 1024 px. Mesa llvmpipe (Xvfb; the machine shared
+with other builds, so slower than phase 5's numbers): bakes 1.2 s, 3.2 s, 5.3 s
+at 1024 px and 2.7 s, 9.3 s, 11.2 s at 2048 px for 0, 2, 4 regions; a cheap
+change in one region of two in the preview 244 ms (66 of 489 passes: that
+region's and the composite after it). On the Intel Arc 140T
+(Vulkan, Forward+, the Windows export, `tools/compare-shot-win.sh`): bakes as
+a save reads them **274 ms, 761 ms, 876 ms** at 1024 px and **344 ms, 1164 ms,
+973 ms** at 2048 px for 0, 2 and 4 regions (the second region's bake costs
+the first's again; the 4-region bake at 2048 px under the 2-region one is the
+run-to-run spread of the Arc's shared memory: the passes are kept between
+bakes); a cheap change in one region of two **28 ms** in the preview (phase 5's
+cheap change without regions: 14 to 23 ms); the regions recipe's first bake,
+its kernels' shaders compiled, 15.4 s (the plain recipe's first: 3.1 s). The
+parity of the regions recipe on the Arc: normal 0.20/1/3, roughness 0.13/1/4,
+ORM 0.14/1/4, refraction 0.38/10/17, height 0.0019/0.0030; the core numbers of
+the other two recipes as in phase 4 and 5 (normal 0.56/2/2, ORM 0.24/1/3,
+height 0.0019/0.0027). So two to four regions stay interactive on the GPU and
+a save stays under the plan's 1 s at 2048 px.
+
 
 ## Decisions
 
