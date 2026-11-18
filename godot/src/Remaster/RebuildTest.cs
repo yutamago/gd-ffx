@@ -16,7 +16,8 @@ namespace GdFfx.Remaster;
 /// the player and the shown characters on the walk mesh and so on the floor proxy, the proxies
 /// shown as the game shows the layers, the alignment check on the scene (the floor on the walk
 /// mesh: no issue; the floor sunk by 5 units: floating), F7 to the classic layers and back. With a
-/// renderer (<c>--shot=F.png</c>, Xvfb) pictures from the game's camera: <c>F.png</c> rebuilt,
+/// renderer (<c>--shot=F.png</c>, Xvfb) pictures from the game's camera, the views held at one
+/// moment meanwhile (<see cref="GameStateView.Frozen"/>): <c>F.png</c> rebuilt,
 /// <c>F-classic.png</c> classic, <c>F-again.png</c> rebuilt once more; the mean absolute
 /// difference (0..255 per channel) between the rebuilt and the classic picture must stay under
 /// <c>--rebuild-max-diff=D</c> (2.5), against the rebuilt picture's own run-to-run difference.
@@ -53,13 +54,13 @@ public sealed class RebuildTest(double timeout, string? shot) : ITest
                 Next(Phase.Boot);
                 break;
             case Phase.Boot when view != null && v.Current is { World.PlayerControl: true } && view.MapLevel.Length > 0
-                && view.Layers.Level == view.MapLevel && view.Layers.Model != null && view.MapNode == null && _phaseTime > 2:
+                && view.Layers.Level == view.MapLevel && view.Layers.Model != null && view.Layers.State.Layers > 0 && _phaseTime > 2:
                 _level = view.MapLevel;
-                _seen.Add($"{PartIds.LevelKey(_level)}: {view.Layers.State.Layers} classic layers, {view.Layers.State.Shown} shown (scene {view.Layers.State.Scene})");
+                // a map with a 3D model beside its layers (slik04): the rebuilt room stands in for both
+                _seen.Add($"{PartIds.LevelKey(_level)}: {view.Layers.State.Layers} classic layers, {view.Layers.State.Shown} shown (scene {view.Layers.State.Scene})"
+                    + (view.MapNode != null ? ", and a classic 3D model" : ""));
                 Next(Phase.Create);
                 break;
-            case Phase.Boot when view?.MapNode != null && _phaseTime > 5:
-                return Done(false, $"{view.MapLevel} is not a map of 2D layers only");
             case Phase.Create:
             {
                 if (Create(view!) is { } f)
@@ -75,6 +76,11 @@ public sealed class RebuildTest(double timeout, string? shot) : ITest
                 Next(_pictures ? Phase.ShotRebuilt : Phase.ToClassic);
                 break;
             }
+            case Phase.ShotRebuilt when !_acted:
+                // the same moment in every picture (the ship's sway, the characters' steps)
+                _acted = true;
+                GameStateView.Frozen = true;
+                break;
             case Phase.ShotRebuilt when _phaseTime > 0.5:
                 _rebuilt = Shot(shot!);
                 Next(Phase.ToClassic);
@@ -109,9 +115,10 @@ public sealed class RebuildTest(double timeout, string? shot) : ITest
             case Phase.ShotAgain when _phaseTime > 0.5:
             {
                 var again = Shot(shot![..^4] + "-again.png");
+                GameStateView.Frozen = false;
                 double diff = MeanDiff(_rebuilt!, _classic!), noise = MeanDiff(_rebuilt!, again);
                 double max = GameSettings.Number("rebuild-max-diff", 2.5);
-                var line = System.FormattableString.Invariant($"the picture from the game's camera: rebuilt against classic {diff:F2}/255 (mean absolute), rebuilt against rebuilt {noise:F2}");
+                var line = System.FormattableString.Invariant($"the picture from the game's camera at one moment: rebuilt against classic {diff:F2}/255 (mean absolute), rebuilt against rebuilt {noise:F2}");
                 GD.Print($"ffx selftest: rebuild: {line}");
                 if (diff > max)
                     return Done(false, $"{line}: above {max}");
@@ -274,6 +281,7 @@ public sealed class RebuildTest(double timeout, string? shot) : ITest
     private bool Done(bool pass, string note)
     {
         Note = note;
+        GameStateView.Frozen = false;
         if (_scene == null)
             DirAccess.RemoveAbsolute($"{_dir}/{PartIds.LevelKey(_level)}.tscn");
         RenderPaths.Set(null);
