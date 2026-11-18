@@ -82,6 +82,9 @@ public partial class EffectRemakeView : Node3D
                 Ids[i] = id;
                 if (id == null)
                     continue;
+                // the bounds only where needed: an effect still being recorded, or one with a remake
+                if (EffectRecorder.IsWritten(id) && !_playing.ContainsKey(id) && !Remadeable(id))
+                    continue;
                 var d = draws[i];
                 if (d.Vertices == 0)
                     continue;
@@ -132,6 +135,27 @@ public partial class EffectRemakeView : Node3D
                 hidden++;
         HiddenDraws += hidden;
     }
+
+    private readonly Dictionary<string, bool> _remadeable = new();
+    private int _registryVersion = -1, _lookups;
+
+    /// <summary>Whether <paramref name="id"/> has a remade scene (cached a while).</summary>
+    private bool Remadeable(string id)
+    {
+        // asked again after a flip and every 2 s (a registration at run time is seen)
+        if (_registryVersion != Replacements.Changed || ++_lookups > 60 * _remadeable.Count + 60)
+        {
+            _registryVersion = Replacements.Changed;
+            _lookups = 0;
+            _remadeable.Clear();
+        }
+        if (!_remadeable.TryGetValue(id, out var r))
+            _remadeable[id] = r = RemakeRegistry.Find("effect", id) != null;
+        return r;
+    }
+
+    /// <summary>Forgets which ids have remakes (the registry changed).</summary>
+    public void RegistryChanged() => _remadeable.Clear();
 
     /// <summary>The classic effect <paramref name="id"/> drew at <paramref name="place"/> now.</summary>
     private void Touch(string id, Vector3 place)

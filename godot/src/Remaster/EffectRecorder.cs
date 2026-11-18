@@ -61,6 +61,9 @@ public static class EffectRecorder
     /// <summary>Ids written this run (for tests).</summary>
     public static IReadOnlyCollection<string> Written => Done;
 
+    /// <summary>Whether effect <paramref name="id"/> was written this run.</summary>
+    public static bool IsWritten(string id) => Done.Contains(id);
+
     /// <summary>A frame of draws with their ids (<see cref="EffectRemakeView.Frame"/>).</summary>
     public static void Frame(string level, List<EffectDrawView.Draw> draws, EffectDrawView.Geometry geo, string?[] ids, Dictionary<string, Vector3> places)
     {

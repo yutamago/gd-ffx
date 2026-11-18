@@ -21,7 +21,7 @@ public partial class AudioReplacementView : Node
 
     public List<Played> Log { get; } = new();
 
-    /// <summary>Every command seen since the start: kind, action, id, whether the game's was silenced (for tests and the editor's list).</summary>
+    /// <summary>The newest commands seen (at most 4096): kind, action, id, whether the game's was silenced (for tests).</summary>
     public List<(int Kind, int Action, int Id, bool Silenced)> Commands { get; } = new();
 
     private AudioStreamPlayer _music = null!;
@@ -91,7 +91,12 @@ public partial class AudioReplacementView : Node
     private void Handle(int kind, int action, int cmd, int id, int a0, int a1, int a2, bool silenced)
     {
         if (kind < 3)
+        {
+            // the newest 4096 (a long session queues hundreds a minute)
+            if (Commands.Count >= 4096)
+                Commands.RemoveRange(0, 1024);
             Commands.Add((kind, action, id, silenced));
+        }
         switch (kind)
         {
             case 0:
