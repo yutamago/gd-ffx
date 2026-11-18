@@ -1,0 +1,27 @@
+[gd_resource type="Resource" script_class="MaterialProfile" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://src/Remaster/MaterialProfile.cs" id="1"]
+
+[resource]
+script = ExtResource("1")
+Title = "Wood"
+Note = "Planks, beams, panels, bark: grain in the fine bands, medium roughness with detail. Tuned on Besaid's bolted planks (bsil00) and plank01 (bsvr00), Macalania's bark (mcfr00), lchb00_woodwall_01a, lchb00_woodboard_01."
+Version = 3
+Delight = 0.55
+HeightContrast = 1.1
+HeightScale = 0.012
+NormalStrength = 9.0
+RoughnessBase = 0.78
+RoughnessRange = 1.2
+OcclusionRadius = 5.0
+OcclusionStrength = 0.9
+AlbedoEdgeKeep = 0.5
+HeightBlur = 0.6
+HeightBand0 = 0.4
+HeightBand1 = 0.35
+HeightBand2 = 0.35
+HeightBand5 = 0.8
+HeightBand6 = 0.6
+NormalShape = 0.1
+RoughnessDetail = 0.4
+RoughnessOverlay = 0.6

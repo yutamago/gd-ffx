@@ -1,0 +1,28 @@
+[gd_resource type="Resource" script_class="MaterialProfile" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://src/Remaster/MaterialProfile.cs" id="1"]
+
+[resource]
+script = ExtResource("1")
+Title = "Fabric"
+Note = "Cloth, tents, flags, banners: the weave in the finest bands, folds from the painted shading, very rough. Tuned on Besaid's bsil01_fabric_02 and bsil01_tent_01, Bevelle's banner (bvyt00), lchb00_fabric_01, bjyt04_fabric_01."
+Version = 3
+Delight = 0.45
+DelightRadius = 10.0
+HeightContrast = 0.9
+HeightScale = 0.006
+NormalStrength = 8.0
+RoughnessBase = 0.92
+OcclusionRadius = 4.0
+OcclusionStrength = 0.8
+HeightBlur = 0.3
+HeightBand0 = 0.9
+HeightBand1 = 0.6
+HeightBand2 = 0.35
+HeightBand3 = 0.3
+HeightBand4 = 0.4
+HeightBand5 = 0.5
+HeightBand6 = 0.4
+NormalShape = 0.3
+NormalShapeRadius = 6.0
+RoughnessDetail = 0.3

@@ -1,0 +1,28 @@
+[gd_resource type="Resource" script_class="MaterialProfile" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://src/Remaster/MaterialProfile.cs" id="1"]
+
+[resource]
+script = ExtResource("1")
+Title = "Grass and foliage"
+Note = "Leaves, grass, bushes: mostly cut-out textures (the alpha comes from the texture and its classic material). No parallax, soft normals, a little sheen. Tuned on Luca and Baaj leaves, Luca grass, the Mi'ihen tree."
+Version = 3
+Delight = 0.4
+HeightContrast = 0.8
+HeightScale = 0.0
+NormalStrength = 14.0
+RoughnessBase = 0.7
+RoughnessRange = 0.9
+OcclusionRadius = 6.0
+OcclusionStrength = 0.6
+HeightBlur = 1.2
+NormalBand0 = 0.3
+NormalBand1 = 0.4
+NormalBand2 = 0.6
+NormalBand3 = 0.7
+NormalBand4 = 0.6
+NormalBand5 = 0.4
+NormalBand6 = 0.2
+NormalShape = 0.25
+RoughnessDetail = 0.3
+OcclusionNormalShare = 0.5

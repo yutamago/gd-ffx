@@ -1,0 +1,25 @@
+[gd_resource type="Resource" script_class="MaterialProfile" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://src/Remaster/MaterialProfile.cs" id="1"]
+
+[resource]
+script = ExtResource("1")
+Title = "Metal"
+Note = "Bare and worn metal: the brighter parts metallic (darker ones rust and dirt), smoother, worn edges. Tuned on znkd08_metal_01 to _03, znkd08_streetlamp_01 and Bevelle's machina (bvyt00)."
+Version = 3
+Delight = 0.5
+HeightContrast = 0.8
+HeightScale = 0.008
+RoughnessBase = 0.5
+RoughnessRange = 1.4
+Metallic = 1.0
+OcclusionRadius = 5.0
+NormalAngularity = 0.15
+RoughnessDetail = 0.6
+RoughnessMetal = 0.4
+RoughnessOverlay = 3.0
+RoughnessEdgeWear = 0.5
+MetallicMode = 0
+MetallicThreshold = 0.25
+MetallicSoftness = 0.25
+MetallicBlur = 2.0

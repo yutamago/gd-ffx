@@ -8,11 +8,12 @@
 #     project), the map opened again, the status, the play plan;
 #  2. the game on developer save 7 with those saved overrides
 #     (--selftest-saved-overrides): every edit where the editor showed it;
-#     then R2: the where-used index, a texture replaced by a generated test image,
-#     a material generated for another (into godot/remaster/check/textures: in
-#     the project so Godot imports the PNGs; gitignored, removed at the end),
-#     Besaid's render path set to remastered, the 3D view's toggle, the batch
-#     with its review, each edit undone and redone;
+#     then R2: the where-used index, a texture replaced by a generated test image
+#     (into godot/remaster/check/textures: in the project so Godot imports the
+#     PNGs; gitignored, removed at the end), Besaid's render path set to
+#     remastered, the 3D view's toggle, two materials made by a starter profile
+#     (R2b phase 3's run; R2's Generate and batch went), each edit undone and
+#     redone;
 #  3. the game with the editor's textures (--selftest-materials --textures-file):
 #     the replacement drawn classic, the material remastered, F7;
 #     then R3: the game's lighting as nodes (the key light from a stand-in look in
@@ -22,8 +23,13 @@
 #     light as turned, the exposure, the volume);
 #     then R2b: the Materials tab (three textures queued, every step, a slider
 #     dragged, the latency at 512 and 1024 px, undo/redo, a map imported and one
-#     skipped, the next texture with the settings kept, saved; with
-#     FFX_EDITOR_SHOT=1 also OUT_DIR/materials-*.png);
+#     skipped, the next texture with the settings kept, saved; phase 2's bands,
+#     colour samples, painted light, occlusion; phase 3: the starter profiles,
+#     a profile saved (into godot/remaster/check/profiles, gitignored, removed),
+#     loaded, an exception pinned and cleared, Apply to queue (cancelled once,
+#     then whole), undo/redo, the profile changed and the textures made again,
+#     an R2-era entry migrated, a pack's profile over the starter one; with
+#     FFX_EDITOR_SHOT=1 also OUT_DIR/materials-*.png and profile-*.png);
 #  4. the R1a example's hand-written overrides opened in the editor, shown as
 #     edits, and saved back with the same meaning (--remaster-editor-roundtrip);
 #     R5: the alignment check on its additions and replacement, and a misplaced
@@ -71,7 +77,7 @@ map14=$?
 rm -rf "$out/docs"
 grep -E '^ffx selftest: (PASS|FAIL)' "$out/map14.log" | tail -1 | cut -c1-200 || echo "ffx selftest: no result (exit $map14, see $out/map14.log)"
 [[ $map14 -eq 0 ]] || exit 1
-args=(--path . -- --remaster-editor-test --remaster-maps="$out/maps" --remaster-textures="$tex" --remaster-looks="$out/looks"
+args=(--path . -- --remaster-editor-test --remaster-maps="$out/maps" --remaster-textures="$tex" --remaster-profiles="res://remaster/check/profiles" --remaster-looks="$out/looks"
     --remaster-captures="$out/captures")
 if [[ -n "${FFX_EDITOR_SHOT:-}" ]]; then
     env -u WAYLAND_DISPLAY -u DISPLAY timeout 400 "$repo/tools/capped.sh" xvfb-run -a -s "-screen 0 1600x900x24" \

@@ -122,7 +122,10 @@ public static class RemasterTextures
                 // a text index is a file (in the project or a pack): Godot's file cache may still name a removed one
                 if (!FileAccess.FileExists(path))
                     continue;
-                set = ResourceLoader.Load(path, "", ResourceLoader.CacheMode.Replace) as RemasterTextureSet;
+                // read fresh, never into the cached instances: Replace updates them in place with what the
+                // file says, and a text resource leaves out fields at their defaults, so a field emptied by
+                // an edit (an undo) would keep its old value in the editor's live index
+                set = ResourceLoader.Load(path, "", ResourceLoader.CacheMode.Ignore) as RemasterTextureSet;
                 if (set == null)
                 {
                     if (Logged.Add(path))

@@ -1,0 +1,26 @@
+[gd_resource type="Resource" script_class="MaterialProfile" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://src/Remaster/MaterialProfile.cs" id="1"]
+
+[resource]
+script = ExtResource("1")
+Title = "Sand and dirt"
+Note = "Sand, soil, gravel paths: fine grain, little relief, very rough. Tuned on Besaid's sand (bsil00) and dirt (bsvr00), znkd06_ground_01 and _03, lchb00_rockground_01."
+Version = 3
+Delight = 0.5
+DelightRadius = 24.0
+HeightContrast = 0.9
+HeightScale = 0.012
+NormalStrength = 9.0
+RoughnessBase = 0.97
+RoughnessRange = 0.7
+OcclusionRadius = 4.0
+OcclusionStrength = 0.8
+AlbedoHighlights = 0.4
+HeightBlur = 0.5
+HeightBand0 = 0.7
+HeightBand1 = 0.4
+HeightBand4 = 0.8
+HeightBand6 = 0.7
+RoughnessDetail = 0.6
+RoughnessBias = 0.06

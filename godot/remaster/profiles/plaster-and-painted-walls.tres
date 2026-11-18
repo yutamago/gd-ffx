@@ -1,0 +1,30 @@
+[gd_resource type="Resource" script_class="MaterialProfile" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://src/Remaster/MaterialProfile.cs" id="1"]
+
+[resource]
+script = ExtResource("1")
+Title = "Plaster and painted walls"
+Note = "Plaster, render, painted walls and ceilings: broad soft relief, little detail, the colour cast of painted light flattened. Tuned on Bevelle's painted wall (bvyt00), lchb00_concreteceiling_01, znkd06_wall_01 and _02, bjyt04_ceiling_01."
+Version = 3
+Delight = 0.5
+DelightRadius = 24.0
+HeightContrast = 0.7
+HeightScale = 0.008
+NormalStrength = 14.0
+RoughnessBase = 0.9
+RoughnessRange = 0.8
+OcclusionRadius = 6.0
+OcclusionStrength = 0.7
+AlbedoColourCast = 0.4
+HeightBand0 = 0.05
+HeightBand1 = 0.1
+HeightBand2 = 0.2
+HeightBand3 = 0.4
+NormalBand0 = 0.2
+NormalBand1 = 0.3
+NormalBand3 = 0.7
+NormalBand4 = 0.8
+NormalBand5 = 0.6
+NormalBand6 = 0.4
+NormalContrast = 1.4

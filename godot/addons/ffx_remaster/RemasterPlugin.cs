@@ -64,6 +64,7 @@ public partial class RemasterPlugin : EditorPlugin
         _dock = new MapBrowserDock(this);
         AddDock(_dock);
         TextureStore.Attach();
+        ProfileStore.Attach();
         ComfyUpscaler.RegisterSettings();
         var fs = EditorInterface.Singleton.GetResourceFilesystem();
         fs.ResourcesReimported += OnReimported;
@@ -145,7 +146,27 @@ public partial class RemasterPlugin : EditorPlugin
         _materials.Preview.Active(visible);
     }
 
+    /// <summary>Inside <see cref="_Process"/>: an import's progress dialog runs the editor's frames (and so this) while it works.</summary>
+    private bool _inProcess;
+
     public override void _Process(double delta)
+    {
+        // a reimport (a run's files, Poll) runs frames of the editor: not again from inside it (Godot
+        // refuses a reimport within a reimport, and a run's next texture would start meanwhile)
+        if (_inProcess)
+            return;
+        _inProcess = true;
+        try
+        {
+            ProcessOnce(delta);
+        }
+        finally
+        {
+            _inProcess = false;
+        }
+    }
+
+    private void ProcessOnce(double delta)
     {
         Session.Poll();
         if (TextureStore.Poll())
@@ -264,7 +285,7 @@ public partial class RemasterPlugin : EditorPlugin
     /// <summary>Sets <paramref name="id"/>'s entry in the project's texture layer (an empty entry removes it): one undo step.</summary>
     public void SetTexture(string id, RemasterTexture after, string action) => SetTextures([(id, after)], action);
 
-    /// <summary>Sets several textures' entries as one undo step (the batch).</summary>
+    /// <summary>Sets several textures' entries as one undo step (the Materials tab's Apply to queue, Make again).</summary>
     public void SetTextures(IReadOnlyList<(string Id, RemasterTexture After)> edits, string action)
     {
         if (edits.Count == 0)
@@ -285,6 +306,85 @@ public partial class RemasterPlugin : EditorPlugin
     {
         TextureStore.Put(id, TextureStore.FromDictionary(id, entry));
         TexturesChanged();
+    }
+
+    // ---- material profiles, each change one undo step (docs/remaster-materials.md, "Profiles") ----
+
+    /// <summary>
+    /// Writes <paramref name="profile"/> as the project's profile <paramref name="name"/> (a new
+    /// one, or over the one there): one undo step that swaps the file's text.
+    /// </summary>
+    public void SaveProfile(string name, MaterialProfile profile, string action)
+    {
+        var path = ProfileStore.PathOf(name);
+        var before = ProfileStore.Text(path);
+        var after = MaterialProfiles.ToText(profile);
+        if (before == after)
+            return;
+        Undo.CreateAction(action, UndoRedo.MergeMode.Disable, this);
+        Undo.AddDoMethod(this, MethodName.ApplyProfileText, path, after);
+        Undo.AddUndoMethod(this, MethodName.ApplyProfileText, path, before);
+        Undo.CommitAction();
+    }
+
+    /// <summary>Removes the project's profile <paramref name="name"/> (one undo step; textures made with it keep their settings).</summary>
+    public void DeleteProfile(string name)
+    {
+        var path = ProfileStore.PathOf(name);
+        var before = ProfileStore.Text(path);
+        if (before.Length == 0)
+            return;
+        Undo.CreateAction($"Delete the profile {name}", UndoRedo.MergeMode.Disable, this);
+        Undo.AddDoMethod(this, MethodName.ApplyProfileText, path, "");
+        Undo.AddUndoMethod(this, MethodName.ApplyProfileText, path, before);
+        Undo.CommitAction();
+    }
+
+    /// <summary>
+    /// Renames the project's profile <paramref name="name"/> to the title <paramref name="title"/>
+    /// (its file named after it): the file moved, the title changed, and every texture of the
+    /// project's index made with it pointing at the new name, all one undo step. An error or null.
+    /// </summary>
+    public string? RenameProfile(string name, string title)
+    {
+        var to = MaterialProfiles.FileName(title);
+        var from = ProfileStore.PathOf(name);
+        var dest = ProfileStore.PathOf(to);
+        if (to.Length == 0)
+            return "a profile needs a name";
+        if (MaterialProfiles.LoadPath(from) is not { } p || !FileAccess.FileExists(from))
+            return $"{name} is not a profile of the project";
+        if (to != name && FileAccess.FileExists(dest))
+            return $"there is a profile {to} already";
+        var copy = (MaterialProfile)p.Duplicate();
+        copy.Title = title.Trim();
+        var before = ProfileStore.Text(from);
+        Undo.CreateAction($"Rename the profile {name} to {to}", UndoRedo.MergeMode.Disable, this);
+        if (to != name)
+        {
+            Undo.AddDoMethod(this, MethodName.ApplyProfileText, from, "");
+            Undo.AddUndoMethod(this, MethodName.ApplyProfileText, dest, "");
+        }
+        Undo.AddDoMethod(this, MethodName.ApplyProfileText, dest, MaterialProfiles.ToText(copy));
+        Undo.AddUndoMethod(this, MethodName.ApplyProfileText, from, before);
+        if (to != name)
+            foreach (var t in ProfileStore.Users(name))
+            {
+                var after = TextureStore.Copy(t.Id);
+                after.Profile = to;
+                Undo.AddDoMethod(this, MethodName.ApplyTexture, t.Id, TextureStore.ToDictionary(after));
+                Undo.AddUndoMethod(this, MethodName.ApplyTexture, t.Id, TextureStore.ToDictionary(TextureStore.Copy(t.Id)));
+            }
+        Undo.CommitAction();
+        return null;
+    }
+
+    /// <summary>Writes a profile file's text (the undo history calls it; empty: removes it), then the views follow.</summary>
+    public void ApplyProfileText(string path, string text)
+    {
+        ProfileStore.Write(path, text);
+        _materials?.ProfilesChanged();
+        _textures?.TexturesChanged();
     }
 
     /// <summary>Godot imported files: the project's textures among them load imported now (they loaded from their PNGs until then).</summary>
@@ -318,6 +418,7 @@ public partial class RemasterPlugin : EditorPlugin
                 look.Set(look.Remastered, look.LitBlended);
         }
         _textures?.TexturesChanged();
+        _materials?.TexturesChanged();
     }
 
     // ---- edits, each one undo step ------------------------------------------------------------

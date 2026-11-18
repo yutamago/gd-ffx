@@ -413,6 +413,17 @@ public sealed class MaterializeTest(double timeout) : ITest
         {
             if (GameHost.Instance?.Classic is not { Open: true })
                 return null;
+            // --materialize-atlas=DIR --materialize-ids=FILE: thumbnails to choose textures by eye
+            if (GameSettings.Arg("materialize-atlas") is { Length: > 0 } atlas)
+                return Done(true, ProfileSheet.Atlas(atlas, GameSettings.Arg("materialize-ids") ?? ""));
+            // --materialize-profiles[=DIR]: the starter profiles on the textures of their kinds (DIR: contact sheets)
+            if (GameSettings.Flag("materialize-profiles") || GameSettings.Arg("materialize-profiles") is { Length: > 0 })
+            {
+                var dir = GameSettings.Arg("materialize-profiles") is { Length: > 0 } d && d != "true" ? d : null;
+                var (fails, lines) = ProfileSheet.Run(dir, (int)GameSettings.Number("materialize-profile-size", 1024));
+                return Done(fails.Count == 0, fails.Count == 0 ? $"the starter profiles plausible: {string.Join("; ", lines.Where(l => !l.Contains(" ms)")))}"
+                    : $"{fails.Count} implausible: {string.Join("; ", fails)}");
+            }
             var json = game.ClassicTextureUses(MaterialsTest.Level);
             if (json.Length == 0)
                 return null;

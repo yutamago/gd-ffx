@@ -50,6 +50,10 @@ public partial class MaterialsTab : VBoxContainer
     private readonly Dictionary<MaterialStep, (Button Button, TextureRect Thumb)> _strip = new();
     private Button _save = null!;
     private Label _timing = null!;
+    private TextureRect _lastMade = null!;
+    private Label _lastMadeLabel = null!;
+    /// <summary>Apply to queue's results by texture: a small albedo (the queue's icons).</summary>
+    private readonly Dictionary<string, Texture2D> _thumbs = new();
 
     /// <summary>The textures being worked on (IDs).</summary>
     public List<string> Queue { get; } = new();
@@ -59,8 +63,24 @@ public partial class MaterialsTab : VBoxContainer
 
     public MaterialStep Step { get; private set; } = MaterialStep.Albedo;
 
-    /// <summary>The current settings (kept when the texture changes).</summary>
+    /// <summary>
+    /// The settings the current texture is shown and made with: the queue's
+    /// (<see cref="QueueSettings"/>, kept when the texture changes) with the texture's own
+    /// exceptions over them (<see cref="ExceptionsOf"/>). Rebuilt by <see cref="Recompute"/>.
+    /// </summary>
     public PbrRecipe Recipe { get; private set; } = new() { Version = 3 };
+
+    /// <summary>The queue's settings (docs/remaster-materials.md, "Several textures"): what a change edits unless the setting is pinned to the texture.</summary>
+    public PbrRecipe QueueSettings { get; private set; } = new() { Version = 3 };
+
+    /// <summary>The profile the queue's settings came from (its name; empty: none).</summary>
+    public string ProfileName { get; private set; } = "";
+
+    /// <summary>Each texture's exceptions: the settings pinned to it (setting → value).</summary>
+    private readonly Dictionary<string, Godot.Collections.Dictionary> _exceptions = new();
+
+    /// <summary>The queue's value of each setting before its last change (Pin gives the queue that back).</summary>
+    private readonly Dictionary<string, Variant> _prior = new();
 
     public MaterialPreview Preview => _preview;
 
@@ -171,10 +191,78 @@ public partial class MaterialsTab : VBoxContainer
         row = new HBoxContainer();
         col.AddChild(row);
         Add(row, "Remove", "Take the selected texture out of the queue", RemoveCurrent);
-        Add(row, "Its settings", "Load the selected texture's saved settings (its recipe) instead of the current ones", LoadSaved);
+        Add(row, "Its settings", "Load the selected texture's saved settings (as it was made, and its profile) as the queue's (one undo step)", () => LoadSaved());
+        col.AddChild(BuildProfileBox());
         _status = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart, CustomMinimumSize = new Vector2(0, 60) };
         col.AddChild(_status);
         return col;
+    }
+
+    // the profile box (R2b phase 3)
+    private OptionButton _profilePick = null!;
+    private Label _profileState = null!, _exceptionsLabel = null!, _staleLabel = null!;
+    private Button _makeAgain = null!, _applyButton = null!, _cancelButton = null!;
+    private ProgressBar _progress = null!;
+    private ConfirmationDialog? _nameDialog;
+
+    private Control BuildProfileBox()
+    {
+        var col = new VBoxContainer();
+        col.AddChild(new HSeparator());
+        var row = new HBoxContainer();
+        col.AddChild(row);
+        row.AddChild(new Label { Text = "Profile" });
+        _profilePick = new OptionButton { SizeFlagsHorizontal = SizeFlags.ExpandFill, TooltipText = "Load a profile's settings as the queue's (one undo step); the later pack's profile wins per name" };
+        _profilePick.ItemSelected += i => LoadProfile(_profilePick.GetItemMetadata((int)i).AsString());
+        row.AddChild(_profilePick);
+        _profileState = new Label { Modulate = new Color(1, 1, 1, 0.7f), AutowrapMode = TextServer.AutowrapMode.WordSmart };
+        col.AddChild(_profileState);
+        row = new HBoxContainer();
+        col.AddChild(row);
+        Add(row, "Save", "Write the queue's settings over the profile (one undo step)", () => Say(SaveProfile() ?? $"profile {ProfileName} saved"));
+        Add(row, "Save as...", "The queue's settings as a new profile", () => AskName("Save as profile", "", t => Say(SaveAsProfile(t) ?? $"profile {ProfileName} saved")));
+        Add(row, "Revert", "The queue's settings back to the profile's (one undo step)", () => Say(RevertToProfile() ?? $"back to {ProfileName}"));
+        row = new HBoxContainer();
+        col.AddChild(row);
+        Add(row, "Rename...", "Rename the profile (its file, and the textures made with it: one undo step)",
+            () => AskName("Rename the profile", MaterialProfiles.Find(ProfileName)?.Title ?? ProfileName, t => Say(RenameProfile(t) ?? $"renamed to {ProfileName}")));
+        Add(row, "Delete", "Delete the project's profile (one undo step; the textures made with it keep their settings)", () => Say(DeleteProfile() ?? "profile deleted"));
+        row = new HBoxContainer();
+        col.AddChild(row);
+        _exceptionsLabel = new Label { SizeFlagsHorizontal = SizeFlags.ExpandFill, TooltipText = "Settings pinned to the current texture (● beside them): made with their own value, not the queue's" };
+        row.AddChild(_exceptionsLabel);
+        Add(row, "Clear", "Unpin every setting of the current texture: it takes the queue's settings again (one undo step)", () => Say(ClearExceptions() ?? "exceptions cleared"));
+        row = new HBoxContainer();
+        col.AddChild(row);
+        _applyButton = Add(row, "Apply to queue", "Make every texture in the queue with the queue's settings and its own exceptions, at the full size, in the background (one undo step for all)",
+            () => Say(ApplyToQueue() ?? "applying to the queue..."));
+        _cancelButton = Add(row, "Cancel", "Stop the run: the textures made so far are kept (one undo step)", () => Say(CancelBake() ?? "cancelled"));
+        _progress = new ProgressBar { MinValue = 0, MaxValue = 1, Step = 0.001, ShowPercentage = true, CustomMinimumSize = new Vector2(0, 18) };
+        col.AddChild(_progress);
+        _staleLabel = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = new Color(1f, 0.85f, 0.5f) };
+        col.AddChild(_staleLabel);
+        _makeAgain = new Button { Text = "Make again", TooltipText = "Make every texture whose profile changed since it was made again, with the profile as it is now and its own exceptions (background, one undo step)" };
+        _makeAgain.Pressed += () => Say(MakeAgainStale() ?? "making again...");
+        col.AddChild(_makeAgain);
+        return col;
+    }
+
+    private void AskName(string title, string start, System.Action<string> then)
+    {
+        if (_nameDialog == null)
+        {
+            _nameDialog = new ConfirmationDialog { MinSize = new Vector2I(360, 100) };
+            _nameDialog.AddChild(new LineEdit { Name = "Name", PlaceholderText = "Rock, Stone and concrete..." });
+            AddChild(_nameDialog);
+        }
+        var edit = _nameDialog.GetNode<LineEdit>("Name");
+        edit.Text = start;
+        _nameDialog.Title = title;
+        foreach (var c in _nameDialog.GetSignalConnectionList(AcceptDialog.SignalName.Confirmed))
+            _nameDialog.Disconnect(AcceptDialog.SignalName.Confirmed, c["callable"].AsCallable());
+        _nameDialog.Confirmed += () => then(edit.Text);
+        _nameDialog.PopupCentered();
+        edit.GrabFocus();
     }
 
     private Control BuildPreview()
@@ -306,6 +394,17 @@ public partial class MaterialsTab : VBoxContainer
         end.AddChild(_save);
         _timing = new Label { Modulate = new Color(1, 1, 1, 0.7f) };
         end.AddChild(_timing);
+        // Apply to queue's results as they come: the last one made, and how far the run is
+        var made = new VBoxContainer();
+        row.AddChild(made);
+        _lastMade = new TextureRect
+        {
+            CustomMinimumSize = new Vector2(84, 72), ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+            StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered, MouseFilter = MouseFilterEnum.Ignore,
+        };
+        made.AddChild(_lastMade);
+        _lastMadeLabel = new Label { Modulate = new Color(1, 1, 1, 0.7f) };
+        made.AddChild(_lastMadeLabel);
         return scroll;
     }
 
@@ -413,11 +512,21 @@ public partial class MaterialsTab : VBoxContainer
         foreach (var id in Queue)
         {
             var marks = new List<string>();
-            if (_savedHere.Contains(id)) marks.Add("saved");
+            var own = TextureStore.Find(id);
+            var state = _bakeRun?.StateOf(id);
+            if (state is { } st && st != QueueBake.JobState.Done) marks.Add(st == QueueBake.JobState.Making ? "making…" : st.ToString().ToLowerInvariant());
+            else if (state == QueueBake.JobState.Done) marks.Add("made");
+            else if (_savedHere.Contains(id)) marks.Add("saved");
             else if (RemasterTextures.For(id)?.HasMaterial == true) marks.Add("PBR");
+            if (MaterialProfiles.Stale(own)) marks.Add($"⟳ {MaterialProfiles.Find(own!.Profile)?.Title ?? own.Profile} changed");
+            else if (own is { Profile.Length: > 0, Material.Length: > 0 }) marks.Add(own.Profile);
+            if (MaterialProfiles.Missing(own)) marks.Add($"{own!.Profile}: no such profile");
             if (RemasterTextures.For(id)?.Replaced == true) marks.Add("replaced");
-            int i = _queueList.AddItem((id == Current ? "▶ " : "   ") + RemasterTextures.ShortName(id) + (marks.Count > 0 ? $"  ({string.Join(", ", marks)})" : ""));
-            _queueList.SetItemTooltip(i, id);
+            int pinned = _exceptions.TryGetValue(id, out var ex) ? ex.Count : own is { Profile.Length: > 0 } ? own.Exceptions.Count : 0;
+            if (pinned > 0) marks.Add($"● {pinned}");
+            int i = _queueList.AddItem((id == Current ? "▶ " : "   ") + RemasterTextures.ShortName(id) + (marks.Count > 0 ? $"  ({string.Join(", ", marks)})" : ""),
+                _thumbs.GetValueOrDefault(id));
+            _queueList.SetItemTooltip(i, id + (pinned > 0 ? $"\n● {pinned} setting(s) pinned to it (exceptions)" : ""));
             if (id == Current)
                 _queueList.Select(i);
         }
@@ -459,6 +568,7 @@ public partial class MaterialsTab : VBoxContainer
             return "no pixels";
         }
         Current = id;
+        Recompute();
         _original = PbrBuilder.From(img);
         _alpha = !_original.HasAlpha ? 0 : _original.HasOnlyBinaryAlpha ? 1 : 2;
         _sourceTex.SetImage(PbrBuilder.ToImage(_original));
@@ -467,6 +577,8 @@ public partial class MaterialsTab : VBoxContainer
         _pixels.Clear();
         _shownSide.Clear();
         FillQueue();
+        RebuildSettings();
+        RefreshProfileBox();
         FindObject(id);
         UpdateLight();
         Remake();
@@ -475,19 +587,27 @@ public partial class MaterialsTab : VBoxContainer
         return null;
     }
 
-    private void LoadSaved()
+    /// <summary>
+    /// The current texture's saved settings as the queue's (one undo step): its entry's recipe as
+    /// baked (an R2-era one migrated: <see cref="MaterialPipeline.Migrate"/>), and its profile.
+    /// </summary>
+    public string? LoadSaved()
     {
-        if (Current == null || TextureStore.Find(Current)?.Recipe is not { } r)
+        if (Current == null || TextureStore.Find(Current) is not { Recipe: { } r } entry)
         {
             Say("no saved settings for this texture");
-            return;
+            return "no saved settings";
         }
         var copy = (PbrRecipe)r.Duplicate();
         MaterialPipeline.Migrate(copy);
         var d = new Godot.Collections.Dictionary();
         foreach (var name in RecipeProps())
             d[name] = copy.Get(name);
-        Commit("Load the texture's saved settings", d);
+        d[ProfileKey] = entry.Profile;
+        Commit($"Load the saved settings of {RemasterTextures.ShortName(Current)}", d, queueOnly: true);
+        Say($"{RemasterTextures.ShortName(Current)}: its saved settings{(entry.Profile.Length > 0 ? $" (profile {entry.Profile})" : "")}"
+            + (r.Version < 3 ? $", migrated from version {r.Version}" : ""));
+        return null;
     }
 
     /// <summary>Every setting the tab edits from <paramref name="r"/> (one undo step).</summary>
@@ -646,8 +766,8 @@ public partial class MaterialsTab : VBoxContainer
             }
             var row = new HBoxContainer();
             _settingsBox.AddChild(row);
-            row.AddChild(new Label { Text = st.Label, CustomMinimumSize = new Vector2(130, 0), TooltipText = st.Tip, MouseFilter = MouseFilterEnum.Pass });
             var prop = st.Property;
+            row.AddChild(new Label { Text = (Pinned(prop) ? "● " : "") + st.Label, CustomMinimumSize = new Vector2(130, 0), TooltipText = st.Tip, MouseFilter = MouseFilterEnum.Pass });
             Control ctl;
             if (type == typeof(bool))
             {
@@ -678,10 +798,25 @@ public partial class MaterialsTab : VBoxContainer
             row.AddChild(ctl);
             _controls[prop] = ctl;
             AddReset(row, prop, st.Label);
+            AddPin(row, [prop], st.Label);
         }
         _map2d.Arrow = Step == MaterialStep.Normal ? Recipe.NormalLightAngle : null;
         _checkLabel.Visible = Step == MaterialStep.Albedo && _checkLabel.Text.Length > 0;
         RefreshControls();
+    }
+
+    /// <summary>The pin of a setting (or a band equaliser's seven): ● pinned to the current texture (click: unpin), ○ the queue's (click: pin this value to the texture).</summary>
+    private void AddPin(HBoxContainer row, string[] props, string label)
+    {
+        bool pinned = props.All(Pinned);
+        var pin = new Button
+        {
+            Text = pinned ? "●" : "○", Flat = true, Disabled = Current == null,
+            TooltipText = pinned ? $"{label}: pinned to this texture (an exception); click to take the queue's value again"
+                : $"{label}: the queue's; click to pin this value to this texture only (an exception: the queue's goes back to what it was before)",
+        };
+        pin.Pressed += () => Say((pinned ? ClearException(props) : Pin(props)) ?? "");
+        row.AddChild(pin);
     }
 
     private void AddReset(HBoxContainer row, string prop, string label)
@@ -697,7 +832,8 @@ public partial class MaterialsTab : VBoxContainer
         var head = new HBoxContainer();
         _settingsBox.AddChild(head);
         string title = bands[0].Label[..bands[0].Label.LastIndexOf(' ')];
-        head.AddChild(new Label { Text = title, TooltipText = bands[0].Tip, MouseFilter = MouseFilterEnum.Pass, SizeFlagsHorizontal = SizeFlags.ExpandFill });
+        var bandProps = bands.Select(x => x.Property).ToArray();
+        head.AddChild(new Label { Text = (bandProps.All(Pinned) ? "● " : "") + title, TooltipText = bands[0].Tip, MouseFilter = MouseFilterEnum.Pass, SizeFlagsHorizontal = SizeFlags.ExpandFill });
         foreach (var (name, values) in Presets.GetValueOrDefault(group) ?? [])
         {
             var b = new Button { Text = name, TooltipText = $"{title}: {string.Join(" ", values)} (fine to coarse)", Flat = false };
@@ -705,6 +841,7 @@ public partial class MaterialsTab : VBoxContainer
             b.Pressed += () => ApplyBands(title + ": " + name, props, values);
             head.AddChild(b);
         }
+        AddPin(head, bandProps, title);
         var row = new HBoxContainer { Alignment = BoxContainer.AlignmentMode.Center };
         _settingsBox.AddChild(row);
         for (int k = 0; k < bands.Length; k++)
@@ -742,8 +879,8 @@ public partial class MaterialsTab : VBoxContainer
     {
         var row = new HBoxContainer();
         _settingsBox.AddChild(row);
-        row.AddChild(new Label { Text = st.Label, CustomMinimumSize = new Vector2(80, 0), TooltipText = st.Tip, MouseFilter = MouseFilterEnum.Pass });
         var prop = st.Property;
+        row.AddChild(new Label { Text = (Pinned(prop) ? "● " : "") + st.Label, CustomMinimumSize = new Vector2(80, 0), TooltipText = st.Tip, MouseFilter = MouseFilterEnum.Pass });
         var cp = new ColorPickerButton { EditAlpha = false, CustomMinimumSize = new Vector2(44, 0), TooltipText = "The colour (none: off)" };
         cp.ColorChanged += c => LiveSet(prop, new Color(c, 1));
         cp.PopupClosed += () => EndDrag(prop);
@@ -767,6 +904,7 @@ public partial class MaterialsTab : VBoxContainer
         var clear = new Button { Text = "×", TooltipText = "No colour: the sample off", Flat = true };
         clear.Pressed += () => SetSetting(prop, new Color(0, 0, 0, 0));
         row.AddChild(clear);
+        AddPin(row, [prop], st.Label);
     }
 
     /// <summary>Shows a colour sample's mask in the 2D view (null: the map).</summary>
@@ -782,7 +920,7 @@ public partial class MaterialsTab : VBoxContainer
     {
         if (!_dragFrom.ContainsKey(prop))
             BeginDrag(prop);
-        Recipe.Set(prop, value);
+        SetLive(prop, value);
         Changed([prop]);
     }
 
@@ -889,25 +1027,123 @@ public partial class MaterialsTab : VBoxContainer
         }
     }
 
-    /// <summary>Sets recipe properties (the undo history calls it), then makes again what they change.</summary>
+    /// <summary>The key of an undo step's dictionary that sets the queue's profile (not a setting).</summary>
+    private const string ProfileKey = "@profile";
+
+    /// <summary>Sets the queue's settings (the undo history calls it; <see cref="ProfileKey"/>: the profile's name), then makes again what they change.</summary>
     public void ApplyRecipe(Godot.Collections.Dictionary values)
     {
+        var keys = new List<string>();
         foreach (var (k, v) in values)
-            Recipe.Set(k.AsString(), v);
-        Changed(values.Keys.Select(k => k.AsString()).ToList());
+        {
+            var name = k.AsString();
+            if (name == ProfileKey)
+            {
+                ProfileName = v.AsString();
+                continue;
+            }
+            QueueSettings.Set(name, v);
+            keys.Add(name);
+        }
+        Recompute();
+        Changed(keys);
+        RefreshProfileBox();
     }
 
-    /// <summary>One undo step that sets <paramref name="after"/> (the old values from the recipe); <paramref name="execute"/>: false when they are set already (a drag's end).</summary>
-    private void Commit(string action, Godot.Collections.Dictionary after, Godot.Collections.Dictionary? before = null, bool execute = true)
+    /// <summary>Sets texture <paramref name="id"/>'s exceptions (the undo history calls it), then makes again what they change.</summary>
+    public void ApplyExceptions(string id, Godot.Collections.Dictionary exceptions)
+    {
+        var was = ExceptionsOf(id);
+        _exceptions[id] = TextureStore.Sorted(exceptions);
+        if (id != Current)
+        {
+            FillQueue();
+            return;
+        }
+        Recompute();
+        Changed(was.Keys.Concat(exceptions.Keys).Select(k => k.AsString()).Distinct().ToList());
+        RebuildSettings();
+        RefreshProfileBox();
+    }
+
+    /// <summary><see cref="Recipe"/> made again: the queue's settings with the current texture's exceptions over them.</summary>
+    private void Recompute() => Recipe = Compose(QueueSettings, Current != null ? ExceptionsOf(Current) : null);
+
+    /// <summary><paramref name="queue"/>'s settings (all of them, its files too) with <paramref name="exceptions"/> over them.</summary>
+    public static PbrRecipe Compose(PbrRecipe queue, Godot.Collections.Dictionary? exceptions)
+    {
+        var r = (PbrRecipe)queue.Duplicate();
+        r.Version = 3;
+        if (exceptions != null)
+            foreach (var (k, v) in exceptions)
+                r.Set(k.AsString(), v);
+        return r;
+    }
+
+    /// <summary>
+    /// Texture <paramref name="id"/>'s exceptions: those set in this session, else its entry's
+    /// (the settings that differed from its profile when it was made; none without a profile).
+    /// </summary>
+    public Godot.Collections.Dictionary ExceptionsOf(string id)
+    {
+        if (!_exceptions.TryGetValue(id, out var d))
+            _exceptions[id] = d = TextureStore.Find(id) is { Profile.Length: > 0 } e ? TextureStore.Sorted(e.Exceptions) : new Godot.Collections.Dictionary();
+        return d;
+    }
+
+    /// <summary>Whether <paramref name="prop"/> is pinned to the current texture.</summary>
+    public bool Pinned(string prop) => Current != null && ExceptionsOf(Current).ContainsKey(prop);
+
+    /// <summary>
+    /// One undo step that sets <paramref name="after"/> (the old values from the settings):
+    /// settings pinned to the current texture change its exceptions, the others the queue's.
+    /// <paramref name="execute"/>: false when they are set already (a drag's end).
+    /// </summary>
+    private void Commit(string action, Godot.Collections.Dictionary after, Godot.Collections.Dictionary? before = null, bool execute = true, bool queueOnly = false)
     {
         before ??= new Godot.Collections.Dictionary();
-        foreach (var (k, _) in after)
-            if (!before.ContainsKey(k))
-                before[k] = Recipe.Get(k.AsString());
+        var qAfter = new Godot.Collections.Dictionary();
+        var qBefore = new Godot.Collections.Dictionary();
+        Godot.Collections.Dictionary? exAfter = null, exBefore = null;
+        foreach (var (k, v) in after)
+        {
+            var name = k.AsString();
+            var old = before.TryGetValue(k, out var b) ? b : name == ProfileKey ? ProfileName : queueOnly ? QueueSettings.Get(name) : Recipe.Get(name);
+            if (name != ProfileKey && !queueOnly && Pinned(name))
+            {
+                exAfter ??= TextureStore.Sorted(ExceptionsOf(Current!));
+                exBefore ??= TextureStore.Sorted(ExceptionsOf(Current!));
+                exAfter[name] = v;
+                exBefore[name] = old;
+                continue;
+            }
+            qAfter[name] = v;
+            qBefore[name] = old;
+            if (name != ProfileKey)
+                _prior[name] = old;
+        }
         Undo.CreateAction(action, UndoRedo.MergeMode.Disable, _plugin);
-        Undo.AddDoMethod(this, MethodName.ApplyRecipe, after);
-        Undo.AddUndoMethod(this, MethodName.ApplyRecipe, before);
+        if (qAfter.Count > 0)
+        {
+            Undo.AddDoMethod(this, MethodName.ApplyRecipe, qAfter);
+            Undo.AddUndoMethod(this, MethodName.ApplyRecipe, qBefore);
+        }
+        if (exAfter != null)
+        {
+            Undo.AddDoMethod(this, MethodName.ApplyExceptions, Current!, exAfter);
+            Undo.AddUndoMethod(this, MethodName.ApplyExceptions, Current!, exBefore!);
+        }
         Undo.CommitAction(execute);
+    }
+
+    /// <summary>A setting changed live (a drag, a pick): the queue's or, pinned, the texture's exception; the undo step comes at its end.</summary>
+    private void SetLive(string prop, Variant value)
+    {
+        if (Pinned(prop))
+            ExceptionsOf(Current!)[prop] = value;
+        else
+            QueueSettings.Set(prop, value);
+        Recipe.Set(prop, value);
     }
 
     private static string LabelOf(string prop) =>
@@ -940,7 +1176,7 @@ public partial class MaterialsTab : VBoxContainer
         if (_dragFrom.ContainsKey(prop))
         {
             // live while the slider moves; one undo step at its end
-            Recipe.Set(prop, value);
+            SetLive(prop, value);
             Changed([prop]);
         }
         else
@@ -1119,6 +1355,7 @@ public partial class MaterialsTab : VBoxContainer
         }
         if (_bake is { Done: true })
             FinishBake();
+        TickBake();
         PollObject();
     }
 
@@ -1317,6 +1554,372 @@ public partial class MaterialsTab : VBoxContainer
     /// <summary>The preview's material (the checks).</summary>
     public OrmMaterial3D Material3D => _mat;
 
+    // ---- profiles and exceptions (R2b phase 3) -----------------------------------------------------
+
+    /// <summary>
+    /// Loads profile <paramref name="name"/>'s settings as the queue's (one undo step; empty: no
+    /// profile, the settings kept). The current texture's exceptions stay over them. An error or null.
+    /// </summary>
+    public string? LoadProfile(string name)
+    {
+        var d = new Godot.Collections.Dictionary { [ProfileKey] = name };
+        if (name.Length > 0)
+        {
+            if (MaterialProfiles.Load(name) is not { } p)
+                return $"no profile {name}";
+            foreach (var prop in MaterialProfiles.Props)
+                d[prop] = p.Get(prop);
+        }
+        Commit(name.Length > 0 ? $"Materials: the profile {MaterialProfiles.Find(name)?.Title ?? name}" : "Materials: no profile", d, queueOnly: true);
+        return null;
+    }
+
+    /// <summary>The queue's settings back to the profile's (one undo step).</summary>
+    public string? RevertToProfile() => ProfileName.Length == 0 ? "no profile chosen" : LoadProfile(ProfileName);
+
+    /// <summary>The queue's settings written over the profile (one undo step: the file's text). An error, a note, or null.</summary>
+    public string? SaveProfile()
+    {
+        if (ProfileName.Length == 0)
+            return "no profile chosen: Save as...";
+        var title = MaterialProfiles.Find(ProfileName)?.Title ?? ProfileName;
+        var note = MaterialProfiles.Load(ProfileName)?.Note ?? "";
+        _plugin.SaveProfile(ProfileName, MaterialProfiles.From(QueueSettings, title, note), $"Save the profile {title}");
+        RefreshProfileBox();
+        var winner = MaterialProfiles.Find(ProfileName);
+        return winner != null && winner.Path != ProfileStore.PathOf(ProfileName) ? $"saved, but the pack {winner.Layer}'s {ProfileName} is the one used" : null;
+    }
+
+    /// <summary>The queue's settings as a new profile titled <paramref name="title"/> (one undo step), chosen. An error or null.</summary>
+    public string? SaveAsProfile(string title)
+    {
+        var name = MaterialProfiles.FileName(title);
+        if (name.Length == 0)
+            return "a profile needs a name";
+        if (FileAccess.FileExists(ProfileStore.PathOf(name)))
+            return $"there is a profile {name} already (choose it and Save)";
+        _plugin.SaveProfile(name, MaterialProfiles.From(QueueSettings, title.Trim()), $"Save as profile {title.Trim()}");
+        ProfileName = name;
+        RefreshProfileBox();
+        return null;
+    }
+
+    /// <summary>Renames the chosen profile (its file, and the textures made with it; one undo step). An error or null.</summary>
+    public string? RenameProfile(string title)
+    {
+        if (ProfileName.Length == 0)
+            return "no profile chosen";
+        if (_plugin.RenameProfile(ProfileName, title) is { } err)
+            return err;
+        ProfileName = MaterialProfiles.FileName(title);
+        RefreshProfileBox();
+        return null;
+    }
+
+    /// <summary>Deletes the chosen profile from the project (one undo step); the queue keeps its settings. An error or null.</summary>
+    public string? DeleteProfile()
+    {
+        if (ProfileName.Length == 0)
+            return "no profile chosen";
+        if (!FileAccess.FileExists(ProfileStore.PathOf(ProfileName)))
+            return $"{ProfileName} is not in the project's profiles ({MaterialProfiles.Find(ProfileName)?.Layer ?? "none"}): nothing to delete";
+        _plugin.DeleteProfile(ProfileName);
+        ProfileName = "";
+        RefreshProfileBox();
+        return null;
+    }
+
+    /// <summary>
+    /// Pins <paramref name="props"/> to the current texture with their values now (an exception:
+    /// one undo step); the queue's settings go back to what they were before their last change.
+    /// </summary>
+    public string? Pin(params string[] props)
+    {
+        if (Current == null)
+            return "no texture";
+        var exBefore = TextureStore.Sorted(ExceptionsOf(Current));
+        var exAfter = TextureStore.Sorted(ExceptionsOf(Current));
+        var qAfter = new Godot.Collections.Dictionary();
+        var qBefore = new Godot.Collections.Dictionary();
+        foreach (var p in props)
+        {
+            if (Pinned(p))
+                continue;
+            exAfter[p] = Recipe.Get(p);
+            if (_prior.TryGetValue(p, out var was) && !Same(was, QueueSettings.Get(p)))
+            {
+                qAfter[p] = was;
+                qBefore[p] = QueueSettings.Get(p);
+            }
+        }
+        if (exAfter.Count == exBefore.Count)
+            return "pinned already";
+        Undo.CreateAction($"Materials: pin {LabelOf(props[0])}{(props.Length > 1 ? " ..." : "")} to {RemasterTextures.ShortName(Current)}", UndoRedo.MergeMode.Disable, _plugin);
+        Undo.AddDoMethod(this, MethodName.ApplyExceptions, Current, exAfter);
+        Undo.AddUndoMethod(this, MethodName.ApplyExceptions, Current, exBefore);
+        if (qAfter.Count > 0)
+        {
+            Undo.AddDoMethod(this, MethodName.ApplyRecipe, qAfter);
+            Undo.AddUndoMethod(this, MethodName.ApplyRecipe, qBefore);
+        }
+        Undo.CommitAction();
+        return null;
+    }
+
+    /// <summary>Unpins <paramref name="props"/> from the current texture: it takes the queue's values again (one undo step).</summary>
+    public string? ClearException(params string[] props)
+    {
+        if (Current == null)
+            return "no texture";
+        var before = TextureStore.Sorted(ExceptionsOf(Current));
+        var after = TextureStore.Sorted(before);
+        foreach (var p in props)
+            after.Remove(p);
+        if (after.Count == before.Count)
+            return "not pinned";
+        Undo.CreateAction($"Materials: unpin {LabelOf(props[0])}{(props.Length > 1 ? " ..." : "")} from {RemasterTextures.ShortName(Current)}", UndoRedo.MergeMode.Disable, _plugin);
+        Undo.AddDoMethod(this, MethodName.ApplyExceptions, Current, after);
+        Undo.AddUndoMethod(this, MethodName.ApplyExceptions, Current, before);
+        Undo.CommitAction();
+        return null;
+    }
+
+    /// <summary>Unpins every setting of the current texture (one undo step).</summary>
+    public string? ClearExceptions()
+    {
+        if (Current == null)
+            return "no texture";
+        var keys = ExceptionsOf(Current).Keys.Select(k => k.AsString()).ToArray();
+        return keys.Length == 0 ? "no exceptions" : ClearException(keys);
+    }
+
+    /// <summary>The profile box as things are: the profiles (every layer's, the winner per name), the queue against its profile, the exceptions, the run, the changed profiles.</summary>
+    private void RefreshProfileBox()
+    {
+        if (_profilePick == null)
+            return;
+        _profilePick.Clear();
+        _profilePick.AddItem("(none: the queue's own)");
+        _profilePick.SetItemMetadata(0, "");
+        int sel = 0;
+        foreach (var (name, r) in MaterialProfiles.All)
+        {
+            _profilePick.AddItem(r.Title + (r.Layer is "base" or "project" ? "" : $" ({r.Layer})"));
+            int i = _profilePick.ItemCount - 1;
+            _profilePick.SetItemMetadata(i, name);
+            _profilePick.SetItemTooltip(i, $"{r.Path} (layer {r.Layer})");
+            if (name == ProfileName)
+                sel = i;
+        }
+        _profilePick.Selected = sel;
+        if (ProfileName.Length == 0)
+            _profileState.Text = "No profile: the queue's own settings.";
+        else if (MaterialProfiles.Load(ProfileName) is not { } p)
+            _profileState.Text = $"{ProfileName}: no such profile any more.";
+        else
+        {
+            int diff = MaterialProfiles.Props.Count(x => !MaterialProfiles.Same(QueueSettings, p, x));
+            var layer = MaterialProfiles.Find(ProfileName)!.Layer;
+            _profileState.Text = (diff == 0 ? $"The queue's settings are {p.Title}'s." : $"● {diff} setting(s) differ from {p.Title}: Save writes them, Revert drops them.")
+                + (layer is "base" or "project" ? "" : $" From the pack {layer}.");
+        }
+        int pinned = Current != null ? ExceptionsOf(Current).Count : 0;
+        _exceptionsLabel.Text = Current == null ? "No texture" : $"● {pinned} exception(s) on {RemasterTextures.ShortName(Current)}";
+        var stale = ProfileStore.Stale();
+        _staleLabel.Text = ProfileStore.StaleText(stale);
+        _makeAgain.Visible = stale.Count > 0;
+        bool running = _bakeRun != null;
+        _applyButton.Disabled = running || Queue.Count == 0;
+        _makeAgain.Disabled = running;
+        _cancelButton.Disabled = !running;
+        _progress.Value = _bakeRun?.Progress ?? 0;
+    }
+
+    /// <summary>The project's textures changed (an edit, undo): the queue's marks and the changed profiles again.</summary>
+    public void TexturesChanged()
+    {
+        FillQueue();
+        RefreshProfileBox();
+    }
+
+    /// <summary>A profile was written, renamed or deleted (or undone): the list, the queue against it, the marks.</summary>
+    public void ProfilesChanged()
+    {
+        if (ProfileName.Length > 0 && MaterialProfiles.Find(ProfileName) == null)
+        {
+            // renamed (undone or redone): follow it when one profile has the queue's settings
+            var match = MaterialProfiles.All.Keys.FirstOrDefault(n => MaterialProfiles.Load(n) is { } p && MaterialProfiles.Hash(p) == MaterialProfiles.Hash(QueueSettings));
+            if (match != null)
+                ProfileName = match;
+        }
+        FillQueue();
+        RefreshProfileBox();
+    }
+
+    // ---- Apply to queue, Make again (R2b phase 3) --------------------------------------------------
+
+    private QueueBake? _bakeRun;
+
+    /// <summary>The run going (null: none).</summary>
+    public QueueBake? BakeRun => _bakeRun;
+
+    /// <summary>The last run's outcome (null: none yet), and its texture times.</summary>
+    public string? BakeResult { get; private set; }
+
+    public List<double> LastBakeTimes { get; private set; } = new();
+
+    /// <summary>
+    /// Makes every texture of the queue with the queue's settings and its own exceptions at the
+    /// full size in the background (GPU when there is one); the entries set as one undo step when
+    /// the run ends. An error or null.
+    /// </summary>
+    public string? ApplyToQueue()
+    {
+        if (_bakeRun != null)
+            return "a run is going";
+        if (Queue.Count == 0)
+            return "the queue is empty";
+        var jobs = Queue.Select(id => new QueueBake.Job(id, Compose(QueueSettings, ExceptionsOf(id)), ProfileName)).ToList();
+        var title = ProfileName.Length > 0 ? MaterialProfiles.Find(ProfileName)?.Title ?? ProfileName : "";
+        Start(jobs, $"Apply to queue: {jobs.Count} material(s){(title.Length > 0 ? $" ({title})" : "")}");
+        return null;
+    }
+
+    /// <summary>
+    /// Makes again every texture of the project whose profile changed since it was made (only
+    /// <paramref name="profile"/>'s when given): the profile as it is now with the texture's own
+    /// exceptions, in the background, one undo step. An error or null.
+    /// </summary>
+    public string? MakeAgainStale(string? profile = null)
+    {
+        if (_bakeRun != null)
+            return "a run is going";
+        var stale = ProfileStore.Stale();
+        var jobs = new List<QueueBake.Job>();
+        foreach (var (name, ids) in stale)
+        {
+            if (profile != null && name != profile || MaterialProfiles.Load(name) is not { } p)
+                continue;
+            foreach (var id in ids)
+                jobs.Add(new QueueBake.Job(id, MaterialProfiles.Effective(p, TextureStore.Find(id)?.Exceptions), name));
+        }
+        if (jobs.Count == 0)
+            return "no texture's profile changed";
+        Start(jobs, $"Make again: {ProfileStore.StaleText(stale)}");
+        return null;
+    }
+
+    /// <summary>
+    /// Makes <paramref name="ids"/> with profile <paramref name="profile"/> as it is (each with its
+    /// own exceptions), in the background, one undo step; the queue is not touched (R4's wizard
+    /// and the checks choose a profile per texture). An error or null.
+    /// </summary>
+    public string? MakeWith(IEnumerable<string> ids, string profile)
+    {
+        if (_bakeRun != null)
+            return "a run is going";
+        if (MaterialProfiles.Load(profile) is not { } p)
+            return $"no profile {profile}";
+        var jobs = ids.Select(id => id.ToLowerInvariant()).Distinct()
+            .Select(id => new QueueBake.Job(id, MaterialProfiles.Effective(p, TextureStore.Find(id) is { Profile.Length: > 0 } e && e.Profile == profile ? e.Exceptions : null), profile)).ToList();
+        if (jobs.Count == 0)
+            return "no textures";
+        Start(jobs, $"Make with {p.Title}: {jobs.Count} material(s)");
+        return null;
+    }
+
+    /// <summary>Stops the run going: what it made is kept (one undo step). An error or null.</summary>
+    public string? CancelBake()
+    {
+        if (_bakeRun == null)
+            return "no run going";
+        _bakeRun.Cancel();
+        return null;
+    }
+
+    private void Start(List<QueueBake.Job> jobs, string action)
+    {
+        BakeResult = null;
+        _bakeRun = new QueueBake(this, jobs, _gpu != null, LoadImport, FinishJob, action);
+        Say($"{action}: making {jobs.Count} on the {(_gpu != null ? "GPU" : "CPU")}...");
+        FillQueue();
+        RefreshProfileBox();
+    }
+
+    private void TickBake()
+    {
+        if (_bakeRun is not { } run || !run.Tick())
+            return;
+        _progress.Value = run.Progress;
+        if (run.LastAlbedo is { } last && run.LastId is { } lastId)
+        {
+            _lastMade.Texture = _thumbs.GetValueOrDefault(lastId);
+            _lastMadeLabel.Text = $"{run.Made}/{run.Total}: {RemasterTextures.ShortName(lastId)}";
+        }
+        FillQueue();
+        if (!run.Finished)
+            return;
+        _bakeRun = null;
+        LastBakeTimes = run.Times;
+        int failed = run.Jobs.Count(j => run.StateOf(j.Id) == QueueBake.JobState.Failed);
+        int cancelled = run.Jobs.Count(j => run.StateOf(j.Id) == QueueBake.JobState.Cancelled);
+        // the run's entries as one undo step (its files are written: content-named)
+        if (run.Results.Count > 0)
+            _plugin.SetTextures(run.Results, run.Action + (run.Cancelling ? $" (cancelled after {run.Results.Count})" : ""));
+        foreach (var (id, _) in run.Results)
+            _savedHere.Add(id);
+        BakeResult = $"{run.Action}: {run.Results.Count} made in {run.Clock.Elapsed.TotalSeconds:0.0} s"
+            + (cancelled > 0 ? $", {cancelled} cancelled" : "") + (failed > 0 ? $", {failed} failed" : "");
+        Say(BakeResult);
+        FillQueue();
+        RefreshProfileBox();
+    }
+
+    /// <summary>A run's texture made: its imported files kept beside it, its maps and material written, its entry (the profile and the exceptions to it).</summary>
+    private RemasterTexture FinishJob(QueueBake.Job job, BakedMaps baked)
+    {
+        var r = (PbrRecipe)job.Recipe.Duplicate();
+        var entry = MakeEntry(job.Id, baked, r, job.Profile);
+        var thumb = PbrBuilder.ToImage(baked.Maps[MaterialStep.Albedo]);
+        thumb.Resize(48, Mathf.Max(1, 48 * thumb.GetHeight() / Mathf.Max(1, thumb.GetWidth())), Image.Interpolation.Bilinear);
+        _thumbs[job.Id] = ImageTexture.CreateFromImage(thumb);
+        return entry;
+    }
+
+    /// <summary>
+    /// Writes <paramref name="id"/>'s material made with <paramref name="r"/> (its imported files
+    /// copied beside it first) and returns its entry, linked to <paramref name="profile"/> (its
+    /// hash now, the settings that differ from it as exceptions; none: unlinked).
+    /// </summary>
+    private RemasterTexture MakeEntry(string id, BakedMaps baked, PbrRecipe r, string profile)
+    {
+        StoreImports(id, r);
+        var maps = MaterialBaker.Images(baked, r);
+        string hash = "";
+        Godot.Collections.Dictionary? ex = null;
+        if (profile.Length > 0 && MaterialProfiles.Load(profile) is { } p)
+            (hash, ex) = (MaterialProfiles.Hash(p), MaterialProfiles.Differences(r, p));
+        else
+            profile = "";
+        return TextureActions.WithMaterial(id, maps, r, profile, hash, ex);
+    }
+
+    /// <summary>The steps' imported files of <paramref name="r"/> kept beside <paramref name="id"/>'s maps (content-named), <paramref name="r"/> naming them relative to the store.</summary>
+    private void StoreImports(string id, PbrRecipe r)
+    {
+        foreach (var s in MaterialPipeline.Steps)
+        {
+            var (_, fp) = MaterialPipeline.ModeProps(s);
+            var file = MaterialPipeline.FileOf(r, s);
+            if (MaterialPipeline.ModeOf(r, s) != StepMode.Import || file.Length == 0 || LoadImport(file) is not { } px)
+                continue;
+            var rel = TextureStore.WriteImage(id, $"import-{s.ToString().ToLowerInvariant()}", PbrBuilder.ToImage(px),
+                s is MaterialStep.Source or MaterialStep.Albedo or MaterialStep.Emission ? TexturePreset.Colour : s == MaterialStep.Normal ? TexturePreset.Normal : TexturePreset.Mask);
+            _imports[rel] = px;
+            r.Set(fp, rel);
+        }
+    }
+
     // ---- save --------------------------------------------------------------------------------------
 
     private int _saveRun = -1;
@@ -1412,29 +2015,15 @@ public partial class MaterialsTab : VBoxContainer
     {
         var id = _saveId!;
         var r = _saveRecipe!;
-        // imported files: kept beside the maps (content-named), the recipe naming them relative to the store
-        foreach (var s in MaterialPipeline.Steps)
-        {
-            var (_, fp) = MaterialPipeline.ModeProps(s);
-            var file = MaterialPipeline.FileOf(r, s);
-            if (MaterialPipeline.ModeOf(r, s) != StepMode.Import || file.Length == 0 || !_imports.TryGetValue(file, out var px))
-                continue;
-            var rel = TextureStore.WriteImage(id, $"import-{s.ToString().ToLowerInvariant()}", PbrBuilder.ToImage(px),
-                s is MaterialStep.Source or MaterialStep.Albedo or MaterialStep.Emission ? TexturePreset.Colour : s == MaterialStep.Normal ? TexturePreset.Normal : TexturePreset.Mask);
-            _imports[rel] = px;
-            r.Set(fp, rel);
-        }
-        bool height = r.HeightScale > 0 && MaterialPipeline.ModeOf(r, MaterialStep.Height) != StepMode.Skip;
-        bool emission = MaterialPipeline.ModeOf(r, MaterialStep.Emission) != StepMode.Skip && MaterialPipeline.AnyLight(_saveMaps[MaterialStep.Emission]);
         // the height in 16 bits (half floats: an EXR), so parallax shows no terraces
-        var maps = new PbrImages(PbrBuilder.ToImage(_saveMaps[MaterialStep.Albedo]), PbrBuilder.ToImage(_saveMaps[MaterialStep.Normal]),
-            PbrBuilder.ToImage(_saveOrm!), height ? _saveHeight ?? PbrBuilder.ToImage(_saveMaps[MaterialStep.Height]) : null,
-            emission ? PbrBuilder.ToImage(_saveMaps[MaterialStep.Emission]) : null);
-        var entry = TextureActions.WithMaterial(id, maps, r);
+        var baked = new BakedMaps(new Dictionary<MaterialStep, RgbaImage>(_saveMaps), _saveOrm!, _saveHeight ?? PbrBuilder.ToImage(_saveMaps[MaterialStep.Height]));
+        var entry = MakeEntry(id, baked, r, ProfileName);
         _plugin.SetTexture(id, entry, $"Save the material of {RemasterTextures.ShortName(id)}");
         _savedHere.Add(id);
         FillQueue();
-        return $"{RemasterTextures.ShortName(id)}: saved ({maps.Albedo.GetWidth()}×{maps.Albedo.GetHeight()} maps, {entry.Material.GetFile()})";
+        var albedo = TextureStore.Absolute(entry.Material);
+        return $"{RemasterTextures.ShortName(id)}: saved ({_saveMaps[MaterialStep.Albedo].Width}×{_saveMaps[MaterialStep.Albedo].Height} maps, {albedo.GetFile()}"
+            + (entry.Profile.Length > 0 ? $", profile {entry.Profile}{(entry.Exceptions.Count > 0 ? $" with {entry.Exceptions.Count} exception(s)" : "")})" : ")");
     }
 }
 #endif

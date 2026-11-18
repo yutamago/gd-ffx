@@ -308,17 +308,18 @@ public sealed class LightingTest : ITest
         {
             if (RemasterTextures.ClassicImage(id) is not { } img)
                 return $"{id}: no classic pixels";
-            var recipe = new PbrRecipe { Upscale = 2, MaxSide = 1024 };
-            var maps = PbrBuilder.Make(PbrBuilder.From(img), recipe);
+            if (MaterialsTest.ByProfile("rock", 1, 1024) is not { } recipe)
+                return "no starter profile rock";
+            var maps = Materialize.MaterialBaker.CpuImages(id, PbrBuilder.From(img), recipe);
             var (a, n, o, h, e) = PbrBuilder.InMemory(maps);
             var file = $"{RemasterTextures.ShortName(id)}.material.tres";
             if (ResourceSaver.Save(PbrBuilder.Material(a, n, o, h, e, recipe), $"{_dir}/{file}") != Error.Ok)
                 return $"cannot write {file}";
-            _set.Textures.Add(new RemasterTexture { Id = id, Material = file, Recipe = recipe, Source = "generated from the classic texture (LightingTest)" });
+            _set.Textures.Add(new RemasterTexture { Id = id, Material = file, Recipe = recipe, Profile = "rock", Source = "generated from the classic texture by the profile rock (LightingTest)" });
             _made.Add(id);
         }
         RemasterTextures.Register(_set, "selftest-lighting", _dir);
-        _seen.Add($"materials from the classic pixels of {_made.Count} texture(s) in {Time.GetTicksMsec() - t0} ms");
+        _seen.Add($"materials by the profile rock from the classic pixels of {_made.Count} texture(s) in {Time.GetTicksMsec() - t0} ms");
         return _made.Count > 0 ? null : "no colour texture to make a material of";
     }
 
