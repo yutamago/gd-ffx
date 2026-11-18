@@ -1,6 +1,6 @@
 # The remaster editor
 
-gd-ffx's editor plugin for the remaster (docs/remaster-plan.md, R1b to R7a):
+gd-ffx's editor plugin for the remaster (docs/remaster-plan.md, R1b to R8):
 browse the game's maps, open one as an editable scene of its classic parts,
 move, hide, remove, replace and add parts with Godot's own tools, and save
 the edits as the map's override files (docs/remake.md, "Overrides"), which
@@ -10,7 +10,8 @@ lights and fog as nodes, sky, GI, volumes ("Lighting"); see the game's own data 
 the map (walk mesh, triggers, entrances, cameras) and check that remade geometry
 lines up with it ("The game's data"); remake characters: open one with its motions, assign a
 remade model with a skeleton of its own and map it onto the game's ("Characters"); make a first pass over
-maps automatically and review it ("The remaster wizard"). What it writes into the
+maps automatically and review it ("The remaster wizard"); render maps before and after and follow the
+project's progress ("Before/after renders", "The status dashboard"). What it writes into the
 project is IDs and your own work; images made from the game's textures are
 your work products too, but never belong in gd-ffx's git ("Your work and
 git").
@@ -1035,6 +1036,92 @@ The pictures and thumbnails are the player's game: `user://remaster/wizard/<map>
 machine has no look cached: its lighting follows the defaults and the review says
 "play the map once".
 
+## Before/after renders
+
+R8 (docs/remaster-plan.md, "R8 in detail"). Pictures of maps as the classic game
+draws them and as the project draws them, rendered offscreen in the editor, one
+map after another (`RenderBatch`, `MapRenders.cs`):
+
+- **3D maps**: the classic import loaded on its own (no scene opened) and drawn
+  classic, with nothing of the project's (the project's textures left out:
+  `RemasterTextures.Suspended`); then the same map with the project's overrides
+  (removed, hidden, moved on the file's placement, replaced, added), its
+  textures and materials, on the remastered path under its lighting
+  (`lighting.tres`, else R3's defaults from the game's look). A map with a remade
+  scene (G6) shows that scene. Seen from the game's camera when the game captured
+  the map (R5's capture), else from three views over the walk mesh (the wizard's,
+  `WizardRender.Viewpoints`). R3's colour check per view, the worst one kept; the
+  mean difference of the pictures. A map the game has not shown on this machine
+  has no look cached: its lighting follows the defaults (the record says so).
+- **2D-layer maps**: the classic layers from each 2D scene's fixed camera (up to
+  three scenes; a rebuilt room made from them, which from that camera is the
+  classic room: R7b's 0.00 to 0.05/255), and where the project has a rebuilt room
+  (`res://remake/map/<map>.tscn`, R7b) that room from the same cameras and from
+  above and behind the first one, with the mean difference.
+- **Where**: `user://remaster/renders/` (`--renders-dir=DIR`): per map
+  `classic-N.png`, `remastered-N.png` or `rebuilt-N.png` and two 192 px
+  thumbnails, and `renders.json` (each map's record: kind, views, pictures, the
+  colour check, the difference, what the project changed then, when, the time).
+  Pictures of the player's game: never in git, never in the project.
+- **Resumable**: the state is saved after every map; a batch stopped part way
+  goes on with `--renders-resume`, and a map already drawn is kept unless what the
+  project changes on it differs from its record (`--renders-again` draws again).
+- **Headless-capable**: `--remaster-renders --maps=a,b,c|changed|all` in the
+  editor quits when done (`ffx renders: DONE ...`, every map's line with its time).
+  It needs a renderer: run it under Xvfb (OpenGL, Compatibility on the CPU here):
+
+```bash
+cd godot && env -u WAYLAND_DISPLAY -u DISPLAY xvfb-run -a -s "-screen 0 1600x900x24" \
+    godot --editor --display-driver x11 --rendering-driver opengl3 --audio-driver Dummy --path . -- \
+    --remaster-renders --maps=all [--renders-dir=DIR] [--renders-resume] [--renders-again]
+```
+
+From the dashboard, **Render** draws the selected map (none selected: the maps the
+project changes).
+
+## The status dashboard
+
+R8. **Remaster status**, a bottom panel (`StatusDock`; its data `RemasterStatus`):
+
+- **The summary**: the maps per status (Original, InProgress, Remastered,
+  Approved), the maps the project changes, the textures with materials and the
+  replaced ones (of the project's index), the maps with lighting, the rebuilt
+  rooms, the remade effects, characters, sounds, movies and UI art, the maps
+  rendered (and how many with the colour check off), the maps with budgets (and
+  how many over).
+- **Every map** of the catalogue: its name and key (2D marked), area, status
+  (coloured), what the project changes on it (override entries, additions,
+  replaced textures and materials among the map's textures by the where-used
+  index, lighting, a rebuilt room or remade scene, remade effects of its field
+  programs `<map>-fp<n>`, PBR), its last renders (a thumbnail, the colour check or
+  the rebuilt room's difference) and budgets (the verdict and the frame times per
+  preset). Remade characters, sounds and movies are not tied to a map in the
+  project's files: they are counted in the summary.
+- **Filters**: search (name, level, event, area), status, changed, rendered, off
+  (the colour check off or a budget over); **sort** by area, status, changes,
+  colour, budget or render time.
+- **The selected map**: its notes, what changes, the renders' record (when, the
+  time, the views, the colour check; "render again" when the project changed
+  since), the first view's classic and remastered pictures, each budget record.
+- **Refresh** reads the files again; **Render** (above); **Report** writes the
+  HTML report into `user://remaster/report/`.
+
+The HTML report for sharing (`StatusReport`):
+
+```bash
+FFX_GAME_DIR=<game> tools/remaster-report.sh OUT_DIR [-- --renders-dir=DIR --remaster-budgets=DIR ...]
+```
+
+The editor (headless, `--remaster-report=OUT_DIR`) writes `OUT_DIR/index.html`:
+the summary, every map's row with the thumbnails linking to the full pictures
+(copied to `OUT_DIR/pictures/<map>/`), the colour check and the budgets, filtered
+and sorted in the page (no script or font from elsewhere, light and dark); then
+`tools/compare/check-links.py` checks that every link and picture is there and
+inside the folder. Keep OUT_DIR out of git: the pictures are the player's game.
+
+The budgets come from `tools/budget.sh` (docs/running.md, "Budgets"), which copies
+its table to `user://remaster/budgets/` (`--remaster-budgets=DIR`).
+
 ## Your work and git
 
 Replacements and generated maps are your own work products, but the ones
@@ -1232,6 +1319,23 @@ FFX_EDITOR_SHOT=1 FFX_GAME_DIR=<game> tools/remaster-editor-check.sh [OUT_DIR]  
    saved back without float noise). Then the alignment check on the
    example's additions and replacement (none over the walk mesh) and the
    misplaced test box (flagged).
+9. R8 (after step 8): the renders batch (`--remaster-renders`, the editor
+   under Xvfb) on `bsil00` (the check's edits, textures, materials and
+   lighting), `ptkl14` (step 8's rebuilt room) and `slik08` (untouched), into
+   `DIR/renders`, then again: all three kept. The dashboard
+   (`--remaster-editor-status`, headless, `StatusEditorTest`) against the
+   files the steps wrote, read on their own: Besaid's status (in progress),
+   its override entries (counted in `overrides.tres`), additions and lighting;
+   its textures, those with materials and the replaced one (the texture
+   index's text against the where-used index); the summary's textures with
+   materials and replaced; the remade effects (`bsil00-fp15`); `ptkl14`'s
+   rebuilt room; the changed maps; the renders against `renders.json`, a
+   thumbnail drawn in the list for every rendered map, Besaid's before/after
+   pictures shown; the filters (changed, rendered, search, status) and the
+   render-time sort; a budgets table from synthetic records through
+   `tools/compare/budget.py` (the desktop run over budget: the verdict
+   "over"); the HTML report from the editor and from `tools/remaster-report.sh`,
+   its links checked.
 
 ### The alignment check in the game
 
@@ -1509,7 +1613,7 @@ export that holds either (`project.godot` still names the plugin's
 
 - The packs' layers are applied in the game but not shown in the editor;
   it edits the project's layer only.
-- No thumbnails in the browser.
+- No thumbnails in the map browser (the status dashboard shows the renders' thumbnails).
 - 2D-layer maps (the painted rooms) open with the game's data only (their
   layers are drawn in the room **Rebuild in 3D** makes, not in the map's edit
   scene); a rebuilt room's layers are planes at their depths (modelling them is
@@ -1598,6 +1702,9 @@ export that holds either (`project.godot` still names the plugin's
 | `InMapScene.cs` | the In map preview's copy of a map (the live and classic surfaces of the texture) |
 | `RemasterPlugin.Pick.cs` | textures picked in the open map (Alt+click, Pick texture) |
 | `FakeComfy.cs` | the editor check's stand-in ComfyUI server (loopback) |
+| `MapRenders.cs` | R8's before/after renders: `RenderBatch` (the batch, one map after another, resumable), `RenderShooter` (an offscreen viewport and its views), `RenderStore` (`renders.json`, the pictures) |
+| `RemasterStatus.cs`, `StatusDock.cs`, `StatusReport.cs` | the status dashboard's rows and summary, the bottom panel, the HTML report |
+| `RemasterPlugin.Status.cs`, `StatusEditorTest.cs` | the dashboard, the renders and the report in the plugin (`--remaster-renders`, `--remaster-report`), the dashboard's check |
 | `MaterialPreview.cs` | the tab's 3D preview: the objects, the camera, the compare wipe, studio, HDRI and the map's light |
 | `MapView2D.cs` | the tab's map in 2D (zoom, pan, 2x2, the split, picking, the painted light's arrow) |
 | `PreviewObject.cs` | the game piece that draws a texture, as one mesh |

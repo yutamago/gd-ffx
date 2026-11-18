@@ -117,3 +117,34 @@ MemorySwapMax=2G
 `systemctl --user daemon-reload`, then `tools/capped.sh <command>`. The cap
 is about half of a 47 GB machine, leaving room for everything else (the
 machine stays under 80 %); scale it to yours.
+
+## Privacy and the quick gates
+
+The repository is public: nothing in it may name the machine or a person.
+`tools/check-privacy.py` scans every tracked file, text and binary, its contents
+and its path, for the home folder and the user names of the machine it runs on
+(read from the environment at run time: `$USER`, and on WSL the Windows user from
+`cmd.exe /c echo %USERNAME%`; the script holds no name), user folders of any name
+(`/home/<name>/`, `/mnt/c/Users/<name>/`, `C:\Users\<name>\`, `C:/Users/<name>/`;
+generic ones such as `runner` pass), in ASCII and UTF-16 as binaries keep them,
+and e-mail addresses other than the commit identity (example domains and
+GitHub's SSH remote pass; in binary files only what reads as an address). The
+patterns are `tools/export-files.py`'s, the export's check. `tools/privacy-allow.txt`
+lists exceptions (`GLOB TEXT`) for docs that must describe the rule. R8 added it
+after a tracked Python byte-code file had held a path with the machine's user
+name (taken out of git then; git history is not rewritten).
+
+```bash
+python3 -I tools/check-privacy.py        # exit 1 with a line per finding
+tools/check-all.sh                       # the quick gates, before every push
+CHECK_ALL_SKIP=rust,game tools/check-all.sh
+```
+
+`tools/check-all.sh` runs, one after another (the heavy ones through
+`tools/capped.sh`), with a line each and a summary: the privacy check; `dotnet
+build` with 0 warnings and 0 errors; `cargo fmt --check` and clippy with `-D
+warnings` (`tools/build-extension.sh linux clippy`); the headless self-checks
+that need neither a renderer nor the game (`--selftest-saves`, `--selftest-mods`,
+`--selftest-launcher`, `--selftest-materialize` on the CPU); with `FFX_GAME_DIR`
+also the start-up check (`tools/selftest.sh`) and `--selftest-besaid
+--devsave=7`. Logs in `/tmp/gd-ffx-check-all`, removed when all pass.

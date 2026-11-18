@@ -40,6 +40,9 @@ public sealed class BenchTest : ITest
         public bool Loading;
         public int Draws;
         public int Objects;
+        public int Primitives;
+        /// <summary>The GPU's time for the frame's viewports (ms; 0 where the renderer does not measure it).</summary>
+        public float GpuMs;
         /// <summary>The level's index in <see cref="_levels"/>.</summary>
         public int Level;
         /// <summary>The index of the frame's sections in <see cref="_sectionMs"/> and <see cref="_sectionBytes"/> (divided by <see cref="Sections"/>).</summary>
@@ -154,6 +157,7 @@ public sealed class BenchTest : ITest
             _trace?.Begin();
             if (_walk)
                 Keys(true);
+            StartBudget();
             return null;
         }
         // the census: the Godot disposables each probed section makes, over frames 1000 to 1100 of the window
@@ -196,6 +200,8 @@ public sealed class BenchTest : ITest
             Gc = -1,
             Draws = (int)Performance.GetMonitor(Performance.Monitor.RenderTotalDrawCallsInFrame),
             Objects = (int)Performance.GetMonitor(Performance.Monitor.RenderTotalObjectsInFrame),
+            Primitives = (int)Performance.GetMonitor(Performance.Monitor.RenderTotalPrimitivesInFrame),
+            GpuMs = _windowAt >= 0 ? GpuTime() : 0,
             Level = _levels.Count - 1,
         };
         var u = v.Current?.Update ?? 0;
@@ -396,9 +402,115 @@ public sealed class BenchTest : ITest
                 + $"{frame?.Draws.Sum(d => d.Vertices) ?? 0} vertices)");
         }
         Print($"render (Godot's monitors, mean per frame): {w.Average(f => f.Draws):F0} draw calls, {w.Average(f => f.Objects):F0} objects");
+        Budget(c, view, ms, seconds);
         // the longest frames: the load before the window, then the window's
         Longest("load", _load, 5);
         Longest("window", _window, 5);
+    }
+
+    // ---- R8: the performance budget's figures (docs/running.md, "Budgets") -----------------------
+
+    private readonly List<Rid> _measured = new();
+
+    /// <summary>
+    /// The window begins: <c>--bench-uncapped</c> lifts the frame cap (the Deck preset's 60, so the
+    /// frame time shows the headroom); every viewport's render time measured from now (the GPU's
+    /// where the renderer measures it: Forward+ and Mobile, not Compatibility).
+    /// </summary>
+    private void StartBudget()
+    {
+        if (GameSettings.Flag("bench-uncapped"))
+            Engine.MaxFps = 0;
+        _measured.Clear();
+        if (Engine.GetMainLoop() is not SceneTree tree)
+            return;
+        var root = tree.Root;
+        _measured.Add(root.GetViewportRid());
+        foreach (var n in root.FindChildren("*", nameof(SubViewport), true, false))
+            if (n is SubViewport sv)
+                _measured.Add(sv.GetViewportRid());
+        foreach (var rid in _measured)
+            RenderingServer.ViewportSetMeasureRenderTime(rid, true);
+    }
+
+    private float GpuTime()
+    {
+        double ms = 0;
+        foreach (var rid in _measured)
+            ms += RenderingServer.ViewportGetMeasuredRenderTimeGpu(rid);
+        return (float)ms;
+    }
+
+    /// <summary>
+    /// The budget's line (<c>ffx bench: budget {json}</c>) and, with <c>--bench-json=FILE</c>, the same
+    /// as a file: the map, the preset and lighting quality, the render path, the GI drawn, the
+    /// resolution, the renderer and adapter; frame ms (mean, p99), GPU ms (mean, p99: 0 where not
+    /// measured), draw calls, objects and primitives per frame (mean, max), texture, buffer and video
+    /// memory (MiB, at the window's end).
+    /// </summary>
+    private void Budget(Api.Snapshot? c, StateView3D? view, List<double> sortedMs, double seconds)
+    {
+        var w = _window;
+        var gpu = w.Select(f => (double)f.GpuMs).OrderBy(x => x).ToList();
+        var level = c?.World.Level ?? "";
+        var tree = Engine.GetMainLoop() as SceneTree;
+        var root = tree?.Root;
+        var size = root?.Size ?? Vector2I.Zero;
+        bool remastered = level.Length > 0 && Remaster.RenderPaths.Remastered(level);
+        var wanted = Remaster.LightingLayers.For(level).Lighting.GiMode;
+        var gi = remastered ? Remaster.RemasterLighting.EffectiveGi(wanted) : Remaster.GiMode.None;
+        int voxels = root?.FindChildren("*", nameof(VoxelGI), true, false).Count(n => n is VoxelGI { Visible: true } vg && vg.IsVisibleInTree()) ?? 0;
+        static double Mib(Performance.Monitor m) => Math.Round(Performance.GetMonitor(m) / 1048576.0, 1);
+        var u = UserSettings.Current;
+        var record = new Dictionary<string, object>
+        {
+            ["level"] = level,
+            ["key"] = Remaster.PartIds.LevelKey(level),
+            ["save"] = GameSettings.Number("devsave", 0),
+            ["battle"] = c?.World.Battle == true,
+            ["preset"] = GameSettings.Arg("budget-preset") ?? u.Quality,
+            ["quality"] = u.Quality,
+            ["lighting"] = u.Lighting,
+            ["scale3d"] = root?.Scaling3DScale ?? 1f,
+            ["path"] = remastered ? "remastered" : "classic",
+            ["gi"] = gi.ToString(),
+            ["gi_nodes"] = voxels,
+            ["width"] = size.X,
+            ["height"] = size.Y,
+            ["renderer"] = RenderingServer.GetCurrentRenderingMethod(),
+            ["driver"] = RenderingServer.GetCurrentRenderingDriverName(),
+            ["adapter"] = RenderingServer.GetVideoAdapterName(),
+            ["display"] = DisplayServer.GetName(),
+            ["frames"] = w.Count,
+            ["seconds"] = Math.Round(seconds, 2),
+            ["frame_ms"] = Math.Round(sortedMs.Average(), 3),
+            ["frame_p99_ms"] = Math.Round(Pct(sortedMs, 0.99), 3),
+            ["gpu_ms"] = Math.Round(gpu.Count > 0 ? gpu.Average() : 0, 3),
+            ["gpu_p99_ms"] = Math.Round(Pct(gpu, 0.99), 3),
+            ["draw_calls"] = Math.Round(w.Average(f => f.Draws)),
+            ["draw_calls_max"] = w.Count > 0 ? w.Max(f => f.Draws) : 0,
+            ["objects"] = Math.Round(w.Average(f => f.Objects)),
+            ["primitives"] = Math.Round(w.Average(f => (double)f.Primitives)),
+            ["texture_mib"] = Mib(Performance.Monitor.RenderTextureMemUsed),
+            ["buffer_mib"] = Mib(Performance.Monitor.RenderBufferMemUsed),
+            ["video_mib"] = Mib(Performance.Monitor.RenderVideoMemUsed),
+            ["max_fps"] = Engine.MaxFps,
+            ["vsync"] = DisplayServer.WindowGetVsyncMode().ToString(),
+            ["when"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ", System.Globalization.CultureInfo.InvariantCulture),
+        };
+        var json = System.Text.Json.JsonSerializer.Serialize(record);
+        Print($"budget {json}");
+        if (GameSettings.Arg("bench-json") is { Length: > 0 } file)
+        {
+            try
+            {
+                System.IO.File.WriteAllText(file, json + "\n");
+            }
+            catch (Exception e)
+            {
+                GD.PrintErr($"ffx bench: cannot write {file}: {e.Message}");
+            }
+        }
     }
 
     private void Longest(string what, List<Frame> frames, int n)

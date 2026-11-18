@@ -1206,7 +1206,7 @@ public partial class StateView3D : Node3D
             bool standIn = f.Shown && !hasModel && showStandIns;
             if (f.Shown && coming)
                 pending++;
-            n.Root.Visible = f.Shown && (hasModel || standIn);
+            n.Root.Visible = f.Shown && (hasModel || standIn) && !HideCharacters;
             if (standIn || n.Marker != null)
             {
                 MakeStandIn(n);
@@ -1492,6 +1492,12 @@ public partial class StateView3D : Node3D
     }
 
     /// <summary>A character's root node (the checks; null: not shown).</summary>
+    /// <summary>
+    /// The characters left out of the picture (R8's sweep pictures: <c>-map.png</c>, the map without
+    /// the game's characters, whose wandering differs from run to run even at one game update).
+    /// </summary>
+    public static bool HideCharacters { get; set; }
+
     public Node3D? ActorRoot(ushort slot) => _actors.TryGetValue(slot, out var n) ? n.Root : null;
 
     /// <summary>Frames' attachments moved onto a remade bone so far (the checks).</summary>

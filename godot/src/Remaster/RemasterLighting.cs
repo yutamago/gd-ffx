@@ -367,9 +367,22 @@ public sealed partial class RemasterLighting : Node3D
         return r;
     }
 
-    /// <summary>The GI drawn for <paramref name="wanted"/>: none under Compatibility or the low quality; SDFGI only at high.</summary>
+    /// <summary>
+    /// <c>--gi=none|voxelgi|sdfgi</c> in the place of the map's own GI (R8's budgets measure the GI's
+    /// cost against none); without it <paramref name="wanted"/>.
+    /// </summary>
+    public static GiMode GiOverride(GiMode wanted) => GameSettings.Arg("gi")?.ToLowerInvariant() switch
+    {
+        "none" => GiMode.None,
+        "voxelgi" => GiMode.VoxelGi,
+        "sdfgi" => GiMode.Sdfgi,
+        _ => wanted,
+    };
+
+    /// <summary>The GI drawn for <paramref name="wanted"/> (after <see cref="GiOverride"/>): none under Compatibility or the low quality; SDFGI only at high.</summary>
     public static GiMode EffectiveGi(GiMode wanted)
     {
+        wanted = GiOverride(wanted);
         if (!UserSettings.ForwardPlus() || wanted == GiMode.LightmapGi)
             return GiMode.None;
         return UserSettings.Current.Lighting switch

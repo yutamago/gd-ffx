@@ -233,6 +233,34 @@ again, so the picture was washed out. With `ClassicPost` (the buffer kept in
 the game's values, the game's glow, then the decode: docs/architecture.md,
 "Colours") it scores 8.9 on both, and Compatibility 11.8.
 
+## The GPU checks
+
+```bash
+FFX_GAME_DIR=~/steam-games/FFX-X2-HD [FFX_REF_BESAID=REF.bmp] tools/gpu-checks.sh [OUT_DIR] [classic lighting materialize character rebuild effects budgets]
+```
+
+R8. The standing checks on the machine's GPU in one go: the Windows export
+(`tools/capped.sh tools/export.sh windows` first: default features), one check
+after another through `tools/compare-shot-win.sh`, silent (Dummy audio,
+`--background-window`), Vulkan (Forward+):
+
+| check | what |
+|---|---|
+| `classic` | Besaid (save 7) classic, scored against `FFX_REF_BESAID` (the player's screenshot of the original there; none: the picture only) |
+| `lighting` | `--selftest-lighting`: classic against remastered, R3's colour check |
+| `materialize` | `--selftest-materialize`: the GPU material pipeline's parity with the CPU, its times |
+| `character` | `--selftest-character`: the stand-in humanoid on Tidus |
+| `rebuild` | `--selftest-rebuild --devsave=14`: `ptkl14` rebuilt against its classic layers |
+| `effects` | `--selftest-effects`: Besaid's effects by id, the example remake |
+| `budgets` | `tools/budget.sh windows besaid` (only when named, or `FFX_GPU_BUDGETS=1`) |
+
+It prints a table (check, result, seconds, the key figure, the GPU) and writes it
+to `OUT_DIR/summary.txt` (default `/tmp/gd-ffx-gpu-checks`, a folder per check:
+pictures of the game, never in git). It exits 1 when a check fails. Remove the export
+(`build/windows`) and OUT_DIR after.
+
+R8_GPU_NUMBERS
+
 ## Sweeping the developer saves
 
 ```bash
@@ -267,6 +295,38 @@ effect draws and distortion, and the log's error and missing-classic
 counts (logs in `/tmp/gd-ffx-sweep`, cleared at the start). About 25 s a
 save. `FFX_CLASSIC=DIR`
 uses that classic cache instead of the project's.
+
+### Regression pictures
+
+```bash
+FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/sweep-devsaves.sh --pictures [quick|all|N,N,...] [OUT_DIR]
+tools/sweep-devsaves.sh accept [OUT_DIR] [N,N,...]     # the last picture run becomes the baseline
+```
+
+R8. With `--pictures` (or `FFX_SWEEP_PICTURES=1`) each save runs under Xvfb
+(OpenGL, Compatibility on llvmpipe; nothing on screen) and keeps its picture.
+The picture is taken at one game update (`--hold-shot`): 150 updates after the map has
+shown for 3 s, or the baseline's update (`--hold-update=U`). The last 30
+updates before it run at a quarter of the game's speed (ffx-host's clock), so
+the views see every update. At U they hold the snapshot itself
+(`GameStateView.HoldAtCurrent`: R7b's hold, at the update rather than between
+two), so the sea, the effects and the party show the same moment in every run.
+Then `devsave-N-map.png` is taken: the same moment without the game's
+characters (`StateView3D.HideCharacters`), because the NPCs' wandering differs
+between runs even at one update (Kilika's running child). The map picture is
+compared with the baseline's (`tools/compare/regress.py`: the mean absolute
+difference per channel, 0..255, the share of pixels off by more than 24, the
+worst cell of a 4 x 3 grid; `devsave-N-map-diff.png`: baseline, picture,
+difference x4). The whole picture's difference is reported beside it. Over
+`FFX_SWEEP_THRESHOLD` (0.5) the save's line says REGRESSED and the sweep exits 1.
+
+The baseline is pictures of the player's game and stays outside git:
+`FFX_SWEEP_BASELINE` (default `~/.cache/gd-ffx/sweep-baseline/`), a picture,
+its map picture and its update per save. `accept` copies the last picture
+run's (all saves, or the ones listed) into it: accept again after a change
+meant to alter the pictures, and after a Godot or driver upgrade.
+
+R8_SWEEP_NUMBERS
 
 ## Benchmark
 
@@ -624,6 +684,56 @@ update) took 0.008 ms a frame on average in the battle (p99 0.45 ms, at
 most 5.4 ms in one frame) and allocates nothing a frame; the frames are
 copied into kept buffers, the texture updated in place. The differences
 between the runs are their noise.
+
+## Budgets
+
+```bash
+FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/budget.sh [windows|linux] [besaid village kilika luca macalania N...]
+```
+
+R8. The benchmark (`--bench`) with its budget record (`--bench-json=FILE`,
+`ffx bench: budget {...}`): the map, the preset and lighting quality, the render
+path, the GI drawn, the resolution, the renderer and the adapter. It records the
+frame ms (mean, p99), the GPU ms of every viewport (`RenderingServer`'s
+measured render time; Forward+ only, n/a under Compatibility), draw calls,
+objects and primitives a frame, and texture, buffer and video memory. Each map
+gets five runs, uncapped (`--bench-uncapped --no-vsync`: the frame time shows the
+headroom) over a 10 s window after a 4 s settle:
+
+| run | settings |
+|---|---|
+| `classic-deck`, `remastered-deck` | the Steam Deck preset: 1280x800, `--quality=deck` (3D at 75 %, no MSAA, the low lighting quality: no GI, no volumetric fog or screen-space effects, shorter shadows) |
+| `classic-desktop` | 1920x1080, `--quality=high` |
+| `remastered-desktop` | the same, remastered, `--gi=none` |
+| `remastered-desktop-gi` | the same with `--gi=voxelgi` (the wizard's GI): the GI's cost is its GPU ms (else frame ms) minus the run without |
+
+`windows` (the default on WSL) runs the Windows export (`tools/capped.sh
+tools/export.sh windows` first) on the machine's GPU with Vulkan, behind every
+window (`--background-window`, Dummy audio). `linux` runs Godot on the project
+under Xvfb: OpenGL (Compatibility) on llvmpipe, or `FFX_BUDGET_DRIVER=vulkan`
+(Forward+ on lavapipe). The CPU renders there, so those numbers are marked
+llvmpipe or lavapipe and get no verdict. `tools/compare/budget.py` prints the
+table and holds each record against its preset's budgets. The table goes to
+`/tmp/gd-ffx-budget/budgets.json`, and a copy for the editor's status dashboard
+to the project's user folder (`remaster/budgets/<platform>.json`).
+
+The budgets (per map, `tools/compare/budget.py`):
+
+| preset | frame ms | GPU ms | draw calls | texture MiB | video MiB | GI ms |
+|---|---|---|---|---|---|---|
+| deck (on the Deck) | 16.7 | 16.7 | 2,000 | 1,536 | 3,072 | 0.5 (no GI at low) |
+| deck, measured on the Intel Arc 140T | 8.35 | 5.57 | 2,000 | 1,536 | 3,072 | 0.17 |
+| desktop (1920x1080, high; the Arc 140T as the low end) | 16.7 | 16.7 | 4,000 | 3,072 | 6,144 | 4.0 |
+
+**The Steam Deck is not here.** Real Deck numbers need the device: run the Linux
+export there (`BENCH_PROGRAM=` as for the benchmark, or `tools/budget.sh linux`
+with the Deck's own Vulkan driver). Until then the Deck's time budgets are held
+against the Arc 140T scaled by an estimate: the GPU's FP32 throughput, about
+1.6 TFLOPS for the Deck against about 4.5 for the Arc 140T, a factor of 3; the
+CPU about 2. Memory and draw calls are not scaled. A Deck verdict from the Arc is
+a warning sign, not a measurement.
+
+R8_BUDGET_NUMBERS
 
 ## Comparing with the original
 

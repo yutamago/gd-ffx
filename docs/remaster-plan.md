@@ -50,7 +50,7 @@ not: Godot is the renderer and the editor.
 | R6 | Characters: higher-detail models, retargeting to the game's bones, skin/hair/eye shaders, cloth (the game's simulation or Godot's), faces | R1 |
 | R7a | Effects as Godot particles by effect id, audio replacement by id, movies | R1-R3 |
 | R7b | The rest: 2D rooms rebuilt in 3D, UI art (done: R7 complete) | R1-R3, R5 |
-| R8 | Quality: before/after renders of every map, a status dashboard, regression pictures in the sweep, performance budgets (Steam Deck), the GPU checks | all |
+| R8 | Quality: before/after renders of every map, a status dashboard, regression pictures in the sweep, performance budgets (Steam Deck), the GPU checks (done: the plan's milestones complete) | all |
 
 ## R1 in detail
 
@@ -254,7 +254,7 @@ Open after R3:
   default, and Besaid's lagoon is still paler than the classic one;
 - volumes by the player's place (now the camera's), per-field layering of
   lighting files, the VoxelGI bake seeing the PBR materials' emission;
-- the Steam Deck's budgets measured on the device (R8);
+- the Steam Deck's budgets measured on the device (R8: the tools and the budgets; the device is not at hand);
 - ~~R4's wizard: the defaults are its first pass; the wizard tunes them per map
   (exposure from the classic picture~~ (R4), the vertex light against added lights).
 
@@ -862,6 +862,116 @@ Open after R7b:
 - a spell cast in a check, to see the documented test on gd-ffx's side;
 - a field-program entry with `0x100` (none seen; `rcbgFPmRestart`'s maps).
 
+## R8 in detail
+
+R8, quality, is done; with it every milestone of the plan is (2026-11-18;
+docs/remaster-editor.md, "Before/after renders", "The status dashboard";
+docs/running.md, "Regression pictures", "Budgets", "The GPU checks";
+docs/building.md, "Privacy and the quick gates"):
+
+- **Before/after renders of every map** (`RenderBatch`): in the editor, offscreen, a
+  map after another. A 3D map is drawn classic (nothing of the project's), then
+  with the project's overrides, textures, materials and lighting on the
+  remastered path, from the game's camera of R5's capture or three views over
+  the walk mesh, with R3's colour check. A 2D-layer map shows its classic layers
+  from each scene camera, and its rebuilt room from those cameras and from above
+  where the project has one, with the mean difference. Headless-capable under
+  Xvfb (`--remaster-renders --maps=...|changed|all`), resumable (`renders.json`
+  saved after every map; a map drawn is kept unless the project changed it),
+  the time per map kept; into `user://remaster/renders/` or `--renders-dir`.
+- **The status dashboard** (`StatusDock`, a bottom panel; `RemasterStatus`): every
+  map with its status, what the project changes on it, its renders' thumbnail
+  and colour check, its budgets; filters, sorting, a summary of the project's
+  progress; **Render** and **Report** (`tools/remaster-report.sh`: an HTML page
+  with the pictures beside it, outside git, links checked).
+- **Regression pictures in the sweep** (`tools/sweep-devsaves.sh --pictures`):
+  each save's picture under Xvfb, held at one game update (the game slowed to a
+  quarter for the last 30 updates so the views hold that update itself), then
+  the same moment without the game's characters, compared with a baseline kept
+  outside git (`~/.cache/gd-ffx/sweep-baseline/`; `accept` takes the last run).
+- **Performance budgets** (`tools/budget.sh`, `tools/compare/budget.py`): per map,
+  classic and remastered, at the Deck preset and at desktop settings, frame and
+  GPU ms, draw calls, texture and video memory, the GI's cost; on the Windows
+  GPU through the export, and on llvmpipe (marked so); the budgets per preset in
+  docs/running.md, the results in the dashboard.
+- **The GPU checks in one go** (`tools/gpu-checks.sh`): the classic picture score,
+  the lighting colour check, the material pipeline's parity and speed, the
+  character, the rebuilt room, the effects, on the Windows export with Vulkan,
+  silent and behind every window; a summary table.
+- **A privacy check** (`tools/check-privacy.py`) and **the quick gates**
+  (`tools/check-all.sh`) before every push.
+
+R8_PLAN_NUMBERS
+
+### Decisions (R8)
+
+- **The renders are the editor's, not the game's.** A map is drawn from its
+  classic import in an offscreen viewport, as the wizard's review does (its
+  viewpoints shared), so every map can be drawn without a developer save there.
+  The game's own picture of a map is the sweep's (the saves). Script-moved parts stand where the
+  file puts them, and moved overrides are offsets on that place. The game's
+  camera comes from R5's capture when the game has shown the map on this
+  machine.
+- **"Before" is the classic game, "after" is the remastered path.** The before
+  picture binds none of the project's textures (`RemasterTextures.Suspended`),
+  the after picture is always the lit path with the project's materials and
+  lighting (or R3's defaults), whatever the map's own render path. So an
+  untouched map shows what the remaster's starting point gives it, and the
+  colour check measures every map the same way. A remade map scene replaces the
+  classic map in the after picture.
+- **2D rooms from their fixed cameras.** The game has no other view of them. The
+  classic picture is a rebuilt room made from the layers, which from the scene
+  camera is the classic room (R7b: 0.00 to 0.05/255). A project's rebuilt room
+  is drawn from the same cameras, plus one view from above and behind, where
+  its model shows.
+- **Resumable by record.** `renders.json` keeps what the project changed on the
+  map when it was drawn. A later batch keeps a map whose record still says the
+  same and draws it again otherwise; `--renders-again` draws all.
+- **A bottom panel for the dashboard.** Its table wants width; the Materials tab
+  holds the plugin's one main screen and the side docks are full.
+- **Only what the files tie to a map is per map.** Overrides, additions,
+  lighting, rebuilt rooms and remade scenes are per map. Textures and materials
+  go per map through the where-used index, effects by their field-program id
+  `<map>-fp<n>`. Remade characters, sounds, movies and UI art belong to no map
+  in the project's files, so they are counted in the summary only.
+- **The sweep's pictures hold one update and leave the NPCs out.** R7b's hold
+  froze the views at one moment within a run. Two runs freeze at different
+  updates (1.35/255 on Besaid two updates apart), so the hold waits for the
+  baseline's update, slowing the game for the last 30 updates (ffx-host's
+  clock) so the views see it, and draws that snapshot itself (alpha 1). The party
+  and the map are then the same to 0.02/255, but the NPCs' wandering is not
+  (Kilika's running child, 1.63/255 at the same update), so the compared picture
+  leaves the characters out and the whole picture is reported beside it. The
+  threshold is 0.5/255.
+- **Budgets held on another GPU are estimates.** No Deck is at hand. The Deck
+  preset is measured on the Intel Arc 140T (Vulkan, the Windows export) and held
+  against the Deck's 60 fps divided by an estimated factor (GPU 3, CPU 2: FP32
+  throughput and single-thread speed). llvmpipe and lavapipe numbers get no
+  verdict. Budgets measure uncapped (vsync and the Deck's 60 fps cap off), so the
+  frame time is headroom, not the cap.
+- **The GI's cost is a difference.** The remastered desktop run with VoxelGI
+  against the same without GI (`--gi=`, a run-time override of the map's GI). At
+  the Deck's low quality there is no GI.
+- **The privacy check reuses the export's patterns** (`tools/export-files.py`):
+  the names come from the environment at run time, so the check names no one.
+  In binary files an address counts only when it reads as one: images hold
+  random `x@y.z` bytes. Git history is not rewritten.
+
+### Open after R8
+
+- real Steam Deck measurements (the device); the Deck factor checked against them;
+- renders with the script-moved parts where the game puts them (R5's capture
+  holds their worlds), several captures per map, the battle stages' cameras;
+- the renders' views of a map without a capture are three generic views, which
+  can miss the map (a small room drawn from outside);
+- a texture's or a character's own dashboard (per texture: the maps it is on,
+  its material, its profile), characters and sounds by area once the game's
+  data ties them to maps;
+- the regression pictures of battles and of the remastered path
+  (`FFX_SWEEP_ARGS=--render-path=remastered` works; no baseline is kept for it);
+- GPU budgets of every map (the quick sweep's ten saves, then all), and on
+  other GPUs.
+
 ## Beyond the milestones
 
 - **Art direction and references.** A per-area reference board, the
@@ -873,4 +983,5 @@ Open after R7b:
 - **Collaboration.** Packs in layers (base remaster, per-area work,
   personal tweaks), text resources for git, a conflict report.
 - **Performance.** Budgets per map (draw calls, texture memory, GI cost)
-  checked against the Steam Deck preset.
+  checked against the Steam Deck preset (R8: measured on the development
+  machine's GPU; the Deck itself next).
