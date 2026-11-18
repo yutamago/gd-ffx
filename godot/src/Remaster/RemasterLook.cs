@@ -291,6 +291,15 @@ public sealed class MapLook
         }
     }
 
+    /// <summary>The classic material of <paramref name="mesh"/>'s surface <paramref name="surface"/> when this look swaps it (null: not one of its surfaces).</summary>
+    public Material? ClassicOf(MeshInstance3D mesh, int surface)
+    {
+        foreach (var (m, s, c) in _surfaces)
+            if (m == mesh && s == surface)
+                return c;
+        return null;
+    }
+
     /// <summary>The meshes taken for the sky (<see cref="FindSky"/>), by name: they keep the classic look.</summary>
     public readonly List<string> Sky = new();
 

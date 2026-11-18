@@ -34,7 +34,7 @@ public sealed class EditorSelfTest
     public static readonly Vector3 MoveBy = new(0, 20, 0);
     public static readonly Vector3 BoxAbove = new(0, 30, 0);
 
-    private enum Phase { Archive, Open, Edit, Save, Reopen, Status, Uses, Textures, Batch, Imported, Lighting, LightingReopen, Shot, Done }
+    private enum Phase { Archive, Open, Edit, Save, Reopen, Status, Uses, Textures, Batch, Imported, Lighting, LightingReopen, Materials, MaterialsImported, Shot, Done }
 
     /// <summary>The game's key light as the check's stand-in look says it travels (Besaid beach's, as the game shows it).</summary>
     public static readonly Vector3 LookKey = new Vector3(0.04f, -0.54f, -0.84f).Normalized();
@@ -268,8 +268,28 @@ public sealed class EditorSelfTest
                 }
                 if (_plugin.Current is not { Built: true, Lighting: not null } root || _frames < 4)
                     return _phaseT > 60 ? "the map did not open again" : null;
+                // the map's own frame switches the preview on: a map built in this frame has not had one yet
+                if (!root.Lighting.Rig.Active && _builtWait++ < 600)
+                    return null;
                 if (LightingReopened(root) is { } bad)
                     return bad;
+                Next(Phase.Materials);
+                return null;
+            }
+            case Phase.Materials:
+            {
+                _matFlow ??= MaterialsFlow(_plugin.Current!);
+                if (_matFlow.MoveNext())
+                    return _matFlow.Current;
+                Next(Phase.MaterialsImported);
+                return null;
+            }
+            case Phase.MaterialsImported:
+            {
+                if (EditorInterface.Singleton.GetResourceFilesystem().IsScanning() || TextureStore.Importing || _frames < 3)
+                    return _phaseT > 120 ? "the import did not finish" : null;
+                if (!TextureStore.AllImported(out var missing))
+                    return _phaseT > 120 ? $"not imported: {missing}" : null;
                 Next(GameSettings.Arg("editor-shot") is { Length: > 0 } && DisplayServer.GetName() != "headless" ? Phase.Shot : Phase.Done);
                 return null;
             }
@@ -965,6 +985,358 @@ public sealed class EditorSelfTest
         _seen.Add($"pictures {path0}, its -window.png and -dock.png");
         Next(Phase.Done);
         return null;
+    }
+
+    // ---- R2b: the Materials tab ---------------------------------------------------------------------
+
+    private IEnumerator<string?>? _matFlow;
+    private int _builtWait;
+    private double _saveMs;
+
+    /// <summary>
+    /// The Materials tab on Besaid (docs/remaster-materials.md, "Checks"; phase 1): three
+    /// textures queued (the Textures dock's Materialize and the tab's own add), every step
+    /// entered, a setting dragged (one undo step: the height and the maps after it made again,
+    /// the albedo not; the preview's pixels changed under a renderer), the latency of several
+    /// changes, undo and redo, a map imported and one skipped, the texture switched with the
+    /// settings kept, saved into the texture layer (one undo step, undone, redone), the open map's
+    /// textures added; pictures under a renderer. Yields null to wait a frame, a text to fail.
+    /// </summary>
+    private IEnumerator<string?> MaterialsFlow(MapEditRoot root)
+    {
+        var tab = _plugin.Materials;
+        if (tab == null)
+        {
+            yield return "no Materials tab";
+            yield break;
+        }
+        var global = Undo.GetHistoryUndoRedo((int)EditorUndoRedoManager.SpecialHistory.GlobalHistory);
+        bool shots = GameSettings.Arg("editor-shot") is { Length: > 0 } && DisplayServer.GetName() != "headless";
+        string shotDir = shots ? GameSettings.Arg("editor-shot")!.GetBaseDir() : "";
+        _plugin.ShowMaterials();
+        yield return null;
+        yield return null;
+        if (!tab.IsVisibleInTree())
+        {
+            yield return "the Materials tab is not shown as a main screen";
+            yield break;
+        }
+        // three of Besaid's textures (not the ones R2's check edited), the most drawn first
+        var onMap = TextureActions.OnMap(root);
+        var ids = _plugin.Uses.ByLevel[Key].Where(onMap.ContainsKey).Where(id => id != _replaced && id != _material)
+            .OrderByDescending(id => onMap[id]).ThenBy(id => id, System.StringComparer.Ordinal).Take(3).ToList();
+        if (ids.Count < 3)
+        {
+            yield return $"only {ids.Count} textures to queue";
+            yield break;
+        }
+        var dock = _plugin.Textures!;
+        dock.SetFilter(TextureDock.ModeMap, RemasterTextures.ShortName(ids[0]));
+        dock.Select(ids[0]);
+        int added = _plugin.Materialize(dock.SelectedIds());
+        added += tab.Add(ids.Skip(1));
+        if (added != 3 || tab.Queue.Count != 3 || tab.Current != ids[0])
+        {
+            yield return $"queued {added}, the queue {tab.Queue.Count}, current {tab.Current}";
+            yield break;
+        }
+        string? fail = null;
+        IEnumerable<string?> WaitIdle(string what, double limit = 90)
+        {
+            double t0 = _t;
+            while (!tab.Idle)
+            {
+                if (_t - t0 > limit)
+                {
+                    fail = $"{what}: the maps were not made in {limit} s";
+                    yield break;
+                }
+                yield return null;
+            }
+        }
+        foreach (var w in WaitIdle("the first texture")) yield return w;
+        if (fail != null) { yield return fail; yield break; }
+        // small first, then refined
+        var arrivals = tab.Arrivals.ToList();
+        int small = arrivals.Count > 0 ? arrivals[0].Side : 0;
+        if (arrivals.Count < 9 || (small == MaterialPipeline.SmallSide && arrivals.FindIndex(a => a.Side != small) < 9))
+        {
+            yield return $"the maps arrived as {string.Join(", ", arrivals.Select(a => $"{a.Step}@{a.Side}"))}";
+            yield break;
+        }
+        // every step entered: its map made at the working size
+        var dims = new List<string>();
+        foreach (var s in MaterialPipeline.Steps)
+        {
+            tab.SelectStep(s);
+            foreach (var w in WaitIdle($"step {s}")) yield return w;
+            if (fail != null) { yield return fail; yield break; }
+            if (tab.Pixels(s) is not { } px || tab.Step != s)
+            {
+                yield return $"step {s}: no map";
+                yield break;
+            }
+            dims.Add($"{s} {px.Width}x{px.Height}");
+        }
+        _seen.Add($"materials tab: 3 queued (the dock's Materialize, the tab's add), every step made ({dims[^1]}); small first ({small} px)");
+        // a slider dragged: one undo step, the height and the maps after it made again, the albedo kept
+        tab.SelectStep(MaterialStep.Height);
+        foreach (var w in WaitIdle("height")) yield return w;
+        if (fail != null) { yield return fail; yield break; }
+        var a0 = tab.Pixels(MaterialStep.Albedo)!;
+        var h0 = tab.Pixels(MaterialStep.Height)!;
+        var n0 = tab.Pixels(MaterialStep.Normal)!;
+        Image? p0 = null;
+        if (shots)
+        {
+            for (int i = 0; i < 12; i++) yield return null;
+            p0 = tab.Preview.CaptureMaterial();
+        }
+        var v = global.GetVersion();
+        tab.Drag("HeightContrast", 1.4, 1.8, 2.2);
+        if (global.GetVersion() != v + 1 || !Mathf.IsEqualApprox(tab.Recipe.HeightContrast, 2.2f))
+        {
+            yield return $"the drag: {global.GetVersion() - v} undo step(s), contrast {tab.Recipe.HeightContrast}";
+            yield break;
+        }
+        foreach (var w in WaitIdle("the drag")) yield return w;
+        if (fail != null) { yield return fail; yield break; }
+        var lat = new List<string> { $"height contrast {tab.Latency.Small:0}/{tab.Latency.Refined:0}/{tab.Latency.All:0}" };
+        var lats = new List<(double S, double R, double A)> { tab.Latency };
+        if (tab.Pixels(MaterialStep.Height)!.Rgba.SequenceEqual(h0.Rgba) || tab.Pixels(MaterialStep.Normal)!.Rgba.SequenceEqual(n0.Rgba))
+        {
+            yield return "the drag did not change the height and the normal map";
+            yield break;
+        }
+        if (!ReferenceEquals(tab.Pixels(MaterialStep.Albedo), a0))
+        {
+            yield return "the drag made the albedo again (it is upstream of the height)";
+            yield break;
+        }
+        string previewNote = "no renderer: the preview's pixels not checked";
+        if (shots)
+        {
+            for (int i = 0; i < 12; i++) yield return null;
+            var p1 = tab.Preview.CaptureMaterial();
+            double d = p0 != null && p1 != null ? MeanDiff(p0, p1) : -1;
+            if (d < 0.2)
+            {
+                yield return $"the preview's pixels did not change with the setting (mean difference {d:0.###})";
+                yield break;
+            }
+            previewNote = $"the preview's pixels changed (mean difference {d:0.##} of 255)";
+        }
+        // more changes, for the latency: a step's own setting, then one upstream of every map
+        foreach (var (step, prop, vals) in new (MaterialStep, string, double[])[]
+        {
+            (MaterialStep.Normal, "NormalStrength", [6.0]), (MaterialStep.Roughness, "RoughnessBase", [0.6]),
+            (MaterialStep.Height, "HeightBlur", [2.0]), (MaterialStep.Albedo, "Delight", [0.8]),
+        })
+        {
+            tab.SelectStep(step);
+            foreach (var w in WaitIdle($"step {step}")) yield return w;
+            if (fail != null) { yield return fail; yield break; }
+            tab.Drag(prop, vals);
+            foreach (var w in WaitIdle(prop)) yield return w;
+            if (fail != null) { yield return fail; yield break; }
+            lats.Add(tab.Latency);
+            lat.Add($"{prop} {tab.Latency.Small:0}/{tab.Latency.Refined:0}/{tab.Latency.All:0}");
+        }
+        var a1 = tab.Pixels(MaterialStep.Albedo)!;
+        // undo and redo the last (the de-lighting): the albedo back as it was, then again
+        global.Undo();
+        foreach (var w in WaitIdle("undo")) yield return w;
+        if (fail != null) { yield return fail; yield break; }
+        if (!Mathf.IsEqualApprox(tab.Recipe.Delight, 0.6f) || !tab.Pixels(MaterialStep.Albedo)!.Rgba.SequenceEqual(a0.Rgba))
+        {
+            yield return $"undo: de-lighting {tab.Recipe.Delight}, the albedo {(tab.Pixels(MaterialStep.Albedo)!.Rgba.SequenceEqual(a0.Rgba) ? "as before" : "not as before")}";
+            yield break;
+        }
+        global.Redo();
+        foreach (var w in WaitIdle("redo")) yield return w;
+        if (fail != null) { yield return fail; yield break; }
+        if (!Mathf.IsEqualApprox(tab.Recipe.Delight, 0.8f) || !tab.Pixels(MaterialStep.Albedo)!.Rgba.SequenceEqual(a1.Rgba))
+        {
+            yield return "redo did not make the albedo with the de-lighting again";
+            yield break;
+        }
+        // the same at 1024 px: upscaled x2 (Besaid's textures are 512 px), then a height and a de-lighting change
+        tab.SelectStep(MaterialStep.Source);
+        tab.Drag("Upscale", 2);
+        foreach (var w in WaitIdle("upscale")) yield return w;
+        if (fail != null) { yield return fail; yield break; }
+        var lats1k = new List<(double S, double R, double A)>();
+        var lat1k = new List<string> { $"Upscale {tab.Latency.Small:0}/{tab.Latency.Refined:0}/{tab.Latency.All:0}" };
+        int side1k = tab.Pixels(MaterialStep.Albedo)!.Width;
+        foreach (var (step, prop, vals) in new (MaterialStep, string, double[])[]
+        {
+            (MaterialStep.Height, "HeightContrast", [2.0]), (MaterialStep.Normal, "NormalStrength", [5.0]),
+            (MaterialStep.Roughness, "RoughnessBase", [0.65]), (MaterialStep.Albedo, "Delight", [0.7]),
+            (MaterialStep.Height, "HeightContrast", [2.2]),
+        })
+        {
+            tab.SelectStep(step);
+            foreach (var w in WaitIdle($"step {step}")) yield return w;
+            if (fail != null) { yield return fail; yield break; }
+            tab.Drag(prop, vals);
+            foreach (var w in WaitIdle(prop)) yield return w;
+            if (fail != null) { yield return fail; yield break; }
+            lats1k.Add(tab.Latency);
+            lat1k.Add($"{prop} {tab.Latency.Small:0}/{tab.Latency.Refined:0}/{tab.Latency.All:0}");
+        }
+        // a map imported (a synthetic gradient, outside the project) and one skipped, one undo step each
+        var grad = Image.CreateEmpty(64, 64, false, Image.Format.Rgba8);
+        for (int y = 0; y < 64; y++)
+            for (int x = 0; x < 64; x++)
+                grad.SetPixel(x, y, new Color(x / 63f, x / 63f, x / 63f));
+        var gradFile = GameSettings.Globalize($"{MapStore.Dir}/check-roughness.png");
+        grad.SavePng(gradFile);
+        v = global.GetVersion();
+        if (tab.Import(MaterialStep.Roughness, gradFile) is { } impErr || global.GetVersion() != v + 1)
+        {
+            yield return $"import: {global.GetVersion() - v} undo step(s)";
+            yield break;
+        }
+        tab.SetMode(MaterialStep.Occlusion, StepMode.Skip);
+        if (global.GetVersion() != v + 2)
+        {
+            yield return "skip: not one undo step";
+            yield break;
+        }
+        foreach (var w in WaitIdle("import and skip")) yield return w;
+        if (fail != null) { yield return fail; yield break; }
+        var rough = tab.Pixels(MaterialStep.Roughness)!;
+        var ao = tab.Pixels(MaterialStep.Occlusion)!;
+        int Px(GdFfx.Remaster.Texturing.RgbaImage im, int x, int y) => im.Rgba[(y * im.Width + x) * 4];
+        if (Px(rough, 1, rough.Height / 2) > 40 || Px(rough, rough.Width - 2, rough.Height / 2) < 215 || ao.Rgba.Where((b, i) => i % 4 == 0).Any(b => b != 255)
+            || tab.OrmPixels is not { } orm || orm.Rgba[(rough.Width - 2) * 4 + 1] < 215)
+        {
+            yield return $"import/skip: roughness {Px(rough, 1, rough.Height / 2)}..{Px(rough, rough.Width - 2, rough.Height / 2)}, occlusion not all white or the ORM not packed";
+            yield break;
+        }
+        // the next texture: the settings kept, its own maps made
+        var albedoBefore = tab.Pixels(MaterialStep.Albedo)!;
+        tab.Next(1);
+        if (tab.Current != ids[1] || !Mathf.IsEqualApprox(tab.Recipe.HeightContrast, 2.2f) || tab.Recipe.RoughnessMode != StepMode.Import
+            || tab.Recipe.OcclusionMode != StepMode.Skip)
+        {
+            yield return $"switch: current {tab.Current}, contrast {tab.Recipe.HeightContrast}, roughness {tab.Recipe.RoughnessMode}, occlusion {tab.Recipe.OcclusionMode}";
+            yield break;
+        }
+        foreach (var w in WaitIdle("the second texture")) yield return w;
+        if (fail != null) { yield return fail; yield break; }
+        if (tab.Pixels(MaterialStep.Albedo) is not { } albedoNext || albedoNext.Rgba.SequenceEqual(albedoBefore.Rgba))
+        {
+            yield return "switch: the albedo was not made for the next texture";
+            yield break;
+        }
+        // shots of the tab (the height step, the studio; an HDRI; the game piece in the map's light, classic on the left)
+        if (shots)
+        {
+            tab.SelectStep(MaterialStep.Height);
+            foreach (var w in WaitIdle("shot")) yield return w;
+            for (int i = 0; i < 20; i++) yield return null;
+            Window($"{shotDir}/materials-studio.png");
+            tab.SetLightForCheck(PreviewLight.Hdri, 0);
+            for (int i = 0; i < 30; i++) yield return null;
+            Window($"{shotDir}/materials-hdri.png");
+            tab.SetShapeForCheck(MaterialPreview.Object);
+            tab.SetCompareForCheck(1);
+            tab.SetLightForCheck(PreviewLight.Map, 0);
+            tab.SelectStep(MaterialStep.Normal);
+            for (int i = 0; i < 40; i++) yield return null;
+            Window($"{shotDir}/materials-object.png");
+        }
+        // saved: the maps at the full size, the material, the settings, one undo step
+        var saveId = tab.Current!;
+        v = global.GetVersion();
+        if (tab.Save() is { } saveErr)
+        {
+            yield return saveErr;
+            yield break;
+        }
+        double ts = _t;
+        var saveClock = System.Diagnostics.Stopwatch.StartNew();
+        while (tab.Saving)
+        {
+            if (_t - ts > 120) { yield return "the save did not finish"; yield break; }
+            yield return null;
+        }
+        _saveMs = saveClock.Elapsed.TotalMilliseconds;
+        if (global.GetVersion() != v + 1 || TextureStore.Find(saveId) is not { Material.Length: > 0, Recipe: { } saved } entry)
+        {
+            yield return $"save: {tab.SaveResult}; {global.GetVersion() - v} undo step(s)";
+            yield break;
+        }
+        var matText = FileAccess.GetFileAsString(TextureStore.Absolute(entry.Material));
+        if (saved.Version != 2 || !Mathf.IsEqualApprox(saved.HeightContrast, 2.2f) || saved.Upscale != 2 || saved.OcclusionMode != StepMode.Skip || saved.RoughnessMode != StepMode.Import
+            || !saved.RoughnessFile.Contains("import-roughness") || saved.RoughnessFile.StartsWith('/') || saved.RoughnessFile.Contains(':')
+            || !matText.Contains("orm_texture = ExtResource") || !matText.Contains("albedo_texture = ExtResource"))
+        {
+            yield return $"saved: version {saved.Version}, contrast {saved.HeightContrast}, occlusion {saved.OcclusionMode}, roughness {saved.RoughnessMode} '{saved.RoughnessFile}'";
+            yield break;
+        }
+        var ormFile = matText.Split('\n').FirstOrDefault(l => l.Contains("id=\"orm\""));
+        var ormPath = ormFile?.Split("path=\"")[1].Split('"')[0];
+        var ormImg = ormPath != null ? Image.LoadFromFile(ProjectSettings.GlobalizePath(ormPath)) : null;
+        if (ormImg == null || ormImg.GetPixel(ormImg.GetWidth() / 2, ormImg.GetHeight() / 2).R < 0.99f)
+        {
+            yield return $"the saved ORM ({ormPath}) does not hold the skipped occlusion (white)";
+            yield break;
+        }
+        global.Undo();
+        if (TextureStore.Find(saveId)?.Material is { Length: > 0 })
+        {
+            yield return "undo did not take the saved material back";
+            yield break;
+        }
+        global.Redo();
+        if (TextureStore.Find(saveId)?.Material is not { Length: > 0 })
+        {
+            yield return "redo did not save the material again";
+            yield break;
+        }
+        // the open map's textures
+        int more = tab.AddOpenMap();
+        if (tab.Queue.Count != onMap.Count)
+        {
+            yield return $"the open map's textures: {tab.Queue.Count} queued, the map draws {onMap.Count}";
+            yield break;
+        }
+        static double Median(IEnumerable<double> x) { var l = x.OrderBy(a => a).ToList(); return l[l.Count / 2]; }
+        int side0 = a0.Width;
+        var summary = $"latency (ms, small/refined/all, median of {lats.Count}) at {side0} px: {Median(lats.Select(l => l.S)):0}/{Median(lats.Select(l => l.R)):0}/{Median(lats.Select(l => l.A)):0}, "
+            + $"at {side1k} px (median of {lats1k.Count}): {Median(lats1k.Select(l => l.S)):0}/{Median(lats1k.Select(l => l.R)):0}/{Median(lats1k.Select(l => l.A)):0}; save {_saveMs:0} ms";
+        GD.Print($"ffx editortest: materials {summary}; each at {side0} px: {string.Join("; ", lat)}; at {side1k} px: {string.Join("; ", lat1k)}");
+        _seen.Add($"materials: a drag one undo step (height and normal made again, albedo kept; {previewNote}); {summary}; "
+            + $"undo/redo; roughness imported, occlusion skipped; switched texture, settings kept; saved {ormImg.GetWidth()} px maps "
+            + $"({entry.Material.GetFile()}, one undo step, undone, redone); +{more} from the open map");
+        // the 3D view again for the pictures after
+        EditorInterface.Singleton.SetMainScreenEditor("3D");
+        yield return null;
+    }
+
+    private static void Window(string path)
+    {
+        DirAccess.MakeDirRecursiveAbsolute(path.GetBaseDir());
+        EditorInterface.Singleton.GetBaseControl().GetViewport().GetTexture().GetImage().SavePng(path);
+        GD.Print($"ffx editortest: picture {path}");
+    }
+
+    /// <summary>The mean absolute difference of two pictures' RGB (0..255; -1: different sizes).</summary>
+    private static double MeanDiff(Image a, Image b)
+    {
+        if (a.GetSize() != b.GetSize())
+            return -1;
+        a.Convert(Image.Format.Rgba8);
+        b.Convert(Image.Format.Rgba8);
+        var x = a.GetData();
+        var y = b.GetData();
+        long sum = 0;
+        for (int i = 0; i < x.Length; i++)
+            if (i % 4 != 3)
+                sum += System.Math.Abs(x[i] - y[i]);
+        return sum / (x.Length * 0.75);
     }
 
     private void Finish(bool pass, string note)

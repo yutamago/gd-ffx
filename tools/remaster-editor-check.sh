@@ -20,6 +20,10 @@
 #     volume added, undo/redo, lighting.tres saved (the same twice), opened again;
 #     the game applies the overrides and the lighting (drawn remastered: the key
 #     light as turned, the exposure, the volume);
+#     then R2b: the Materials tab (three textures queued, every step, a slider
+#     dragged, the latency at 512 and 1024 px, undo/redo, a map imported and one
+#     skipped, the next texture with the settings kept, saved; with
+#     FFX_EDITOR_SHOT=1 also OUT_DIR/materials-*.png);
 #  4. the R1a example's hand-written overrides opened in the editor, shown as
 #     edits, and saved back with the same meaning (--remaster-editor-roundtrip).
 #

@@ -135,7 +135,7 @@ public static class PbrBuilder
             m.EmissionEnabled = true;
             m.EmissionTexture = emission;
             m.Emission = Colors.White;
-            m.EmissionEnergyMultiplier = 1f;
+            m.EmissionEnergyMultiplier = r.EmissionEnergy;
         }
         return m;
     }

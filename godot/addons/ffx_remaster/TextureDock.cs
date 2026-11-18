@@ -109,7 +109,13 @@ void fragment() {
         _list.SetColumnCustomMinimumWidth(1, 80);
         _list.SetColumnExpand(2, false);
         _list.SetColumnCustomMinimumWidth(2, 110);
-        _list.ItemSelected += () => Select(_list.GetSelected()?.GetMetadata(0).AsString());
+        // several at once (Materialize takes them all); the last one clicked is the selected texture
+        _list.SelectMode = Tree.SelectModeEnum.Multi;
+        _list.MultiSelected += (item, _, on) =>
+        {
+            if (on)
+                Select(item.GetMetadata(0).AsString());
+        };
         col.AddChild(_list);
         _id = new Label { AutowrapMode = TextServer.AutowrapMode.Arbitrary };
         col.AddChild(_id);
@@ -144,6 +150,8 @@ void fragment() {
                 ?? $"{RemasterTextures.ShortName(id)}: material generated")));
         Add(row, "Edit material", "Open its material in the inspector", () => Act(id => Say(TextureActions.EditMaterial(id) ? "" : "no material yet")));
         Add(row, "Recipe", "Open its material's recipe in the inspector (Generate uses it)", EditRecipe);
+        Add(row, "Materialize", "Add the selected textures (several: Ctrl/Shift+click) to the Materials tab's queue and open the tab",
+            () => Say(SelectedIds() is { Count: > 0 } ids ? $"{_plugin.Materialize(ids)} texture(s) added to the Materials tab" : "select a texture first"));
         col.AddChild(new Label { Text = "Used by (double click: open the map, select the part)" });
         _uses = new ItemList { CustomMinimumSize = new Vector2(0, 110), SizeFlagsVertical = SizeFlags.ExpandFill };
         _uses.ItemActivated += i => OpenUse((int)i);
@@ -264,6 +272,18 @@ void fragment() {
                 it.Select(0);
             Listed.Add(id);
         }
+    }
+
+    /// <summary>The textures selected in the list (several with Ctrl/Shift+click), else the selected one.</summary>
+    public List<string> SelectedIds()
+    {
+        var r = new List<string>();
+        for (var it = _list.GetNextSelected(null); it != null; it = _list.GetNextSelected(it))
+            if (it.GetMetadata(0).AsString() is { Length: > 0 } id)
+                r.Add(id);
+        if (r.Count == 0 && _selected != null)
+            r.Add(_selected);
+        return r;
     }
 
     private string UsedText(string id)

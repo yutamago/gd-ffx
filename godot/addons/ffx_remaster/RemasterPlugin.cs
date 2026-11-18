@@ -25,6 +25,7 @@ public partial class RemasterPlugin : EditorPlugin
     private TextureDock? _textures;
     private CheckButton? _lookToggle;
     private PartInspector? _inspector;
+    private MaterialsTab? _materials;
     private EditorSelfTest? _test;
 
     /// <summary>The map edit scene being edited (null: another scene, or none).</summary>
@@ -33,6 +34,25 @@ public partial class RemasterPlugin : EditorPlugin
     public MapBrowserDock? Dock => _dock;
 
     public TextureDock? Textures => _textures;
+
+    /// <summary>The Materials tab (R2b: docs/remaster-materials.md), a main screen beside 2D, 3D, Script and Game.</summary>
+    public MaterialsTab? Materials => _materials;
+
+    /// <summary>The main screen's name: the plugin's main screen is the Materials tab.</summary>
+    public const string MainScreen = "Materials";
+
+    /// <summary>Shows the Materials tab.</summary>
+    public void ShowMaterials() => EditorInterface.Singleton.SetMainScreenEditor(MainScreen);
+
+    /// <summary>Adds <paramref name="ids"/> to the Materials tab's queue and shows it; how many were new.</summary>
+    public int Materialize(IEnumerable<string> ids)
+    {
+        if (_materials == null)
+            return 0;
+        int n = _materials.Add(ids);
+        ShowMaterials();
+        return n;
+    }
 
     /// <summary>The where-used index (built after the archive opens, cached in <c>user://</c>).</summary>
     public WhereUsed Uses { get; } = new();
@@ -55,6 +75,10 @@ public partial class RemasterPlugin : EditorPlugin
         AddControlToContainer(CustomControlContainer.SpatialEditorMenu, _lookToggle);
         _inspector = new PartInspector(this);
         AddInspectorPlugin(_inspector);
+        MaterialsTab.RegisterSettings();
+        _materials = new MaterialsTab(this);
+        EditorInterface.Singleton.GetEditorMainScreen().AddChild(_materials);
+        _MakeVisible(false);
         SceneSaved += OnSceneSaved;
         SceneChanged += OnSceneChanged;
         if (GameSettings.Flag("remaster-editor-test"))
@@ -76,6 +100,8 @@ public partial class RemasterPlugin : EditorPlugin
         efs.FilesystemChanged -= OnFilesystemChanged;
         if (_inspector != null)
             RemoveInspectorPlugin(_inspector);
+        _materials?.QueueFree();
+        _materials = null;
         if (_lookToggle != null)
         {
             RemoveControlFromContainer(CustomControlContainer.SpatialEditorMenu, _lookToggle);
@@ -98,7 +124,21 @@ public partial class RemasterPlugin : EditorPlugin
             Instance = null;
     }
 
-    public override string _GetPluginName() => "FFX Remaster";
+    // the plugin's main screen is the Materials tab: its name is the tab's
+    public override string _GetPluginName() => MainScreen;
+
+    public override bool _HasMainScreen() => true;
+
+    public override Texture2D? _GetPluginIcon() =>
+        EditorInterface.Singleton.GetEditorTheme().GetIcon("StandardMaterial3D", "EditorIcons");
+
+    public override void _MakeVisible(bool visible)
+    {
+        if (_materials == null)
+            return;
+        _materials.Visible = visible;
+        _materials.Preview.Active(visible);
+    }
 
     public override void _Process(double delta)
     {
@@ -111,6 +151,7 @@ public partial class RemasterPlugin : EditorPlugin
         if (Uses.Building && Uses.Step())
             _textures?.UsesChanged();
         _textures?.Tick(delta);
+        _materials?.Tick(delta);
         _test?.Step(delta);
     }
 

@@ -6,7 +6,8 @@ here: `docs/architecture.md`, `docs/building.md`, `docs/running.md`,
 `--game-dir`, `FFX_GAME_DIR`, `--devsave`, `--selftest*`, `--no-launcher`),
 `docs/remaster-plan.md`, `docs/remaster-editor.md` (the editor plugin,
 `godot/addons/ffx_remaster`; R2's textures, materials and render path),
-`docs/remaster-materials.md` (R2b, the material workbench: planned).
+`docs/remaster-materials.md` (R2b, the material workbench: phase 1, the
+Materials tab, done; phases 2 to 6 planned).
 
 ## Rules
 
@@ -60,7 +61,7 @@ FFX_GAME_DIR=... FFX_SHOT_TEST="--selftest-lighting --selftest-timeout=400" tool
 # any check: --check-flash (every Flash movie the game opened/showed has a native screen); --flash-log
 FFX_GAME_DIR=... tools/ux-shots.sh OUT_DIR                 # G5: offscreen pictures of the native screens (Xvfb)
 FFX_GAME_DIR=... FFX_SHOT_TEST="--selftest-overrides --selftest-timeout=90 [--no-overrides]" tools/compare-shot.sh - OUT_DIR  # R1: the overrides' after (before) picture
-FFX_GAME_DIR=... tools/remaster-editor-check.sh [OUT_DIR]   # R1/R2: the editor plugin headless on Besaid beach (open, move, hide, remove, replace, add, undo, save, reopen, status; where-used, a replaced texture, a generated material, render path remastered, the batch), then the game on save 7 with what it saved and with its textures, then R1a's example round trip (FFX_EDITOR_SHOT=1: under Xvfb, pictures); rm OUT_DIR after
+FFX_GAME_DIR=... tools/remaster-editor-check.sh [OUT_DIR]   # R1/R2/R3/R2b: the editor plugin headless on Besaid beach (open, move, hide, remove, replace, add, undo, save, reopen, status; where-used, a replaced texture, a generated material, render path remastered, the batch; lighting; the Materials tab: queue, steps, a drag, latency, import, skip, switch, save, undo), then the game on save 7 with what it saved and with its textures, then R1a's example round trip (FFX_EDITOR_SHOT=1: under Xvfb, pictures); rm OUT_DIR after
 (cd godot && godot --headless --path . -- --selftest-saves --no-game)  # G4: the save list reader (no game)
 (cd godot && godot --headless --path . -- --selftest-mods --no-game)   # G6: mod packs, load order, registry, overrides layered over packs (no game)
 (cd godot && godot --headless --path . -- --selftest-launcher --no-game)   # G6: the launcher (no game; fake folders in /tmp)
