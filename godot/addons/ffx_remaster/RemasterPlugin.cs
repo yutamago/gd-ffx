@@ -141,7 +141,27 @@ public partial class RemasterPlugin : EditorPlugin
         _materials.Preview.Active(visible);
     }
 
+    /// <summary>Inside <see cref="_Process"/>: an import's progress dialog runs the editor's frames (and so this) while it works.</summary>
+    private bool _inProcess;
+
     public override void _Process(double delta)
+    {
+        // a reimport (a run's files, Poll) runs frames of the editor: not again from inside it (Godot
+        // refuses a reimport within a reimport, and a run's next texture would start meanwhile)
+        if (_inProcess)
+            return;
+        _inProcess = true;
+        try
+        {
+            ProcessOnce(delta);
+        }
+        finally
+        {
+            _inProcess = false;
+        }
+    }
+
+    private void ProcessOnce(double delta)
     {
         Session.Poll();
         if (TextureStore.Poll())
