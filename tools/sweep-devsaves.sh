@@ -9,6 +9,7 @@
 #
 #   FFX_GAME_DIR=<game> tools/sweep-devsaves.sh [--pictures] [quick|all|N,N,...|FIRST LAST] [OUT_DIR]
 #   tools/sweep-devsaves.sh accept [OUT_DIR] [N,N,...]   # the last picture run's pictures become the baseline
+#   tools/sweep-devsaves.sh calibrate [OUT_DIR] [N,N,...]  # the last run's differences (nothing changed) as each save's noise
 #
 # quick (the default): ten saves that between them cover every kind of map
 # and feature the full sweep has caught problems in (7 Besaid beach: 3D,
@@ -35,10 +36,18 @@
 # baseline's (tools/compare/regress.py: the mean absolute difference per
 # channel, 0..255, the share of pixels off by more than 24, the worst cell;
 # OUT_DIR/devsave-N-map-diff.png), the whole picture reported beside it
-# (devsave-N-diff.png): over FFX_SWEEP_THRESHOLD (default 0.5) the save's line says REGRESSED
-# and the sweep exits 1. The baseline lives outside git (pictures of the game):
-# FFX_SWEEP_BASELINE (default ~/.cache/gd-ffx/sweep-baseline/), a picture and
-# its update per save; `accept` copies the last picture run's into it.
+# (devsave-N-diff.png). Some maps' animation differs between runs at the same
+# update (Besaid's foliage, Luca's banner, Macalania's pyreflies and mist), so
+# each save has its noise: `calibrate` after a run against the baseline with
+# nothing changed keeps the run's difference per save (the most seen), and a
+# save's limit is 1.5 x its noise + 0.3, at least FFX_SWEEP_THRESHOLD (default
+# 0.5); a save with noise over 3 is marked loose (Luca's harbour at save 22 is
+# in a cut scene whose camera is elsewhere at the same update: it catches only
+# large breaks). Over its limit the save's line says REGRESSED and the sweep exits 1. The
+# baseline lives outside git (pictures of the game): FFX_SWEEP_BASELINE
+# (default ~/.cache/gd-ffx/sweep-baseline/), a picture, its map picture, its
+# update and its noise per save; `accept` copies the last picture run's into it
+# (its noise cleared: calibrate again).
 set -u
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 godot="${GODOT:-$HOME/tools/Godot_v4.7.2-stable_mono_linux_x86_64/godot}"
@@ -57,12 +66,31 @@ if [[ "${1:-}" == accept ]]; then
         if [[ -n "${3:-}" && ",$3," != *",$s,"* ]]; then continue; fi
         u=$(grep -oE 'hold: held at update [0-9]+' "$from/devsave-$s.log" 2>/dev/null | tail -1 | grep -oE '[0-9]+$')
         [[ -n "$u" ]] || { echo "accept: devsave $s: no held update in its log, not taken"; continue; }
+        rm -f "$baseline/devsave-$s.noise"
         cp "$f" "$baseline/devsave-$s.png"
         [[ -f "$from/devsave-$s-map.png" ]] && cp "$from/devsave-$s-map.png" "$baseline/devsave-$s-map.png"
         echo "$u" >"$baseline/devsave-$s.update"
         n=$((n + 1))
     done
-    echo "accept: $n picture(s) into $baseline"
+    echo "accept: $n picture(s) into $baseline (calibrate next: a run against it, then tools/sweep-devsaves.sh calibrate)"
+    exit 0
+fi
+if [[ "${1:-}" == calibrate ]]; then
+    # the last picture run's differences (nothing meant to change) as each save's noise, the most seen kept
+    from="${2:-$out}"
+    n=0
+    for f in "$from"/devsave-*.mean; do
+        [[ -f "$f" ]] || continue
+        s=$(basename "$f" .mean); s=${s#devsave-}
+        if [[ -n "${3:-}" && ",$3," != *",$s,"* ]]; then continue; fi
+        [[ -f "$baseline/devsave-$s.png" ]] || continue
+        old=$(cat "$baseline/devsave-$s.noise" 2>/dev/null || echo 0)
+        new=$(cat "$f")
+        awk -v a="$old" -v b="$new" 'BEGIN { printf "%.2f\n", (a > b ? a : b) }' >"$baseline/devsave-$s.noise"
+        echo "calibrate: devsave $s: noise $(cat "$baseline/devsave-$s.noise")/255 (this run $new, before $old)"
+        n=$((n + 1))
+    done
+    echo "calibrate: $n save(s) in $baseline"
     exit 0
 fi
 if [[ "${1:-}" == --pictures ]]; then
@@ -73,11 +101,11 @@ case "${1:-quick}" in
     quick) saves=$QUICK; out="${2:-$out}" ;;
     all) saves=$(seq 1 110); out="${2:-$out}" ;;
     *,*) saves=$(tr ',' ' ' <<<"$1"); out="${2:-$out}" ;;
-    *) saves=$(seq "$1" "${2:-$1}"); out="${3:-$out}" ;;
+    *) if [[ "${2:-}" =~ ^[0-9]+$ ]]; then saves=$(seq "$1" "$2"); out="${3:-$out}"; else saves=$1; out="${2:-$out}"; fi ;;
 esac
 mkdir -p "$out"
 out="$(cd "$out" && pwd)"
-rm -f "$out"/devsave-*.log "$out"/devsave-*.png
+rm -f "$out"/devsave-*.log "$out"/devsave-*.png "$out"/devsave-*.mean
 cd "$repo/godot"
 regressed=0
 for n in $saves; do
@@ -109,9 +137,15 @@ for n in $saves; do
             regressed=1
         elif [[ -f "$baseline/devsave-$n-map.png" && -f "$out/devsave-$n-map.png" ]]; then
             # the map without its characters against the threshold; the whole picture reported beside it
+            # the save's threshold: the noise its calibration saw (1.5 x + 0.3), at least FFX_SWEEP_THRESHOLD
+            noise=$(cat "$baseline/devsave-$n.noise" 2>/dev/null || echo 0)
+            limit=$(awk -v t="$threshold" -v z="$noise" 'BEGIN { l = 1.5 * z + 0.3; printf "%.2f", (l > t ? l : t) }')
             line=$(uv run -q --with pillow python -I "$repo/tools/compare/regress.py" "$baseline/devsave-$n-map.png" "$out/devsave-$n-map.png" \
-                "$out/devsave-$n-map-diff.png" "$threshold" 2>&1)
+                "$out/devsave-$n-map-diff.png" "$limit" 2>&1)
             rc=$?
+            grep -oE '^mean [0-9.]+' <<<"$line" | cut -c6- >"$out/devsave-$n.mean"
+            if [[ ! -f "$baseline/devsave-$n.noise" ]]; then line="$line (not calibrated)"
+            elif awk -v z="$noise" 'BEGIN { exit !(z > 3) }'; then line="$line (loose: noise $noise, the map moves between runs)"; fi
             whole=$(uv run -q --with pillow python -I "$repo/tools/compare/regress.py" "$baseline/devsave-$n.png" "$out/devsave-$n.png" \
                 "$out/devsave-$n-diff.png" 255 2>&1 | sed -E 's/ \(threshold [^)]*\)//; s/: ok$//')
             picture="; picture ${held:-not held}: the map $line; with the characters $whole"

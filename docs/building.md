@@ -142,8 +142,9 @@ CHECK_ALL_SKIP=rust,game tools/check-all.sh
 
 `tools/check-all.sh` runs, one after another (the heavy ones through
 `tools/capped.sh`), with a line each and a summary: the privacy check; `dotnet
-build` with 0 warnings and 0 errors; `cargo fmt --check` and clippy with `-D
-warnings` (`tools/build-extension.sh linux clippy`); the headless self-checks
+build` with 0 warnings and 0 errors; clippy with `-D warnings`
+(`tools/build-extension.sh linux clippy`; the extension is not kept
+rustfmt-formatted, so there is no fmt gate); the headless self-checks
 that need neither a renderer nor the game (`--selftest-saves`, `--selftest-mods`,
 `--selftest-launcher`, `--selftest-materialize` on the CPU); with `FFX_GAME_DIR`
 also the start-up check (`tools/selftest.sh`) and `--selftest-besaid

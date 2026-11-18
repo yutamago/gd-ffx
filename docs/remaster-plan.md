@@ -901,7 +901,15 @@ docs/building.md, "Privacy and the quick gates"):
 - **A privacy check** (`tools/check-privacy.py`) and **the quick gates**
   (`tools/check-all.sh`) before every push.
 
-R8_PLAN_NUMBERS
+**Measured** (2026-11-18, the development machine):
+
+| | |
+|---|---|
+| renders (the editor under Xvfb, llvmpipe) | `bsil00` from the game's camera, the editor check's edits, textures and lighting: 3.2 to 9.4 s, dL +0.020, chroma x0.90, hue 1.6°, the pictures 31.5/255 apart; `ptkl14` rebuilt room 1.0 to 3.1 s, 0.00/255 against its classic layers from the scene camera; `slik08` untouched, no look cached: 1.5 to 5.6 s, the colour check off (the defaults' light, a dark sky background over most of the picture); a second run kept all three in 0.1 s |
+| the dashboard and the report (the editor check's state) | 335 maps; 2 changed; `bsil00`: 4 override entries, additions, 1 replaced texture and 4 materials of its 54 textures, lighting, 1 remade effect; the report's 17 links present |
+| the sweep's pictures (the quick ten saves, 3 min 42 s) | see docs/running.md, "Regression pictures": 6 saves repeat within 0.01/255, Besaid 0.21 to 0.34, the moving maps (S.S. Liki, Luca, the stadium, Macalania, Bikanel) calibrated up to 0.80, 16.5, 4.4, 6.1 and 1.8; the editor check's overrides on Besaid 24.7/255 and R1a's example 1.06 against its 0.81: both caught |
+| budgets (the Arc Pro 140T, Vulkan) | Besaid and Luca's harbour within every budget at both presets: Besaid remastered 1.9 ms GPU at the Deck preset, 5.0 ms at 1080p, VoxelGI +1.9 ms (docs/running.md, "Budgets"); llvmpipe numbers kept, no verdict |
+| the GPU checks in one go | 6 of 6 pass in 4 min 45 s: classic 8.9/255 against the reference, the lighting dL +0.006, x0.89, 1.9°, the material pipeline's parity, the character, the rebuilt room 0.00/255, the effects |
 
 ### Decisions (R8)
 
@@ -971,6 +979,15 @@ R8_PLAN_NUMBERS
   (`FFX_SWEEP_ARGS=--render-path=remastered` works; no baseline is kept for it);
 - GPU budgets of every map (the quick sweep's ten saves, then all), and on
   other GPUs.
+- the maps that do not repeat at one update (S.S. Liki's sway, Luca's harbour
+  cut scene, the stadium, Macalania's pyreflies, Bikanel): a hold that also
+  fixes the game's time-based animation would make their pictures strict;
+- seen once during R8's checks: the editor check's effects game check (step 6,
+  `--selftest-effects --effect-scene`) failed "F8 again did not bring the remake
+  back", then passed twice on its own and in the next full run (a timing flake
+  to look into);
+- the extension's Rust is not rustfmt-formatted (4 differences in `ffx-gd`), so
+  `tools/check-all.sh` has no fmt gate.
 
 ## Beyond the milestones
 

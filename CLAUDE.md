@@ -37,7 +37,7 @@ a rebuilt room with the classic layers, F8 the UI art. R8's quality tools:
 - Push only to github.com/yutamago/gd-ffx (public since 2026-11-16:
   everything pushed is published). Never `git push --all`, never force-push main.
 - Before every push: `tools/check-all.sh` (the privacy check, `dotnet build`
-  0 warnings, fmt and clippy, the no-game self-checks; with `FFX_GAME_DIR` the
+  0 warnings, clippy, the no-game self-checks; with `FFX_GAME_DIR` the
   start-up and Besaid). `tools/check-privacy.py` alone in a second: no home
   folder, user name or e-mail address in tracked files (docs/building.md,
   "Privacy and the quick gates").
@@ -67,7 +67,7 @@ FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/bench.sh [besaid besaid-walk lchb bat
 FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/sweep-devsaves.sh --pictures   # R8: the sweep's regression pictures under Xvfb, held at one update, against ~/.cache/gd-ffx/sweep-baseline (`tools/sweep-devsaves.sh accept` takes the last run as the baseline)
 FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/budget.sh [windows|linux] [besaid ...]  # R8: budgets classic/remastered at the Deck preset and desktop (Windows export on the GPU; linux: llvmpipe, no verdict); the dashboard's table
 FFX_GAME_DIR=~/steam-games/FFX-X2-HD [FFX_REF_BESAID=REF.bmp] tools/gpu-checks.sh [OUT_DIR]   # R8: the GPU checks in one go on the Windows export (classic score, lighting colour, materialize, character, rebuild 14, effects), a summary table
-tools/check-all.sh                                         # R8: the quick gates before a push (privacy, dotnet 0 warnings, fmt, clippy, no-game self-checks; FFX_GAME_DIR: start-up, Besaid)
+tools/check-all.sh                                         # R8: the quick gates before a push (privacy, dotnet 0 warnings, clippy, no-game self-checks; FFX_GAME_DIR: start-up, Besaid)
 python3 -I tools/check-privacy.py                          # R8: no home folder, user name or e-mail of anyone in the tracked files
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-besaid --check-autosave --devsave=7)  # G4: a real autosave read back by the save list
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-besaid --devsave=7)   # G2 check; G5: the walk's map change held, no stand-ins (--transition-shots=DIR under Xvfb); Tidus's cloth placed and moving

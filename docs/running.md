@@ -259,7 +259,17 @@ to `OUT_DIR/summary.txt` (default `/tmp/gd-ffx-gpu-checks`, a folder per check:
 pictures of the game, never in git). It exits 1 when a check fails. Remove the export
 (`build/windows`) and OUT_DIR after.
 
-R8_GPU_NUMBERS
+Measured (2026-11-18, the development machine's Intel Arc Pro 140T, Vulkan,
+Forward+; 4 min 45 s in all):
+
+| check | result | time | key figure |
+|---|---|---|---|
+| classic | PASS | 32 s | Besaid against `event-besaid-1.bmp` (the player's screenshot): mean absolute difference 8.9/255, as on main |
+| lighting | PASS | 52 s | remastered against classic: dL +0.006, chroma x0.89, hue 1.9° |
+| materialize | PASS | 65 s | parity at 1024 px (mean/p99/max of 255): source 0.59/1/1, albedo 0.08/1/1, normal 0.56/2/2, roughness 0.32/2/3 |
+| character | PASS | 55 s | the stand-in on Tidus |
+| rebuild | PASS | 39 s | `ptkl14` rebuilt against classic 0.00/255 |
+| effects | PASS | 41 s | the example remake on `bsil00-fp15` (its recordings into `OUT_DIR/effects-recordings`) |
 
 ## Sweeping the developer saves
 
@@ -318,15 +328,44 @@ compared with the baseline's (`tools/compare/regress.py`: the mean absolute
 difference per channel, 0..255, the share of pixels off by more than 24, the
 worst cell of a 4 x 3 grid; `devsave-N-map-diff.png`: baseline, picture,
 difference x4). The whole picture's difference is reported beside it. Over
-`FFX_SWEEP_THRESHOLD` (0.5) the save's line says REGRESSED and the sweep exits 1.
+its limit the save's line says REGRESSED and the sweep exits 1.
+
+Some maps do not repeat exactly even at one update: Besaid's foliage sways,
+S.S. Liki's corridor sways with the ship, Luca's banner and harbour camera (save
+22 starts in a cut scene whose camera is elsewhere at the same update), the
+stadium's floor, Macalania's pyreflies and mist. So each save has its noise:
+`calibrate` after a run against the baseline with nothing changed keeps that
+run's difference per save (the most seen). Calibrate over three clean runs. A
+save's limit is 1.5 x its noise + 0.3, at least `FFX_SWEEP_THRESHOLD` (0.5). A
+save with noise over 3 is marked loose: it catches only large breaks (a black
+or missing map, a broken shader).
+
+```bash
+tools/sweep-devsaves.sh calibrate [OUT_DIR] [N,N,...]   # the last clean run's differences as each save's noise
+```
 
 The baseline is pictures of the player's game and stays outside git:
 `FFX_SWEEP_BASELINE` (default `~/.cache/gd-ffx/sweep-baseline/`), a picture,
-its map picture and its update per save. `accept` copies the last picture
-run's (all saves, or the ones listed) into it: accept again after a change
-meant to alter the pictures, and after a Godot or driver upgrade.
+its map picture, its update and its noise per save. `accept` copies the last
+picture run's (all saves, or the ones listed) into it and clears their noise.
+Accept and calibrate again after a change meant to alter the pictures, and
+after a Godot or driver upgrade.
 
-R8_SWEEP_NUMBERS
+Measured (2026-11-18, the quick ten saves, Xvfb, Compatibility on llvmpipe,
+3 min 42 s a sweep):
+
+| | |
+|---|---|
+| two runs held 2 updates apart (Besaid, before the slowed approach) | 1.35/255 |
+| held at the same update, characters drawn (Besaid; Kilika's inn) | 0.15; 1.63 (a running child) |
+| held at the same update, the map without the characters (two trial runs) | Besaid 0.02, Kilika 0.00 |
+| the quick sweep, three clean runs against the baseline (the map pictures), per save | 7 Besaid 0.34, 0.21, 0.24; 8 0.00, 0.00, 0.01; 12 S.S. Liki 0.00, 0.00, 0.80; 14 0.01, 0.00, 0.00; 22 Luca harbour 1.66, 10.21, 16.54; 29 stadium 3.55, 3.44, 4.39; 52 0.00; 61 Macalania 6.11, 4.46, 5.94; 62 Bikanel 1.79, 1.15, 1.58; 71 0.00 |
+| the third clean run against the limits of the first two calibrations | 8 of 10 within; 12 (0.80 against 0.5) and 22 (16.54 against 15.62, loose) over; calibrated in since |
+| deliberate changes on Besaid (`--overrides-layer`): the editor check's saved overrides (moved, hidden, removed, replaced parts, an added box, the render path remastered) | 24.74/255, 45.7 % of the pixels off: REGRESSED (limit 0.81) |
+| the same with R1a's example overrides (small parts) | 1.06/255: REGRESSED (limit 0.81) |
+
+`--overrides-layer=LEVEL=FILE` (any run: `FFX_SWEEP_ARGS="--overrides-layer=/map/bsil/bsil00/=res://remaster/examples/bsil00/overrides.tres"`)
+registers an overrides file as the map's last layer for the run, as the checks do.
 
 ## Benchmark
 
@@ -733,7 +772,33 @@ against the Arc 140T scaled by an estimate: the GPU's FP32 throughput, about
 CPU about 2. Memory and draw calls are not scaled. A Deck verdict from the Arc is
 a warning sign, not a measurement.
 
-R8_BUDGET_NUMBERS
+Measured (2026-11-18; frame and GPU ms means over 10 s, uncapped; draw calls a
+frame; memory at the window's end):
+
+| map | preset | path | GI | frame ms | GPU ms (p99) | draws | texture MiB | video MiB | GI ms | verdict |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Intel Arc Pro 140T, Vulkan, the Windows export | | | | | | | | | | |
+| bsil00 | deck | classic | none | 1.29 | 1.08 (1.42) | 152 | 430 | 473 | | ok |
+| bsil00 | deck | remastered | none | 2.11 | 1.92 (2.33) | 333 | 480 | 525 | | ok |
+| bsil00 | desktop | classic | none | 3.43 | 3.19 (3.79) | 152 | 492 | 556 | | ok |
+| bsil00 | desktop | remastered | none | 5.18 | 4.95 (5.86) | 461 | 569 | 631 | | ok |
+| bsil00 | desktop | remastered | VoxelGI | 7.13 | 6.89 (8.12) | 459 | 631 | 693 | 1.94 | ok |
+| lchb02 (save 22) | deck | classic | none | 0.91 | 0.71 (1.25) | 162 | 372 | 418 | | ok |
+| lchb02 | deck | remastered | none | 1.40 | 1.24 (2.45) | 415 | 517 | 572 | | ok |
+| lchb02 | desktop | classic | none | 2.33 | 2.07 (3.46) | 161 | 523 | 614 | | ok |
+| lchb02 | desktop | remastered | none | 3.26 | 3.00 (4.58) | 472 | 487 | 579 | | ok |
+| lchb02 | desktop | remastered | VoxelGI | 5.57 | 5.30 (7.08) | 473 | 776 | 867 | 2.29 | ok |
+| llvmpipe (the CPU), OpenGL Compatibility, Xvfb: no verdict | | | | | | | | | | |
+| bsil00 | deck | classic | none | 36.8 | 26.6 | 152 | 546 | 562 | | |
+| bsil00 | deck | remastered | none | 55.8 | 44.2 | 333 | 547 | 563 | | |
+| bsil00 | desktop | classic | none | 60.7 | 48.1 | 152 | 581 | 597 | | |
+| bsil00 | desktop | remastered | none (Compatibility draws no GI: both remastered runs) | 123.5 / 118.3 | 104.4 / 100.3 | 460 | 582 | 598 | | |
+
+On the Arc the Deck preset's remastered Besaid takes 1.9 ms of GPU time, a
+third of its 5.6 ms proxy budget, so about 6 ms on the Deck if the factor of 3
+holds. The remastered path roughly doubles the draw calls (the lit materials,
+the shadow passes). VoxelGI costs about 2 ms at 1080p and 60 to 290 MiB of
+textures; at the Deck's low quality there is none.
 
 ## Comparing with the original
 

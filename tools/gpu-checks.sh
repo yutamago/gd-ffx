@@ -52,8 +52,9 @@ run() { # NAME SAVE TEST REF
     [[ "$name" == classic && -f "$dir/godot.png" ]] && result=PASS
     [[ "$result" == PASS ]] || fail=1
     local renderer
-    renderer=$(grep -oE 'Vulkan [0-9.]+[^-]*- Forward\+[^-]*- Using Device[^:]*: [^,]*' "$dir/godot.log" 2>/dev/null | head -1 | sed -E 's/.*Using Device[^:]*: //' | cut -c1-40)
-    rows+=("$(printf '%-12s %-5s %5ss  %-40s %s' "$name" "$result" "$((t1 - t0))" "${extra:-${line:0:60}}" "${renderer:-}")")
+    renderer=$(grep -oE 'Vulkan [0-9.]+[^-]*- Forward\+[^-]*- Using Device[^:]*: [^,]*' "$dir/godot.log" 2>/dev/null | head -1 | sed -E 's/.*Using Device[^:]*: //; s/^Intel - //' | cut -c1-34)
+    extra="${extra:-${line:0:60}}"
+    rows+=("$(printf '%-12s %-5s %5ss  %-72s %s' "$name" "$result" "$((t1 - t0))" "${extra:0:72}" "${renderer:-}")")
     printf '%s\n' "${rows[-1]}"
 }
 for c in "${checks[@]}"; do
@@ -63,7 +64,8 @@ for c in "${checks[@]}"; do
         materialize) run materialize 7 "--selftest-materialize --selftest-timeout=600" - ;;
         character) run character 7 "--selftest-character --selftest-timeout=300" - ;;
         rebuild) run rebuild 14 "--selftest-rebuild --selftest-timeout=200" - ;;
-        effects) run effects 7 "--selftest-effects --selftest-timeout=200" - ;;
+        effects) mkdir -p "$out/effects-recordings"
+            run effects 7 "--selftest-effects --selftest-timeout=200 --remaster-effects=$(wslpath -w "$out/effects-recordings")" - ;;
         budgets)
             t0=$(date +%s)
             FFX_BUDGET_OUT="$out/budgets" "$repo/tools/budget.sh" windows besaid >"$out/budgets.txt" 2>&1

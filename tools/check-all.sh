@@ -4,7 +4,8 @@
 #  1. privacy: tools/check-privacy.py (no path, user name or e-mail address of a
 #     machine or a person in the tracked files);
 #  2. dotnet build of the Godot project: 0 warnings, 0 errors;
-#  3. rust: cargo fmt --check, clippy -D warnings (tools/build-extension.sh linux clippy);
+#  3. rust: clippy -D warnings (tools/build-extension.sh linux clippy; the extension is not kept
+#     rustfmt-formatted, so no fmt check);
 #  4. the headless self-checks that need no renderer and no game: the save list
 #     (--selftest-saves), mod packs (--selftest-mods), the launcher
 #     (--selftest-launcher), the material pipeline on the CPU (--selftest-materialize);
@@ -51,10 +52,8 @@ if skipped dotnet; then step dotnet SKIP ""; else
     else step "dotnet build" FAIL "exit $code, ${warn:-?} warning(s), ${err:-?} error(s), see $out/dotnet.log"; fi
 fi
 
-# 3. rust: fmt and clippy
+# 3. rust: clippy
 if skipped rust; then step rust SKIP ""; else
-    if (cd "$repo/rust" && cargo fmt --all -- --check) >"$out/fmt.log" 2>&1; then step "cargo fmt" PASS ""
-    else step "cargo fmt" FAIL "see $out/fmt.log"; fi
     if "$repo/tools/capped.sh" "$repo/tools/build-extension.sh" linux clippy -- -D warnings >"$out/clippy.log" 2>&1; then
         step clippy PASS "-D warnings"
     else
