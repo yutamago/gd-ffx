@@ -800,7 +800,42 @@ the tilt, the detail from two synthetic files, the grain's flowmap), and
 every feature with the scatter, an imported normal map through it, and the
 other branches (the fixed angle, a colour's transmittance, the other mask
 sources); each map against the CPU's, the flowmap's and transmittance's
-alpha too. PARITYNUMBERS
+alpha too. Measured (2026-11-18, mean/p99/max of 255; the overlap recipe,
+then the scatter's), on Besaid's sand (12800_20_128_000_4_128_128, x2 to
+1024 px):
+
+| Map | Mesa llvmpipe, Compatibility (Xvfb) | Intel Arc 140T, Vulkan, Forward+ (Windows export) |
+|---|---|---|
+| bent normal | 0.38/1/2, 0.09/1/2 | 0.38/1/2, 0.04/1/1 |
+| rim | 0.00/0/0, 0.00/0/3 | 0.00/0/0, 0.00/0/3 |
+| clearcoat | 0.00/0/1, 0.67/3/5 | 0.00/0/1, 0.67/3/4 |
+| anisotropy (with alpha) | 0.56/4/255, 0.00/0/0 | 0.57/4/255, 0.00/0/0 |
+| subsurface | 0.59/3/3, 0.28/6/11 | 0.58/3/4, 0.10/4/11 |
+| transmittance (with alpha) | 0.39/3/8, 0.09/2/2 | 0.40/3/8, 0.10/2/2 |
+| backlight | 0.08/1/3, 0.00/0/1 | 0.13/1/3, 0.00/0/1 |
+| refraction | 1.34/12/18, 0.00/0/1 | 1.34/12/18, 0.00/0/1 |
+| detail mask | 0.00/0/2, 1.05/5/7 | 0.00/0/2, 1.05/5/7 |
+| detail albedo, normal | 0/0/0 | 0/0/0 |
+| source (the seam tool) | 0.59/1/1, 0.65/1/1 | 0.59/1/1, 0.65/1/1 |
+
+The core maps stay as in phase 2 (normal 0.56/2/2, ORM 0.24/1/3, height
+0.0019/0.0027 on both). The flowmap's maximum of 255 is a handful of
+pixels where the direction is near vertical and the two backends pick the
+other of its two signs (the same highlight); the refraction from the tilt is
+the steepest (a ramp over the normals' tilt multiplies their differences).
+On the synthetic bricks (Xvfb, Compatibility) the same: every map within the
+limits (refraction from the tilt 0.65/8/15).
+
+**Speed with every added map on** (`--selftest-materialize`, the Arc 140T,
+Vulkan; every feature and all nine added maps, the overlap): a cheap change
+at 1024 px **24 ms** (35 of 164 passes; phase 2's 15 ms with 31 of 137),
+the roughness's contrast 11 ms, a band rebuild 40 ms, the occlusion settled
+in 4 frames; bakes 251 ms at 1024 px, **975 ms at 2048 px**, **6.8 s at
+4096 px** (phase 2's graph: 2.5 s; the 4096 px target of 4 s is not met with
+every map on: the added maps' passes at full size, not measured apart). Under llvmpipe (Xvfb): a cheap change
+220 ms, bakes 1.3 s, 2.9 s and 14.8 s. A texture with only the core maps
+costs what it did in phase 2 (its passes and their signatures are
+unchanged).
 
 Not in phase 4: height from an imported normal map (planned with the height
 step, not part of this phase's list), the In map preview of the added maps
@@ -1016,7 +1051,8 @@ Taken while implementing phase 1 (2026-11-18):
 
 ## Checks
 
-- **The editor check** (`tools/remaster-editor-check.sh`) drives the tab on
+- **The editor check** (`tools/remaster-editor-check.sh`; phase 4's part:
+  "Phase 4: what there is" and docs/remaster-editor.md) drives the tab on
   Besaid: queue three textures, step through, change a setting and see the
   preview's pixels change, import and skip a map, save, undo and redo, save
   a profile, switch texture with it, pin an exception and clear it, apply to
