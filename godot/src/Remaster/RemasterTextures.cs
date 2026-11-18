@@ -242,6 +242,30 @@ public static class RemasterTextures
         return err == Error.Ok ? img : null;
     }
 
+    /// <summary>
+    /// The maps <paramref name="m"/> names that did not load (empty: none): an ORM material without
+    /// its ORM map (it would draw as metal: its metallic multiplier is 1), a map switched on without
+    /// its texture, a texture file it refers to that is not there.
+    /// </summary>
+    public static List<string> MissingMaps(BaseMaterial3D m)
+    {
+        var missing = new List<string>();
+        if (m is OrmMaterial3D { OrmTexture: null })
+            missing.Add("orm");
+        if (m.NormalEnabled && m.NormalTexture == null)
+            missing.Add("normal");
+        if (m.HeightmapEnabled && m.HeightmapTexture == null)
+            missing.Add("height");
+        if (m.ResourcePath.Length > 0 && FileAccess.FileExists(m.ResourcePath))
+            foreach (var dep in ResourceLoader.GetDependencies(m.ResourcePath))
+            {
+                var p = dep[(dep.LastIndexOf("::", System.StringComparison.Ordinal) + 2)..];
+                if (p.Length > 0 && !ResourceLoader.Exists(p) && !FileAccess.FileExists(p))
+                    missing.Add(p.GetFile());
+            }
+        return missing;
+    }
+
     private static Material? LoadMaterial(string path)
     {
         lock (Materials)

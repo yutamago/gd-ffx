@@ -46,6 +46,24 @@ public partial class MapLayers : Node3D
     /// <summary>The level whose layers are loaded ("" none; also set when the level has none).</summary>
     public string Level => _loaded ? _level : "";
 
+    /// <summary>The loaded layers' import (null: none, or not loaded yet): a rebuilt room takes its pictures from it.</summary>
+    public Node3D? Model => _loaded ? _model : null;
+
+    /// <summary>
+    /// Hidden while a rebuilt room draws the map instead (R7b: <see cref="Remaster.RebuiltRoom"/>);
+    /// the game's choices (<see cref="State"/>, <see cref="IsShown"/>) are still followed.
+    /// </summary>
+    public bool Hidden { get; set; }
+
+    /// <summary>Whether the map's pass blends its layers instead of cutting them out (<see cref="BlendedMaps"/>).</summary>
+    public bool Atc => Array.IndexOf(BlendedMaps, _map) < 0;
+
+    private GdFfx.Api.Layers? _live;
+
+    /// <summary>Whether the game draws layer <paramref name="id"/> of 2D scene <paramref name="scene"/> this frame (the scene shown, its shown flag, the pass on).</summary>
+    public bool IsShown(int scene, int id) =>
+        scene == State.Scene && (_live == null || (_live.Drawn && Shown(_live, scene, id)));
+
     /// <summary>Layers loaded, shown now, the 2D scene shown and the pan (for the checks and the overlay).</summary>
     public (int Layers, int Shown, int Scene, float Pan, bool Live) State { get; private set; }
 
@@ -161,12 +179,13 @@ public partial class MapLayers : Node3D
         }
         SetBlend(map);
         var live = snapshot?.Layers is { Valid: true } l ? l : null;
+        _live = live;
         int scene = live?.Scene ?? 0;
         int shown = 0;
         foreach (var layer in _layers)
         {
             bool on = layer.Scene == scene && (live == null || (live.Drawn && Shown(live, layer.Scene, layer.Id)));
-            layer.Mesh.Visible = on;
+            layer.Mesh.Visible = on && !Hidden;
             if (on)
                 shown++;
         }

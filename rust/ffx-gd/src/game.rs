@@ -1419,6 +1419,36 @@ impl FfxGame {
         }
     }
 
+    /// Every character of Flash movie `movie`, one line each: id, kind
+    /// (`shape`, `morph`, `sprite`, `bitmap`), its `SymbolClass` name (empty
+    /// for none), frames and the frame labels (`label=frame`, by `,`), the
+    /// fields split by U+001F; empty without the movie (the remaster's UI art
+    /// browser lists a movie's art by it).
+    #[func]
+    fn flash_symbols(&self, movie: GString) -> PackedStringArray {
+        let Some(m) = classic().flash_movie(&movie.to_string()) else {
+            return PackedStringArray::new();
+        };
+        m.symbols()
+            .iter()
+            .map(|s| {
+                let labels: Vec<String> =
+                    s.labels.iter().map(|(l, f)| format!("{l}={f}")).collect();
+                GString::from(
+                    format!(
+                        "{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}",
+                        s.id,
+                        s.kind.name(),
+                        s.class,
+                        s.frames,
+                        labels.join(",")
+                    )
+                    .as_str(),
+                )
+            })
+            .collect()
+    }
+
     /// Character `id` (0: the main timeline) of Flash movie `movie` at
     /// `frame` (1-based; sprites loop) drawn at `scale` pixels a stage pixel
     /// into a `width` x `height` RGBA8 picture (straight alpha) whose

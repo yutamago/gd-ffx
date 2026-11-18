@@ -123,7 +123,10 @@ public partial class EffectRemakeView : Node3D
                         if (tex.Length == 0 && draws[i].Texture.Length > 0)
                             tex = draws[i].Texture;
                     }
-                GD.Print($"ffx: effect {id} seen ({EffectOwners.Describe(id)}): {n} draw(s) at {place}, texture \"{tex}\"");
+                var how = _owners.Flags.TryGetValue(owner, out var fl)
+                    ? $", display flags 0x{fl:x}{((fl & EffectOwners.PlacedByMatrix) != 0 ? " (stuck or placed by its display matrix)" : "")}, table place {fp.Place}"
+                    : "";
+                GD.Print($"ffx: effect {id} seen ({EffectOwners.Describe(id)}): {n} draw(s) at {place}, texture \"{tex}\"{how}");
             }
             Touch(id, place);
         }
