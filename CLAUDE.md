@@ -6,11 +6,13 @@ here: `docs/architecture.md`, `docs/building.md`, `docs/running.md`,
 `--game-dir`, `FFX_GAME_DIR`, `--devsave`, `--selftest*`, `--no-launcher`),
 `docs/remaster-plan.md`, `docs/remaster-editor.md` (the editor plugin,
 `godot/addons/ffx_remaster`; R2's textures, materials and render path;
-R5's game data: walk mesh, triggers, cameras, the alignment check),
+R5's game data: walk mesh, triggers, cameras, the alignment check; R6's
+Characters dock),
 `docs/remaster-materials.md` (R2b, the material workbench: phase 1, the
 Materials tab, phase 2, the GPU pipeline and Materialize's concepts, and
 phase 3, profiles and the queue, done; phases 4 to 6 planned; the starter
-profiles in `godot/remaster/profiles/`, committed).
+profiles in `godot/remaster/profiles/`, committed); R6's remade characters (retargeting,
+materials, the stand-in): `docs/remake.md`.
 
 ## Rules
 
@@ -52,6 +54,7 @@ FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/bench.sh [besaid besaid-walk lchb bat
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-besaid --devsave=7)   # G2 check; G5: the walk's map change held, no stand-ins (--transition-shots=DIR under Xvfb); Tidus's cloth placed and moving
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-remake --devsave=7)  # G6: a remade c001 posed by the game
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-remake-map --devsave=7)  # G6: the remade Besaid beach example
+(cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-character --devsave=7)  # R6: the original stand-in humanoid retargeted on Tidus while he walks (bone directions, joints, game cloth, spring bones, face table, presets; --shot=F.png under Xvfb)
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-overrides --devsave=7)  # R1: Besaid's example overrides (remove, hide, move, replace, add) in the running game; the catalogue entry
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-materials --devsave=7)  # R2: a replaced texture drawn classic, a PBR material remastered, F7, a live replacement (--shot=F.png under Xvfb: F.png, F-remastered.png)
 (cd godot && godot --headless --path . -- --selftest-materialize --no-game)   # R2b phase 2: the material pipeline on a synthetic texture: the CPU only headless; under Xvfb the GPU's parity with it and its times
@@ -68,7 +71,7 @@ FFX_GAME_DIR=... FFX_SHOT_TEST="--selftest-lighting --selftest-timeout=400" tool
 # any check: --check-flash (every Flash movie the game opened/showed has a native screen); --flash-log
 FFX_GAME_DIR=... tools/ux-shots.sh OUT_DIR                 # G5: offscreen pictures of the native screens (Xvfb)
 FFX_GAME_DIR=... FFX_SHOT_TEST="--selftest-overrides --selftest-timeout=90 [--no-overrides]" tools/compare-shot.sh - OUT_DIR  # R1: the overrides' after (before) picture
-FFX_GAME_DIR=... tools/remaster-editor-check.sh [OUT_DIR]   # R1/R2/R3/R2b/R5: the editor plugin headless on Besaid beach (open, move, hide, remove, replace, add, undo, save, reopen, status; where-used, a replaced texture, materials by a starter profile, render path remastered; lighting; the Materials tab: queue, steps, a drag, latency, import, skip, switch, save, undo; profiles, exceptions, Apply to queue (cancel, undo), a changed profile made again, an R2-era entry, a pack's profile; the game's data, the birds from the game's capture, the alignment check; the 2D-layer map ptkl14), then the game on save 7 with what it saved and with its textures, then R1a's example round trip (FFX_EDITOR_SHOT=1: under Xvfb, pictures); rm OUT_DIR after
+FFX_GAME_DIR=... tools/remaster-editor-check.sh [OUT_DIR]   # R1/R2/R3/R2b/R5/R6: the editor plugin headless on Besaid beach (open, move, hide, remove, replace, add, undo, save, reopen, status; where-used, a replaced texture, materials by a starter profile, render path remastered; lighting; the Materials tab: queue, steps, a drag, latency, import, skip, switch, save, undo; profiles, exceptions, Apply to queue (cancel, undo), a changed profile made again, an R2-era entry, a pack's profile; the game's data, the birds from the game's capture, the alignment check; the 2D-layer map ptkl14), then the game on save 7 with what it saved and with its textures, then R1a's example round trip, then R6's characters (the list, c001 with its motions, the stand-in assigned, auto-mapped, one bone by hand, save, undo/redo, reopen; the game with that rig) (FFX_EDITOR_SHOT=1: under Xvfb, pictures); rm OUT_DIR after
 (cd rust && cargo run --release -p ffx-import -- gamedata bsil00)   # R5: a map's game data as JSON (walk meshes, scene cameras, entrances, workers): reading aid, keep out of git
 (cd godot && godot --headless --path . -- --selftest-saves --no-game)  # G4: the save list reader (no game)
 (cd godot && godot --headless --path . -- --selftest-mods --no-game)   # G6: mod packs, load order, registry, overrides layered over packs (no game)

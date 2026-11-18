@@ -27,6 +27,7 @@ public partial class RemasterPlugin : EditorPlugin
     private PartInspector? _inspector;
     private MaterialsTab? _materials;
     private EditorSelfTest? _test;
+    private CharacterEditorTest? _charTest;
 
     /// <summary>The map edit scene being edited (null: another scene, or none).</summary>
     public MapEditRoot? Current => EditorInterface.Singleton.GetEditedSceneRoot() as MapEditRoot;
@@ -70,6 +71,7 @@ public partial class RemasterPlugin : EditorPlugin
         fs.FilesystemChanged += OnFilesystemChanged;
         _textures = new TextureDock(this);
         AddDock(_textures);
+        EnterCharacters();
         // the 3D view's compare: the open map classic or remastered (its render path when opened)
         _lookToggle = new CheckButton { Text = "Remastered", TooltipText = "Draw the open map remastered (PBR materials, the map's lighting) or classic" };
         _lookToggle.Toggled += on => SetEditorLook(on);
@@ -82,7 +84,9 @@ public partial class RemasterPlugin : EditorPlugin
         _MakeVisible(false);
         SceneSaved += OnSceneSaved;
         SceneChanged += OnSceneChanged;
-        if (GameSettings.Flag("remaster-editor-test"))
+        if (GameSettings.Flag("remaster-editor-character"))
+            _charTest = new CharacterEditorTest(this);
+        else if (GameSettings.Flag("remaster-editor-test"))
             _test = new EditorSelfTest(this);
         // the archive opens by itself when a folder is known (a fraction of a second)
         Callable.From(() =>
@@ -108,6 +112,7 @@ public partial class RemasterPlugin : EditorPlugin
             RemoveControlFromContainer(CustomControlContainer.SpatialEditorMenu, _lookToggle);
             _lookToggle.QueueFree();
         }
+        ExitCharacters();
         if (_textures != null)
         {
             RemoveDock(_textures);
@@ -174,13 +179,16 @@ public partial class RemasterPlugin : EditorPlugin
         _textures?.Tick(delta);
         _materials?.Tick(delta);
         _test?.Step(delta);
+        _charTest?.Step(delta);
     }
 
     /// <summary>Opens the player's archive (<paramref name="dir"/>: a folder chosen in the dock) and shows the catalogue.</summary>
     public bool OpenArchive(string? dir = null)
     {
         bool ok = Session.Open(dir);
+        _catalogue = null;
         _dock?.ArchiveChanged();
+        _characters?.Fill();
         if (ok)
             Uses.Start(Session);
         _textures?.UsesChanged();
@@ -230,12 +238,18 @@ public partial class RemasterPlugin : EditorPlugin
 
     private void OnSceneSaved(string path)
     {
-        // Ctrl+S on a map's edit scene saves its edits as well
+        // Ctrl+S on a map's edit scene saves its edits as well; on a character's, its rig
         if (Current is { } root && root.SceneFilePath == path)
             SaveMap(root);
+        if (CurrentCharacter is { } chr && chr.SceneFilePath == path)
+            SaveCharacter();
     }
 
-    private void OnSceneChanged(Node? root) => _dock?.CurrentChanged();
+    private void OnSceneChanged(Node? root)
+    {
+        _dock?.CurrentChanged();
+        _characters?.CharacterChanged();
+    }
 
     /// <summary>The edit scene finished building (the dock shows its parts; drawn as its render path says).</summary>
     public void MapBuilt(MapEditRoot root)

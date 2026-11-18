@@ -90,6 +90,95 @@ A scene that animates itself instead (an `AnimationPlayer`, a physics rig)
 opts out with the metadata `ffx_posed` = `false` on its root: it is still
 placed, turned, shown and hidden by the game, but its skeleton is left alone.
 
+## Retargeting (R6)
+
+A remade character with a skeleton of its own (any bone names, any
+proportions, authored in Godot's convention: y up, facing +z, metres) is
+driven by the game through a rig (docs/remaster-editor.md, "Characters", makes
+one; docs/remaster-plan.md, R6):
+
+- **The scene**: `res://remake/chr/<id>.tscn` (the convention; or a registry
+  entry), its root a `RemadeCharacter` (`godot/src/Characters/`) holding the
+  model (an instance of your scene) and naming its rig, `<id>.rig.tres`, a
+  `CharacterRig`: the alignment (`Align`: your model's space to the game's
+  character space: turn, scale, feet), the bones (`RigBone`: bone name, game
+  element, body part, `Positions`, the rest offset, the bone it aims at, your
+  offset), the cloth chains (`ClothChain`), the face table (`FaceMap`) and the
+  attachments (`AttachMap`). A root without a rig keeps G6's path
+  (`SkeletonNode_i` bones, above).
+- **Each frame** (`Retargeter`, from `StateView3D`): the game's element
+  globals (the snapshot's `Actor.bones`, interpolated, in character space) go
+  in; per remade bone, parents first: a mapped bone's global rotation is its
+  element's times its rest offset, swung so the mapped bone it aims at points
+  where the game's element of that bone is (the game's motions move joints as
+  well as turn them: Tidus's wrist slides along his forearm), placed at its
+  own rest offset from its parent (`Rotation`: your proportions) or on the
+  game's joint (`Game`; the hips, so the walk is the game's), then your offset;
+  a bone not mapped keeps its rest under its parent. The rig's scale is baked
+  into the remade skeleton's rests and skins when the driver is made (the
+  root stays unscaled: Godot's spring bones flip on a scaled skeleton).
+- **Cloth**, per chain: `Game` turns each bone from where its parent alone
+  puts it by how far the game's simulated cloth hangs from its skinned
+  direction: the capture's vertices of the chain's segment (PS2 model,
+  piece, a vertex per bone: docs/architecture.md, "Cloth"), against their bind
+  directions turned by the element the chain hangs from; `Godot` hangs a
+  `SpringBoneSimulator3D` on the chain (stiffness, drag, gravity, radius in the
+  game's units; it resolves its bones only once under its skeleton, so the
+  driver adds it first and configures it after); `Off` leaves it skinned.
+- **Face**, per row: a value of a game element's pose relative to another
+  (its local rotation about x, y or z in degrees, Euler z y x as the game
+  composes, or a position component), mapped from an input range to an output
+  range (clamped), onto a blend shape (every mesh of the model that has it)
+  or a bone's turn about its own axis. The game's face animation in the
+  snapshot is its bones: the jaw (attachment point 13) opens up to 7° as a
+  character talks (`Ch_Mouth`), the head turns (`Ch_Neck`, point 9). The eyes'
+  and mouths' texture animation (blinks) is not in the game-state API.
+- **Attachments**: what the game binds to a character's element (a weapon:
+  `Actor.parent`, `parent_bone`) follows the remade character: the bone the rig
+  attaches that element to (an `AttachMap`: on a socket bone the bound object
+  sits at the socket with the game's grip turn, on a mapped bone it keeps its
+  place relative to it), else the remade bone mapped to that element (its
+  frame as the element's). Its root moves by that frame's difference from the
+  game's element (`StateView3D`). In the deck battle Tidus's sword `w002` is
+  bound to element 50 (the right hand's point 5) and sits on the stand-in's
+  `Weapon.R` socket; `w066`, bound to element 13 (his left forearm), follows
+  the remade forearm.
+
+A remade character is a model of the game's character space like the classic
+one: placed under the character's root with half a turn about z.
+
+`--selftest-character --devsave=7` checks it all on Tidus (below).
+
+## Character materials (R6)
+
+Presets for remade characters, original work, in `res://remake/materials/`
+(`CharacterMaterials` gives copies), their shaders in `res://remake/shaders/`:
+
+| Preset | What |
+|---|---|
+| `skin.tres` | `StandardMaterial3D` with Godot's subsurface scattering in skin mode and transmittance (Forward+; the Compatibility renderer draws it without) |
+| `hair.tres` | `hair.gdshader`: strands as alpha (stripes along the strand direction, each of its own length), hashed alpha, anisotropic highlights along the strands (Godot's `ANISOTROPY` and `ANISOTROPY_FLOW`, from a flow direction or a flow map), root and tip colours, rim |
+| `hair_a2c.tres` | the same with alpha to coverage (MSAA smooths the strand edges) |
+| `eye.tres` | `eye.gdshader`: a latitude-longitude sphere looking along +z; the iris looked up along the view ray refracted by the cornea (a parallax: it shifts against the cornea as the view turns), pupil, limbal ring, a wet clear coat with a sharp highlight |
+| `cloth.tres` | rough two-sided fabric with a rim |
+
+Godot's subsurface scattering scale is a project setting in metres
+(`rendering/environment/subsurface_scattering/subsurface_scattering_scale`);
+characters in the game's units are about ten times larger, so a remaster
+project may raise it.
+
+## The stand-in humanoid (R6)
+
+`StandInHumanoid` (`godot/src/Characters/StandInHumanoid.cs`) makes an
+original test character in code, as a user's glTF would come: y up, facing
++z, 1.8 m, a T pose, a skeleton of its own unlike the game's (names such as
+`Pelvis`, `Spine_Lower`, `UpperArm.L`, `Calf.R`; longer legs, a shorter torso,
+three spine bones, a jaw, eyes, a weapon socket per hand), skinned tubes and
+spheres with the skin, hair, eye and cloth presets, a head with the blend
+shapes `mouth_open` and `blink`, a hood down the back (`Hood_1..3`) and a
+ponytail (`Tail_1..3`). Nothing of it is the game's; `StandInHumanoid.Save`
+writes it as a scene. The checks make it at run time (no file in git).
+
 ## Mod packs
 
 Godot packs (`.pck`) carry remade content: scenes, meshes, textures,
@@ -320,6 +409,8 @@ godot --headless --path . -- --selftest-mods --no-game
 FFX_GAME_DIR=... godot --headless --path . -- --selftest-remake --devsave=7
 # Besaid beach drawn by the remade example; the player walks over it off the beach
 FFX_GAME_DIR=... godot --headless --path . -- --selftest-remake-map --devsave=7
+# R6: the stand-in humanoid retargeted on Tidus, walking (bone directions and joints, cloth, face, materials)
+FFX_GAME_DIR=... godot --headless --path . -- --selftest-character --devsave=7
 # the example overrides on Besaid beach (R1)
 FFX_GAME_DIR=... godot --headless --path . -- --selftest-overrides --devsave=7
 # its pictures, after and before (offscreen, Xvfb)
@@ -358,3 +449,29 @@ and Japanese, with overrides, status `InProgress`; another map without.
 `--selftest-mods` also layers overrides from two packs (per part and per
 field, the later pack winning). `--overrides-survey` lists the beach's
 instances on screen and the ones the game moves (for picking parts).
+
+`--selftest-character` boots to Besaid beach, builds the stand-in's rig
+against the classic `c001` (the automatic mapping, alignment, rest offsets,
+cloth, face and attachments; the hierarchy alone, with the stand-in's names
+hidden, must find the same body parts), saves it (`--character-dir=DIR`, else
+`user://r6-check`; or takes the editor's with `--character-scene=FILE`),
+registers it for `c001`, has the view take it (`StateView3D.Reload`) and
+walks the player left for 3 s, then right for 3 s. It checks, read back from
+the remade skeleton: with the remade proportions, every mapped bone's
+direction to the bone it aims at within 3° of the game's (measured: 0.09°
+at most, mean 0.013°); with every mapped bone on the game's joint, each joint
+within 0.05 units (0.0000); the remade hips walking (48 units); the hood
+turned by the game's cloth (Tidus's segment model 0, piece 0; up to 59° from
+its skinned pose, mean 30°, moving every frame), the ponytail moved by Godot's
+spring bones (read after Godot's modifiers ran) and stable: 95 % of the frames
+under 60° from its rest (measured: median 27°, 95 % under 34°, swinging 25° to
+33° with the walk, about 50° as Tidus turns about, 71° once); the face table driven every frame (the blend shape set to the row's
+output; on the beach Tidus does not talk, so the jaw stays shut) and a jaw
+opened 5° by hand opening `mouth_open` to 0.71; the material presets loaded.
+With `--battle=3,0,0` it runs in the deck battle instead of walking: the
+directions as above (0.08°), and every object the game binds to Tidus
+following the remade character (the sword's root on the `Weapon.R` socket,
+0.00 units). With `--shot=FILE.png` under a renderer: `FILE.png` (classic
+map), `FILE-remastered.png`, `FILE-closeup.png` (the camera at the remade
+character).
+

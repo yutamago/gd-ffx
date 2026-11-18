@@ -28,6 +28,8 @@ public partial class FfxGame : RefCounted
         public static readonly StringName classic_texture = "classic_texture";
         public static readonly StringName classic_texture_is_cube = "classic_texture_is_cube";
         public static readonly StringName classic_map_catalogue = "classic_map_catalogue";
+        public static readonly StringName classic_characters = "classic_characters";
+        public static readonly StringName classic_character_skeleton = "classic_character_skeleton";
         public static readonly StringName classic_texture_uses = "classic_texture_uses";
         public static readonly StringName classic_map_game_data = "classic_map_game_data";
         public static readonly StringName classic_dev_saves = "classic_dev_saves";
@@ -422,6 +424,29 @@ public partial class FfxGame : RefCounted
     public string ClassicMapCatalogue(params string[] languages)
     {
         using var v = Node.Call(M.classic_map_catalogue, languages);
+        return v.AsString();
+    }
+
+    /// <summary>
+    /// The archive's characters as JSON (docs/remaster-editor.md, "Characters"; main thread only):
+    /// model, kind, whether it has motions, the game's names in <paramref name="languages"/> where
+    /// it gives one, the attachment points. Empty without the archive.
+    /// <see cref="Characters.CharacterCatalogue"/> reads it.
+    /// </summary>
+    public string ClassicCharacters(params string[] languages)
+    {
+        using var v = Node.Call(M.classic_characters, languages);
+        return v.AsString();
+    }
+
+    /// <summary>
+    /// Model <paramref name="name"/>'s PS2 skeleton as JSON (every element's parent and bind pose,
+    /// also those its HD model has no node for); empty without the archive or its <c>.chr</c>.
+    /// <see cref="Characters.SkeletonInfo.FromBind"/> reads it.
+    /// </summary>
+    public string ClassicCharacterSkeleton(string name)
+    {
+        using var v = Node.Call(M.classic_character_skeleton, name);
         return v.AsString();
     }
 

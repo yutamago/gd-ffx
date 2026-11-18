@@ -347,6 +347,121 @@ Open after R5:
   battles show;
 - the 2D layers drawn in the editor (R7).
 
+## R6 in detail
+
+R6, characters, is done but for the art, which is the user's (2026-11-18;
+docs/remake.md, "Retargeting" to "The stand-in humanoid"; docs/remaster-editor.md,
+"Characters"; docs/importer.md, "Characters for the remaster"):
+
+- **The character browser and edit scene**: the Characters dock lists the
+  archive's 872 character models with the game's names (the party's, the
+  monsters'), kinds, motions and remake status; a character opens as an edit
+  scene with the classic import, its skeleton and its own motions (the
+  `chr-motions` import: the motion groups as glTF animations, 140 for Tidus),
+  which the dock plays, pauses and scrubs; the remake stands beside it.
+- **Higher-detail models with skeletons of their own**: **Assign model...**
+  makes a remade scene (`res://remake/chr/<id>.tscn`, a `RemadeCharacter` over
+  the user's scene) and its rig (`<id>.rig.tres`, a `CharacterRig`), which the
+  remake registry, the convention and the packs layer as G6's scenes.
+- **Retargeting to the game's bones**: the automatic mapping by name
+  patterns, hierarchy and rest positions (the game's unnamed skeleton labelled
+  by its shape and attachment points), the alignment (up, facing, height,
+  feet), the rest-pose alignment (a T pose onto the game's A pose), the
+  mapping fixed by hand in the dock (one undo step each), per-bone offsets and
+  position modes; at run time the game's per-snapshot bone poses drive the
+  remake (the rotations, an aim at the next joint, the hips' walk), in the
+  editor the classic motions do, through the same `Retargeter`.
+- **Attachments**: what the game binds to a hand (weapons: `Actor.parent`,
+  `parent_bone`) follows the remade hand or a socket bone, by the party's
+  attachment points 4 and 5 and the PS2 skeleton (which has the points the HD
+  model lacks).
+- **Shaders**: skin (Godot's SSS in skin mode with transmittance), hair
+  (strands as hashed alpha or alpha to coverage, anisotropic highlights along
+  a flow direction or flow map), eyes (a refracted parallax iris, a wet clear
+  coat), cloth; presets in `res://remake/materials/`.
+- **Cloth**: per chain the game's cloth (each bone turned by how far the
+  game's simulated vertices hang from their skinned direction) or Godot's
+  `SpringBoneSimulator3D`, or off; chosen automatically, set per chain.
+- **Faces**: a face table maps game elements' poses (the jaw the game opens as
+  a character talks) onto blend shapes or bones, ranges editable.
+- **The test character**: an original stand-in humanoid made in code
+  (`StandInHumanoid`), with its own names and proportions, hair, eyes, a jaw
+  and blend shapes, a hood and a ponytail.
+- **Checks**: `--selftest-character --devsave=7` (the stand-in on Tidus while
+  he walks: bone directions within 0.09° of the game's, joints on the game's
+  within 0.0000 units, the hood on the game's cloth, the ponytail on Godot's
+  spring bones, the face table driven, the presets; pictures with `--shot`),
+  `tools/remaster-editor-check.sh`'s step 5 (the editor, then the game with
+  the editor's scene); in the deck battle (`--battle=3,0,0`) the sword on the
+  remade socket; on the GPU (the Windows export, Vulkan, Forward+, Intel Arc
+  140T) and under Forward+ on lavapipe the same measures, no shader errors;
+  `--selftest-remake`, `--selftest-besaid`, `--selftest-battle`,
+  `--selftest-mods` and the quick sweep (10 of 10, 0 errors) unchanged.
+
+### Decisions (R6)
+
+- **The rig is a resource beside the scene, the scene a convention's.** A
+  remade character is `res://remake/chr/<id>.tscn` with a `RemadeCharacter`
+  root naming `<id>.rig.tres`: G6's registry, convention and packs choose it as
+  any remade scene; a pack replaces a character whole (no per-bone layering:
+  a rig is one piece of work). The rig's `Align` is the root's transform.
+- **Rotations from the game, proportions from the remade model.** A mapped
+  bone takes its element's global rotation relative to their rest poses and
+  keeps its own bone lengths; the hips take the game's position (the walk, the
+  height of a jump). Every mapped bone is then swung to point at the game's
+  next joint, because the game's motions translate joints too (Tidus's wrist
+  slides along the forearm: up to 11.7° off without the swing). `Game`
+  positions put a bone on the game's joint where contact matters.
+- **The rest-pose alignment is computed, not authored.** The remade rest is
+  turned, chain by chain, so each mapped bone points where the game's does at
+  its rest; hubs (the hips, the chest) and the jaw are not aimed. The offsets
+  are numbers in the rig (turns between the user's bones and the game's
+  rests): the user's work, fine in a pack; the game's rest itself is not
+  stored (it is read from the player's classic import when the rig is made).
+- **The game's skeleton is labelled by its shape.** Its bones have no names;
+  the labeller takes the lowest leaves as feet, the widest pair as hands, the
+  highest leaf between them as the head, the longest pair of each limb as its
+  upper and lower parts, and the attachment points as hints. The same code
+  labels a remade skeleton without usable names; the check requires both to
+  agree on the stand-in.
+- **The rig's scale is baked into the remade model when it is driven.**
+  Godot's spring bones flip half a turn a frame on a scaled skeleton (its docs
+  warn; measured), and a model in metres is scaled about ten times into the
+  game's units: the rests, the skins' bind poses and the bounds are scaled
+  instead of the root.
+- **Game cloth as a deviation.** A remade cloth chain turns by how far the
+  game's simulated vertices hang from their skinned direction (the classic
+  bind pose turned by the element the chain hangs from), so a remade hood that
+  is shaped differently follows the game's swing without taking its shape.
+- **Faces from bones; no ffx-rust change.** The snapshot's face animation is
+  the jaw (point 13) and the head; the HD party's eyes and mouth also use
+  texture animation (`chr_texanim`), which the game-state API does not give
+  and gd-ffx does not draw yet: a face row reads bones only for now.
+- **Motions in a separate import.** The editor's `chr-motions` import holds the
+  model and its motions (22 MB for Tidus); the game's `chr` import stays
+  without them.
+- **Names from the kernel, where it has them.** The party's from `ply_save`,
+  a monster model's from the monster record of its number (a model several
+  monsters share shows one name); people, objects and weapons are listed by
+  id.
+
+Open after R6:
+
+- the eyes' and mouths' texture animation (blinks, the HD party's mouth
+  textures) as face channels: an ffx-rust game-state addition (the
+  `g_ChrTexAnim` slot states per character) and drawing it on the classic
+  models first;
+- picking bones in the 3D view, gizmos for a bone's offset, adding face rows in
+  the dock (the rig's inspector does it now);
+- the events' and battles' motion groups in the editor (only the character's
+  own `resident` groups are played);
+- a weapon's own cloth follows the game's hand, not the remade one;
+- the remaster render path for characters (the classic map is unlit for
+  them: they are drawn with Godot's materials under the classic environment;
+  R3's rig lights them on a remastered map);
+- real character art (the user's), and a CC0 humanoid in glTF to test an
+  import end to end.
+
 ## Beyond the milestones
 
 - **Art direction and references.** A per-area reference board, the

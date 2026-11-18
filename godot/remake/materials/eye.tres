@@ -1,0 +1,14 @@
+[gd_resource type="ShaderMaterial" load_steps=2 format=3]
+
+[ext_resource type="Shader" path="res://remake/shaders/eye.gdshader" id="1_eye"]
+
+[resource]
+resource_name = "Eye"
+render_priority = 0
+shader = ExtResource("1_eye")
+shader_parameter/iris_angle = 0.55
+shader_parameter/pupil_angle = 0.2
+shader_parameter/iris_depth = 0.22
+shader_parameter/ior = 1.336
+shader_parameter/wet = 1.0
+shader_parameter/wet_roughness = 0.04

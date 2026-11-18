@@ -221,6 +221,22 @@ public sealed class ClothView
             return Valid;
         }
 
+        /// <summary>The first segment of <paramref name="actor"/> of PS2 model <paramref name="model"/>, piece <paramref name="piece"/> (any instance); -1 none.</summary>
+        public int FindAny(int actor, int model, int piece)
+        {
+            for (int i = 0; i < Segs.Count; i++)
+                if (Segs[i] is var s && s.Actor == actor && s.Model == model && s.Piece == piece)
+                    return i;
+            return -1;
+        }
+
+        /// <summary>Vertex <paramref name="k"/>'s position in segment <paramref name="seg"/> (render space).</summary>
+        public Vector3 Position(Seg seg, int k)
+        {
+            var f = MemoryMarshal.Cast<byte, float>(Bytes.AsSpan(seg.PosAt + 12 * k, 12));
+            return new Vector3(f[0], f[1], f[2]);
+        }
+
         /// <summary>The segment of <paramref name="actor"/>'s instance <paramref name="instance"/> (-1: any) drawn by a surface (model, piece, vertex count); -1 none.</summary>
         public int Find(int actor, int instance, int model, int piece, int vertices)
         {
@@ -299,6 +315,73 @@ public sealed class ClothView
         _dirty = true;
         Fetched++;
         return slot;
+    }
+
+    /// <summary>
+    /// The game's simulated vertex <paramref name="k"/> of character <paramref name="slot"/>'s cloth
+    /// segment (PS2 model <paramref name="model"/>, piece <paramref name="piece"/>) this frame, in
+    /// render space, between the two updates by <paramref name="alpha"/> (the bones'
+    /// interpolation); null when the frames do not have it. A remade character's cloth chains
+    /// follow it (<see cref="Characters.ClothMode.Game"/>); <see cref="Wanted"/> must be set.
+    /// </summary>
+    public Vector3? Point(ushort slot, int model, int piece, int k, float alpha)
+    {
+        var cur = _cur ?? _prev;
+        if (cur == null)
+            return null;
+        int ci = cur.FindAny(slot, model, piece);
+        if (ci < 0 || k < 0 || k >= cur.Segs[ci].Vertices)
+            return null;
+        var now = cur.Position(cur.Segs[ci], k);
+        if (_cur != null && _prev != null && _prev.FindAny(slot, model, piece) is var pi && pi >= 0 && k < _prev.Segs[pi].Vertices)
+        {
+            var before = _prev.Position(_prev.Segs[pi], k);
+            if (before.IsFinite() && now.IsFinite())
+                return before.Lerp(now, alpha);
+        }
+        return now.IsFinite() ? now : null;
+    }
+
+    /// <summary>
+    /// A classic model's cloth vertices at its bind pose (the model's space: character space):
+    /// each cloth surface's vertices by their segment (PS2 model, piece) and number in it (the
+    /// import's vertex numbers, <c>CUSTOMn</c>), once each. The character tools map a remade
+    /// cloth chain's bones onto them (<see cref="Characters.RigBuilder.AutoCloth"/>).
+    /// </summary>
+    public static List<Characters.RigBuilder.ClothVertex> Vertices(Node3D model)
+    {
+        var list = new List<Characters.RigBuilder.ClothVertex>();
+        var seen = new HashSet<(int, int, int)>();
+        void Walk(Node n, Transform3D t)
+        {
+            if (n is Node3D n3 && n != model)
+                t *= n3.Transform;
+            if (n is MeshInstance3D { Mesh: ArrayMesh m } && Surfaces(m) is { Length: > 0 } surfaces)
+                foreach (var c in surfaces)
+                {
+                    if (c.Surface >= m.GetSurfaceCount() || c.Texcoord < 2)
+                        continue;
+                    var arrays = m.SurfaceGetArrays(c.Surface);
+                    var pos = arrays[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+                    int channel = (c.Texcoord - 2) / 2, comp = (c.Texcoord - 2) % 2 == 0 ? 0 : 2;
+                    if (channel > 3 || arrays[(int)Mesh.ArrayType.Custom0 + channel].VariantType == Variant.Type.Nil)
+                        continue;
+                    var custom = arrays[(int)Mesh.ArrayType.Custom0 + channel].AsFloat32Array();
+                    int per = pos.Length > 0 ? custom.Length / pos.Length : 0;
+                    if (per <= comp)
+                        continue;
+                    for (int i = 0; i < pos.Length; i++)
+                    {
+                        int k = (int)Math.Round(custom[i * per + comp]) - c.First;
+                        if (k >= 0 && k < c.Count && seen.Add((c.Model, c.Piece, k)))
+                            list.Add(new Characters.RigBuilder.ClothVertex(c.Model, c.Piece, k, t * pos[i]));
+                    }
+                }
+            for (int i = 0, k = n.GetChildCount(); i < k; i++)
+                Walk(n.GetChild(i), t);
+        }
+        Walk(model, Transform3D.Identity);
+        return list;
     }
 
     // ---- the texture --------------------------------------------------------------------
