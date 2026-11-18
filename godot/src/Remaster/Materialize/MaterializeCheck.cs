@@ -105,22 +105,172 @@ public sealed partial class MaterializeCheck : Node
         return new RgbaImage(side, height, px);
     }
 
-    /// <summary>Every feature on (so the parity covers every kernel).</summary>
+    /// <summary>Every feature on (so the parity covers every kernel); phase 4's added maps, the seam tool's overlap and the detail from files.</summary>
     public static PbrRecipe Everything(int upscale)
     {
+        var bolt = new Color(0.45f, 0.5f, 0.62f);
         var r = new PbrRecipe
         {
             Version = 3, Upscale = upscale, AlbedoDarkSpots = 0.5f, AlbedoNeutralise = 0.2f, AlbedoEdgeKeep = 0.6f,
             HeightSample1 = new Color(0.32f, 0.3f, 0.27f), HeightSampleValue1 = 0.1f, HeightGain = 0.3f, HeightBandContrast6 = -0.5f,
             NormalShape = 0.5f, NormalAngularity = 0.3f, NormalContrast = 1.3f, NormalFilter = GradientFilter.Scharr,
-            RoughnessSample1 = new Color(0.45f, 0.5f, 0.62f), RoughnessOverlay = 1f, RoughnessEdgeWear = 0.5f, RoughnessContrast = 1.2f,
-            MetallicMode = StepMode.Generate, Metallic = 1f, MetallicColour = new Color(0.45f, 0.5f, 0.62f), MetallicOverlay = 0.5f,
+            RoughnessSample1 = bolt, RoughnessOverlay = 1f, RoughnessEdgeWear = 0.5f, RoughnessContrast = 1.2f,
+            MetallicMode = StepMode.Generate, Metallic = 1f, MetallicColour = bolt, MetallicOverlay = 0.5f,
             EmissionMode = StepMode.Generate, EmissionThreshold = 0.9f, OcclusionNormalShare = 0.5f, OcclusionPower = 1.3f,
+            // R2b phase 4
+            SeamMode = SeamMode.Overlap, SeamOverlap = 0.12f, SeamHeight = 4f,
+            BentNormalOn = true, BentNormalFromNormals = 0.7f,
+            RimOn = true, RimSource = MaskSource.Colour, RimColour = bolt,
+            ClearcoatOn = true, ClearcoatSource = MaskSource.Brightness, ClearcoatThreshold = 0.45f, ClearcoatSoftness = 0.3f,
+            AnisotropyOn = true, AnisotropySource = FlowSource.Grain, AnisotropySmooth = 2f, AnisotropyCoherence = 0.8f,
+            SubsurfaceOn = true, SubsurfaceSource = MaskSource.Height, SubsurfaceThreshold = 0.5f, SubsurfaceSoftness = 0.4f,
+            TransmittanceOn = true, TransmittanceSaturation = 1.3f, TransmittanceContrast = 1.5f,
+            BacklightOn = true, BacklightSource = MaskSource.Constant, BacklightFromAlbedo = 0.7f, BacklightTint = new Color(1f, 0.9f, 0.6f),
+            RefractionOn = true, RefractionSource = MaskSource.Tilt, RefractionThreshold = 0.3f, RefractionSoftness = 0.8f,
+            DetailOn = true, DetailSource = MaskSource.Brightness, DetailInvert = true, DetailFrom = DetailFrom.Files,
+            DetailAlbedoFile = "check-detail-albedo", DetailNormalFile = "check-detail-normal",
         };
         return r;
     }
 
-    private static (double Mean, double P99, int Max) Diff(RgbaImage a, RgbaImage b)
+    /// <summary>The other branches: the seam tool's scatter (an imported normal map turned with its stamps), the other mask sources, the fixed angle, a colour's transmittance.</summary>
+    public static PbrRecipe EverythingElse(int upscale)
+    {
+        var r = Everything(upscale);
+        r.SeamMode = SeamMode.Scatter;
+        r.ScatterGrid = 4;
+        r.ScatterSeed = 7;
+        r.NormalMode = StepMode.Import;
+        r.NormalFile = "check-normal";
+        r.RimSource = MaskSource.Brightness;
+        r.RimInvert = true;
+        r.ClearcoatSource = MaskSource.Height;
+        r.SubsurfaceSource = MaskSource.Tilt;
+        r.SubsurfaceSoftness = 0.8f;
+        r.BacklightSource = MaskSource.Colour;
+        r.BacklightColour = new Color(0.62f, 0.4f, 0.27f);
+        r.RefractionSource = MaskSource.Colour;
+        r.RefractionColour = new Color(0.32f, 0.3f, 0.27f);
+        r.DetailSource = MaskSource.Height;
+        r.AnisotropySource = FlowSource.Angle;
+        r.AnisotropyAngle = 30;
+        r.TransmittanceTint = TintSource.Colour;
+        r.TransmittanceThickness = ThicknessSource.Brightness;
+        r.TransmittanceInvert = true;
+        return r;
+    }
+
+    /// <summary>The check's own images for the imports (no game data): a detail albedo and normal, a normal map (bumps).</summary>
+    public static Dictionary<string, RgbaImage> CheckImports()
+    {
+        static RgbaImage Make(int n, Func<int, int, Vector4> f)
+        {
+            var px = new byte[n * n * 4];
+            for (int y = 0; y < n; y++)
+                for (int x = 0; x < n; x++)
+                {
+                    var c = f(x, y);
+                    int i = (y * n + x) * 4;
+                    (px[i], px[i + 1], px[i + 2], px[i + 3]) = ((byte)Math.Clamp(c.X * 255, 0, 255), (byte)Math.Clamp(c.Y * 255, 0, 255), (byte)Math.Clamp(c.Z * 255, 0, 255), (byte)Math.Clamp(c.W * 255, 0, 255));
+                }
+            return new RgbaImage(n, n, px);
+        }
+        static Vector4 Bump(int x, int y, int n, float k)
+        {
+            float a = 2 * MathF.PI * k * x / n, b = 2 * MathF.PI * k * y / n;
+            var v = new Vector3(-0.4f * MathF.Cos(a), 0.4f * MathF.Cos(b), 1);
+            v = v.Normalized();
+            return new Vector4(v.X * 0.5f + 0.5f, v.Y * 0.5f + 0.5f, v.Z * 0.5f + 0.5f, 1);
+        }
+        return new Dictionary<string, RgbaImage>
+        {
+            ["check-detail-albedo"] = Make(128, (x, y) => new Vector4(0.4f + 0.3f * Kernels.Rnd(x / 4, y / 4, 3), 0.45f, 0.4f, 0.8f)),
+            ["check-detail-normal"] = Make(128, (x, y) => Bump(x, y, 128, 4)),
+            ["check-normal"] = Make(256, (x, y) => Bump(x, y, 256, 3)),
+        };
+    }
+
+    /// <summary>
+    /// How visible the wrap edges are: across each axis, the mean RGB step over the wrap boundary
+    /// (the last column to the first, the last row to the first) against the 95th percentile of
+    /// the same mean over the boundaries inside; the larger of the two axes. 1 or below: the wrap
+    /// edge is no stronger than the edges the texture has inside (a brick's mortar line too).
+    /// </summary>
+    public static double SeamRatio(RgbaImage img) => Math.Max(SeamRatios(img).LeftRight, SeamRatios(img).TopBottom);
+
+    /// <summary><see cref="SeamRatio"/> across the left/right edges and the top/bottom ones.</summary>
+    public static (double LeftRight, double TopBottom) SeamRatios(RgbaImage img)
+    {
+        int w = img.Width, h = img.Height;
+        double D(int x0, int y0, int x1, int y1)
+        {
+            int i = (y0 * w + x0) * 4, j = (y1 * w + x1) * 4;
+            return Math.Abs(img.Rgba[i] - img.Rgba[j]) + Math.Abs(img.Rgba[i + 1] - img.Rgba[j + 1]) + Math.Abs(img.Rgba[i + 2] - img.Rgba[j + 2]);
+        }
+        double Ratio(int n, int m, Func<int, int, double> step)
+        {
+            // boundary b: between line b and line b + 1 (n - 1: the wrap)
+            var inside = new double[n - 1];
+            double wrap = 0;
+            for (int b = 0; b < n; b++)
+            {
+                double sum = 0;
+                for (int k = 0; k < m; k++)
+                    sum += step(b, k);
+                if (b == n - 1)
+                    wrap = sum / m;
+                else
+                    inside[b] = sum / m;
+            }
+            Array.Sort(inside);
+            return wrap / Math.Max(1e-6, inside[(int)(0.95 * (inside.Length - 1))]);
+        }
+        return (Ratio(w, h, (b, y) => D(b, y, (b + 1) % w, y)), Ratio(h, w, (b, x) => D(x, b, x, (b + 1) % h)));
+    }
+
+    /// <summary>
+    /// A texture with seams (no game data): smooth coloured noise (two octaves of value noise, no
+    /// period) under light painted across the whole texture (brighter right and down).
+    /// </summary>
+    public static RgbaImage SyntheticSeam(int side = 256)
+    {
+        static float Noise(float x, float y, int cell, uint salt)
+        {
+            int ix = (int)MathF.Floor(x / cell), iy = (int)MathF.Floor(y / cell);
+            float fx = x / cell - ix, fy = y / cell - iy;
+            fx = fx * fx * (3 - 2 * fx);
+            fy = fy * fy * (3 - 2 * fy);
+            float a = Kernels.Rnd(ix, iy, salt), b = Kernels.Rnd(ix + 1, iy, salt), c = Kernels.Rnd(ix, iy + 1, salt), d = Kernels.Rnd(ix + 1, iy + 1, salt);
+            return a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy;
+        }
+        var px = new byte[side * side * 4];
+        for (int y = 0; y < side; y++)
+            for (int x = 0; x < side; x++)
+            {
+                float n = 0.65f * Noise(x, y, 24, 11) + 0.35f * Noise(x, y, 6, 12);
+                float k = 0.55f + 0.5f * x / side + 0.35f * y / side;
+                var c = new Vector3(0.35f + 0.4f * n, 0.3f + 0.3f * n, 0.22f + 0.15f * Noise(x, y, 40, 13)) * k;
+                int i = (y * side + x) * 4;
+                (px[i], px[i + 1], px[i + 2], px[i + 3]) = ((byte)Math.Clamp(c.X * 255, 0, 255), (byte)Math.Clamp(c.Y * 255, 0, 255), (byte)Math.Clamp(c.Z * 255, 0, 255), 255);
+            }
+        return new RgbaImage(side, side, px);
+    }
+
+    /// <summary>The seam tool on <paramref name="img"/> (the CPU): the source's seam ratio as it is, with the overlap, with the scatter.</summary>
+    public static (double Before, double Overlap, double Scatter) SeamCheck(RgbaImage img)
+    {
+        double Run(SeamMode m)
+        {
+            var r = new PbrRecipe { Version = 3, SeamMode = m };
+            var b = new CpuBackend();
+            var o = MaterializeGraph.Build(b, "seam-check", img, new Dictionary<string, RgbaImage>(), r, new BuildRequest(img.Width, img.Height, 1));
+            var res = b.Get(o.Maps[MaterialStep.Source]).ToRgba();
+            return SeamRatio(res);
+        }
+        return (SeamRatio(img), Run(SeamMode.Overlap), Run(SeamMode.Scatter));
+    }
+
+    private static (double Mean, double P99, int Max) Diff(RgbaImage a, RgbaImage b, bool alpha = false)
     {
         if (a.Width != b.Width || a.Height != b.Height)
             return (999, 999, 999);
@@ -129,7 +279,7 @@ public sealed partial class MaterializeCheck : Node
         int n = 0, max = 0;
         for (int i = 0; i < a.Rgba.Length; i++)
         {
-            if (i % 4 == 3)
+            if (i % 4 == 3 && !alpha)
                 continue;
             int x = Math.Abs(a.Rgba[i] - b.Rgba[i]);
             d[x]++;
@@ -181,19 +331,33 @@ public sealed partial class MaterializeCheck : Node
         int up = Math.Clamp(1024 / side, 1, 4);
         var recipe = Everything(up);
         recipe.WorkingSide = 1024;
-        var inputs = new MaterialPipeline.Inputs("check:" + _name, _texture, recipe, new Dictionary<string, RgbaImage>());
+        var imports = CheckImports();
+        var inputs = new MaterialPipeline.Inputs("check:" + _name, _texture, recipe, imports);
         var (w, h, scale) = MaterialPipeline.Size(inputs, 1024);
         Say($"{_name} {_texture.Width}x{_texture.Height}, x{up} to {w}x{h}");
+
+        // 0. the seam tool (the CPU): the wrap edges' step against the steps inside, before and after
+        {
+            var seam = SyntheticSeam(256);
+            var (b0, ov, sc) = SeamCheck(seam);
+            var (t0, tov, tsc) = SeamCheck(_texture);
+            Say($"seam tool (the wrap edges' mean step / the inside boundaries' 95th percentile; 1 or below: no seam): synthetic lit noise {b0:0.00} -> overlap {ov:0.00}, scatter {sc:0.00}; "
+                + $"{_name} {t0:0.00} -> overlap {tov:0.00}, scatter {tsc:0.00}");
+            if (ov > 1.15 || sc > 1.15 || ov >= b0 || sc >= b0)
+                yield return $"the seam tool left a seam on the synthetic texture ({b0:0.00} -> {ov:0.00} / {sc:0.00})";
+        }
 
         // 1. the CPU, every feature on, at the working size
         var cpu = new CpuBackend();
         var clock = Stopwatch.StartNew();
         var co = MaterializeGraph.Build(cpu, inputs.Key, _texture, inputs.Imports, recipe, new BuildRequest(w, h, scale));
         var cpuMaps = co.Maps.ToDictionary(kv => kv.Key, kv => cpu.Get(kv.Value).ToRgba());
-        var cpuOrm = cpu.Get(co.Orm).ToRgba();
-        var cpuHeight = cpu.Get(co.Maps[MaterialStep.Height]).Red();
         double cpuMs = clock.Elapsed.TotalMilliseconds;
-        Say($"CPU: every map at {w} px in {cpuMs:0} ms ({cpu.Runs} passes; slowest: {string.Join(", ", cpu.KernelMs.OrderByDescending(k => k.Value).Take(6).Select(k => $"{k.Key} {k.Value:0}"))})");
+        Say($"CPU: every map at {w} px in {cpuMs:0} ms ({cpu.Runs} passes, {cpuMaps.Count} maps; slowest: {string.Join(", ", cpu.KernelMs.OrderByDescending(k => k.Value).Take(6).Select(k => $"{k.Key} {k.Value:0}"))})");
+        // the added maps are made and not flat
+        foreach (var x in MaterialPipeline.Extras)
+            if (!cpuMaps.ContainsKey(x))
+                yield return $"the CPU made no {x} map";
         if (!GpuBackend.Available)
         {
             Say("no renderer (headless): the GPU parts skipped");
@@ -201,86 +365,113 @@ public sealed partial class MaterializeCheck : Node
         }
         Say($"renderer: {RenderingServer.GetCurrentRenderingMethod()} on {RenderingServer.GetVideoAdapterName()}");
 
-        // 2. the GPU's bake of the same, its parity with the CPU's
-        var bake = new GpuBake(this, inputs, w, h, scale);
-        int bakePasses = bake.Passes;
-        while (!bake.Done) yield return null;
-        var passDiffs = new List<(string Slot, double Mean, double Max)>();
-        foreach (var (slot, ct) in cpu.Slots)
-        {
-            if (ct.Data == null || bake.Backend.ReadSlot(slot) is not { } gi || gi.GetWidth() != ct.W || gi.GetHeight() != ct.H)
-                continue;
-            double sum = 0, max = 0;
-            for (int y = 0; y < ct.H; y++)
-                for (int x = 0; x < ct.W; x++)
-                {
-                    var gc = gi.GetPixel(x, y);
-                    var cc = ct.Fet(x, y);
-                    float[] g = [gc.R, gc.G, gc.B, gc.A];
-                    float[] c = [cc.X, cc.Y, cc.Z, cc.W];
-                    for (int k = 0; k < ct.Channels; k++)
-                    {
-                        double d = Math.Abs(g[k] - c[k]);
-                        sum += d;
-                        max = Math.Max(max, d);
-                    }
-                }
-            passDiffs.Add((slot, sum / (ct.W * ct.H * ct.Channels), max));
-        }
-        if (GameSettings.Arg("materialize-probe") is { } probe)
-        {
-            // --materialize-probe=X,Y[,slot...]: one pixel of passes from both backends (development)
-            var parts = probe.Split(',');
-            int px = int.Parse(parts[0]), py = int.Parse(parts[1]);
-            foreach (var slot in parts.Length > 2 ? parts[2..] : ["albedo", "height", "normal", "roughness", "metallic", "occlusion"])
-                if (cpu.Slots.TryGetValue(slot, out var ct) && ct.Data != null && bake.Backend.ReadSlot(slot) is { } gi)
-                {
-                    int sx = px * ct.W / w, sy = py * ct.H / h;
-                    Say($"probe {slot} ({ct.W}x{ct.H}) at {sx},{sy}: CPU {ct.Fet(sx, sy)}, GPU {gi.GetPixel(sx, sy)}");
-                }
-        }
-        Say("passes furthest apart (mean/max): " + string.Join(", ", passDiffs.OrderByDescending(d => d.Mean).Take(12).Select(d => $"{d.Slot} {d.Mean:0.#####}/{d.Max:0.####}")));
-        if (bake.Backend.OrderErrors > 0)
-            yield return $"{bake.Backend.OrderErrors} pass(es) read a pass drawn after them";
-        var (gm, gorm, gheight, gms) = bake.Finish();
-        if (GameSettings.Arg("shot") is { Length: > 0 } shot)
-        {
-            // the GPU's maps side by side (a picture outside git: made from the game's texture)
-            var sheet = Image.CreateEmpty(256 * 4, 256 * 2, false, Image.Format.Rgba8);
-            var order = new[] { MaterialStep.Source, MaterialStep.Albedo, MaterialStep.Height, MaterialStep.Normal, MaterialStep.Roughness, MaterialStep.Metallic, MaterialStep.Occlusion, MaterialStep.Emission };
-            for (int i = 0; i < order.Length; i++)
-            {
-                var img = PbrBuilder.ToImage(gm[order[i]]);
-                img.Resize(256, 256, Image.Interpolation.Bilinear);
-                sheet.BlitRect(img, new Rect2I(0, 0, 256, 256), new Vector2I(i % 4 * 256, i / 4 * 256));
-            }
-            sheet.SavePng(shot);
-            Say($"picture {shot}");
-        }
-        var parity = new List<string>();
+        // 2. the GPU's bake of the same, its parity with the CPU's; then the other branches (scatter, ...)
         bool ok = true;
-        foreach (var s in MaterialPipeline.Steps)
+        foreach (var (label, rec) in new[] { ("overlap", recipe), ("scatter", EverythingElse(up)) })
         {
-            if (s == MaterialStep.Height)
-                continue;
-            var (mean, p99, max) = Diff(cpuMaps[s], gm[s]);
-            parity.Add($"{s} {mean:0.00}/{p99:0}/{max}");
-            bool within = mean <= MeanLimit && p99 <= P99Limit;
-            ok &= within;
-            if (!within && GameSettings.Arg("shot") is { Length: > 0 } dump)
+            var ins = inputs with { Recipe = rec };
+            var c2 = label == "overlap" ? cpu : new CpuBackend();
+            var o2 = label == "overlap" ? co : MaterializeGraph.Build(c2, ins.Key, _texture, imports, rec, new BuildRequest(w, h, scale));
+            var cm = o2.Maps.ToDictionary(kv => kv.Key, kv => c2.Get(kv.Value).ToRgba());
+            var corm = c2.Get(o2.Orm).ToRgba();
+            var caux = o2.Aux.ToDictionary(kv => kv.Key, kv => c2.Get(kv.Value).ToRgba());
+            var ch = c2.Get(o2.Maps[MaterialStep.Height]).Red();
+            var bake = new GpuBake(this, ins, w, h, scale);
+            int bakePasses = bake.Passes;
+            while (!bake.Done) yield return null;
+            var passDiffs = new List<(string Slot, double Mean, double Max)>();
+            foreach (var (slot, ct) in c2.Slots)
             {
-                // the two maps beside the picture (outside git)
-                PbrBuilder.ToImage(cpuMaps[s]).SavePng($"{dump[..^4]}-cpu-{s}.png");
-                PbrBuilder.ToImage(gm[s]).SavePng($"{dump[..^4]}-gpu-{s}.png");
+                if (ct.Data == null || bake.Backend.ReadSlot(slot) is not { } gi || gi.GetWidth() != ct.W || gi.GetHeight() != ct.H)
+                    continue;
+                double sum = 0, max = 0;
+                for (int y = 0; y < ct.H; y++)
+                    for (int x = 0; x < ct.W; x++)
+                    {
+                        var gc = gi.GetPixel(x, y);
+                        var cc = ct.Fet(x, y);
+                        float[] g = [gc.R, gc.G, gc.B, gc.A];
+                        float[] c = [cc.X, cc.Y, cc.Z, cc.W];
+                        for (int k = 0; k < ct.Channels; k++)
+                        {
+                            double d = Math.Abs(g[k] - c[k]);
+                            sum += d;
+                            max = Math.Max(max, d);
+                        }
+                    }
+                passDiffs.Add((slot, sum / (ct.W * ct.H * ct.Channels), max));
             }
+            if (label == "overlap" && GameSettings.Arg("materialize-probe") is { } probe)
+            {
+                // --materialize-probe=X,Y[,slot...]: one pixel of passes from both backends (development)
+                var parts = probe.Split(',');
+                int px = int.Parse(parts[0]), py = int.Parse(parts[1]);
+                foreach (var slot in parts.Length > 2 ? parts[2..] : ["albedo", "height", "normal", "roughness", "metallic", "occlusion"])
+                    if (c2.Slots.TryGetValue(slot, out var ct) && ct.Data != null && bake.Backend.ReadSlot(slot) is { } gi)
+                    {
+                        int sx = px * ct.W / w, sy = py * ct.H / h;
+                        Say($"probe {slot} ({ct.W}x{ct.H}) at {sx},{sy}: CPU {ct.Fet(sx, sy)}, GPU {gi.GetPixel(sx, sy)}");
+                    }
+            }
+            Say($"{label}: passes furthest apart (mean/max): " + string.Join(", ", passDiffs.OrderByDescending(d => d.Mean).Take(12).Select(d => $"{d.Slot} {d.Mean:0.#####}/{d.Max:0.####}")));
+            if (bake.Backend.OrderErrors > 0)
+                yield return $"{bake.Backend.OrderErrors} pass(es) read a pass drawn after them";
+            var (gb, gms) = bake.Finish();
+            if (label == "overlap" && GameSettings.Arg("shot") is { Length: > 0 } shot)
+            {
+                // the GPU's maps side by side (a picture outside git: made from the game's texture)
+                var steps = MaterialPipeline.Steps.Where(gb.Maps.ContainsKey).ToList();
+                int cols = 6, rows = (steps.Count + cols - 1) / cols;
+                var sheet = Image.CreateEmpty(256 * cols, 256 * rows, false, Image.Format.Rgba8);
+                for (int i = 0; i < steps.Count; i++)
+                {
+                    var img = PbrBuilder.ToImage(gb.Maps[steps[i]]);
+                    img.Resize(256, 256, Image.Interpolation.Bilinear);
+                    sheet.BlitRect(img, new Rect2I(0, 0, 256, 256), new Vector2I(i % cols * 256, i / cols * 256));
+                }
+                sheet.SavePng(shot);
+                Say($"picture {shot}");
+            }
+            var parity = new List<string>();
+            foreach (var st in MaterialPipeline.Steps)
+            {
+                if (st == MaterialStep.Height || !cm.ContainsKey(st))
+                    continue;
+                if (!gb.Maps.ContainsKey(st))
+                {
+                    parity.Add($"{st} missing on the GPU");
+                    ok = false;
+                    continue;
+                }
+                // the flowmap's and transmittance's alpha is their strength: compared too
+                var (mean, p99, max) = Diff(cm[st], gb.Maps[st], st is MaterialStep.Anisotropy or MaterialStep.Transmittance);
+                parity.Add($"{st} {mean:0.00}/{p99:0}/{max}");
+                bool within = mean <= MeanLimit && p99 <= P99Limit;
+                ok &= within;
+                if (!within && GameSettings.Arg("shot") is { Length: > 0 } dump)
+                {
+                    // the two maps beside the picture (outside git)
+                    PbrBuilder.ToImage(cm[st]).SavePng($"{dump[..^4]}-{label}-cpu-{st}.png");
+                    PbrBuilder.ToImage(gb.Maps[st]).SavePng($"{dump[..^4]}-{label}-gpu-{st}.png");
+                }
+            }
+            foreach (var (name, img) in caux)
+                if (gb.Aux?.GetValueOrDefault(name) is { } ga)
+                {
+                    var (am, ap, ax) = Diff(img, ga, true);
+                    parity.Add($"{name} {am:0.00}/{ap:0}/{ax}");
+                    ok &= am <= MeanLimit && ap <= P99Limit;
+                }
+            var (om, op, ox) = Diff(corm, gb.Orm);
+            parity.Add($"ORM {om:0.00}/{op:0}/{ox}");
+            ok &= om <= MeanLimit && op <= P99Limit;
+            var (hm, hp) = DiffF(ch, Red(gb.Height));
+            parity.Add($"height {hm:0.0000}/{hp:0.0000} (float, {gb.Height.GetFormat()})");
+            ok &= hm <= HeightMeanLimit && hp <= HeightP99Limit;
+            var line = $"parity GPU vs CPU, {label}, at {w} px (mean/p99/max of 255): {string.Join(", ", parity)}; GPU bake {gms:0} ms, {bakePasses} passes";
+            Say(line);
+            yield return null;
         }
-        var (om, op, ox) = Diff(cpuOrm, gorm);
-        parity.Add($"ORM {om:0.00}/{op:0}/{ox}");
-        ok &= om <= MeanLimit && op <= P99Limit;
-        var (hm, hp) = DiffF(cpuHeight, Red(gheight));
-        parity.Add($"height {hm:0.0000}/{hp:0.0000} (float, {gheight.GetFormat()})");
-        ok &= hm <= HeightMeanLimit && hp <= HeightP99Limit;
-        Say($"parity GPU vs CPU at {w} px (mean/p99/max of 255): {string.Join(", ", parity)}; GPU bake {gms:0} ms, {bakePasses} passes");
 
         if (GameSettings.Flag("materialize-parity-only"))
         {

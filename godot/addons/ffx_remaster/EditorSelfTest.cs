@@ -1301,7 +1301,7 @@ public sealed class EditorSelfTest
         }
         // every step entered: its map made at the working size
         var dims = new List<string>();
-        foreach (var s in MaterialPipeline.Steps)
+        foreach (var s in MaterialPipeline.Core)
         {
             tab.SelectStep(s);
             foreach (var w in WaitIdle($"step {s}")) yield return w;
@@ -1567,6 +1567,10 @@ public sealed class EditorSelfTest
         string? p3fail = null;
         foreach (var w in Phase3(tab, global, ids, shots, shotDir, f => p3fail = f)) yield return w;
         if (p3fail != null) { yield return p3fail; yield break; }
+        // R2b phase 4: the maps added with + map, the seam tool, saved with the material, a profile with them
+        string? p4fail = null;
+        foreach (var w in Phase4(tab, global, ids, shots, shotDir, f => p4fail = f)) yield return w;
+        if (p4fail != null) { yield return p4fail; yield break; }
         // the open map's textures
         int more = tab.AddOpenMap();
         if (tab.Queue.Count != onMap.Count)
@@ -1585,6 +1589,308 @@ public sealed class EditorSelfTest
         // the 3D view again for the pictures after
         EditorInterface.Singleton.SetMainScreenEditor("3D");
         yield return null;
+    }
+
+    /// <summary>
+    /// R2b phase 4 in the tab (docs/remaster-materials.md, phase 4): every map added with + map
+    /// (one undo step each, in the strip, made, its texture and flag on the preview's material),
+    /// a mask from a source other than the constant, the detail from another texture's made maps,
+    /// undo and redo of an added map, a material-only amount (no map made again); the seam tool on
+    /// a synthetic texture with seams imported as the source (the wrap edges' step against the
+    /// steps inside, the source and the height, before and after; the overlap, then the scatter);
+    /// saved (the files, the material's flags and amounts, loaded back), a profile with the maps
+    /// saved and loaded.
+    /// </summary>
+    private IEnumerable<string?> Phase4(MaterialsTab tab, UndoRedo global, List<string> ids, bool shots, string shotDir, System.Action<string> fail)
+    {
+        string? f = null;
+        IEnumerable<string?> Idle(string what)
+        {
+            double t0 = _t;
+            while (!tab.Idle)
+            {
+                if (_t - t0 > 120) { f = $"{what}: the maps were not made in 120 s"; yield break; }
+                yield return null;
+            }
+        }
+        static bool Varies(GdFfx.Remaster.Texturing.RgbaImage img, int channel)
+        {
+            int lo = 255, hi = 0;
+            for (int i = channel; i < img.Rgba.Length; i += 4)
+                (lo, hi) = (System.Math.Min(lo, img.Rgba[i]), System.Math.Max(hi, img.Rgba[i]));
+            return hi - lo > 8;
+        }
+        var notes = new List<string>();
+        // the first texture, the rock profile, its exceptions cleared, a working size of 512 px (the check's time)
+        tab.Open(ids[0]);
+        tab.ClearExceptions();
+        tab.LoadProfile("rock");
+        tab.SetSetting("WorkingSide", 512);
+        foreach (var w in Idle("rock")) yield return w;
+        if (f != null) { fail(f); yield break; }
+        var mat = tab.Material3D;
+        // 1. every map added with + map: one undo step, in the strip, made, on the preview's material
+        var sources = new Dictionary<MaterialStep, (string Prop, Variant Value)>
+        {
+            [MaterialStep.Rim] = ("RimSource", (int)MaskSource.Brightness),
+            [MaterialStep.Clearcoat] = ("ClearcoatSource", (int)MaskSource.Height),
+            [MaterialStep.Subsurface] = ("SubsurfaceSource", (int)MaskSource.Tilt),
+            [MaterialStep.Backlight] = ("BacklightSource", (int)MaskSource.Brightness),
+            [MaterialStep.Refraction] = ("RefractionSource", (int)MaskSource.Height),
+            [MaterialStep.Detail] = ("DetailSource", (int)MaskSource.Brightness),
+        };
+        var onMat = new Dictionary<MaterialStep, System.Func<bool>>
+        {
+            [MaterialStep.BentNormal] = () => mat.BentNormalEnabled && mat.BentNormalTexture != null,
+            [MaterialStep.Rim] = () => mat.RimEnabled && mat.RimTexture != null,
+            [MaterialStep.Clearcoat] = () => mat.ClearcoatEnabled && mat.ClearcoatTexture != null,
+            [MaterialStep.Anisotropy] = () => mat.AnisotropyEnabled && mat.AnisotropyFlowmap != null,
+            [MaterialStep.Subsurface] = () => mat.SubsurfScatterEnabled && mat.SubsurfScatterTexture != null,
+            [MaterialStep.Transmittance] = () => mat.SubsurfScatterTransmittanceEnabled && mat.SubsurfScatterTransmittanceTexture != null,
+            [MaterialStep.Backlight] = () => mat.BacklightEnabled && mat.BacklightTexture != null,
+            [MaterialStep.Refraction] = () => mat.RefractionEnabled && mat.RefractionTexture != null,
+            [MaterialStep.Detail] = () => mat.DetailEnabled && mat.DetailMask != null && mat.DetailAlbedo != null && mat.DetailNormal != null,
+        };
+        var made = new List<string>();
+        var diffs = new List<string>();
+        foreach (var s in MaterialPipeline.Extras)
+        {
+            // a map the profile has on (rock's bent normal): Remove map first (one undo step, off the material)
+            if (MaterialPipeline.On(tab.Recipe, s))
+            {
+                var vr = global.GetVersion();
+                var re = tab.RemoveMap(s);
+                foreach (var w in Idle($"remove {s}")) yield return w;
+                if (f != null) { fail(f); yield break; }
+                if (re != null || global.GetVersion() != vr + 1 || MaterialPipeline.On(tab.Recipe, s) || onMat[s]() || tab.Pixels(s) != null)
+                {
+                    fail($"remove map {s}: {re}, {global.GetVersion() - vr} undo step(s), on {MaterialPipeline.On(tab.Recipe, s)}, on the material {onMat[s]()}");
+                    yield break;
+                }
+                made.Add($"({MaterialsTab.Label(s)} removed first: the profile's)");
+            }
+            Image? before = shots ? tab.Preview.CaptureMaterial() : null;
+            var v = global.GetVersion();
+            var ae = tab.AddMap(s);
+            if (ae != null || global.GetVersion() != v + 1 || !MaterialPipeline.On(tab.Recipe, s) || tab.Step != s)
+            {
+                fail($"+ map {s}: {ae}, {global.GetVersion() - v} undo step(s), on {MaterialPipeline.On(tab.Recipe, s)}, step {tab.Step}");
+                yield break;
+            }
+            if (sources.TryGetValue(s, out var src))
+                tab.SetSetting(src.Prop, src.Value);
+            if (s == MaterialStep.Detail)
+            {
+                // the detail from the second texture's made maps (Apply to queue made them)
+                tab.SetSetting("DetailFrom", (int)DetailFrom.Texture);
+                tab.SetSetting("DetailTexture", ids[1]);
+            }
+            foreach (var w in Idle($"+ map {s}")) yield return w;
+            if (f != null) { fail(f); yield break; }
+            if (tab.Pixels(s) is not { } px || !onMat[s]())
+            {
+                fail($"+ map {s}: map {(tab.Pixels(s) is { } p ? $"{p.Width}x{p.Height}" : "none")}, on the preview's material {onMat[s]()}");
+                yield break;
+            }
+            // a mask from a source other than the constant varies; the flowmap and the bent normal too
+            if ((sources.ContainsKey(s) || s is MaterialStep.Anisotropy or MaterialStep.BentNormal) && !Varies(px, 0) && !Varies(px, 1))
+            {
+                fail($"+ map {s}: the map is one value");
+                yield break;
+            }
+            made.Add($"{MaterialsTab.Label(s)} {px.Width}px");
+            if (shots)
+            {
+                for (int i = 0; i < 12; i++) yield return null;
+                var after = tab.Preview.CaptureMaterial();
+                after?.SavePng($"{shotDir}/maps-{s.ToString().ToLowerInvariant()}.png");
+                if (before != null && after != null)
+                    diffs.Add($"{MaterialsTab.Label(s)} {MeanDiff(before, after):0.0}");
+            }
+        }
+        if (mat.DetailAlbedo is not { } da || da.GetWidth() <= 8)
+        {
+            fail($"the detail's albedo is not the second texture's ({mat.DetailAlbedo?.GetWidth()} px)");
+            yield break;
+        }
+        notes.Add($"+ map: {string.Join(", ", made)} (one undo step each, made, on the preview's material; the detail from {RemasterTextures.ShortName(ids[1])}'s maps, {da.GetWidth()} px)"
+            + (diffs.Count > 0 ? $"; the preview changed by (of 255): {string.Join(", ", diffs)}" : ""));
+        if (shots)
+            Window($"{shotDir}/maps-strip.png");
+        // 2. undo and redo the last added map; a material-only amount makes no map
+        global.Undo(); global.Undo(); global.Undo(); global.Undo();
+        if (tab.Recipe.DetailOn || mat.DetailEnabled)
+        {
+            fail($"undo of + Detail: on {tab.Recipe.DetailOn}, the material's {mat.DetailEnabled}");
+            yield break;
+        }
+        global.Redo(); global.Redo(); global.Redo(); global.Redo();
+        foreach (var w in Idle("redo + Detail")) yield return w;
+        if (f != null) { fail(f); yield break; }
+        if (!tab.Recipe.DetailOn || !onMat[MaterialStep.Detail]() || tab.Recipe.DetailTexture != ids[1])
+        {
+            fail("redo of + Detail");
+            yield break;
+        }
+        tab.SelectStep(MaterialStep.Rim);
+        foreach (var w in Idle("the rim step")) yield return w;
+        if (f != null) { fail(f); yield break; }
+        var rimBefore = tab.Pixels(MaterialStep.Rim);
+        int commits = tab.Gpu?.Backend.Commits ?? 0;
+        tab.Drag("RimAmount", 0.6, 0.8);
+        bool remade = tab.Gpu != null ? tab.Gpu.Backend.Commits != commits : !tab.Idle || !ReferenceEquals(tab.Pixels(MaterialStep.Rim), rimBefore);
+        if (!Mathf.IsEqualApprox(mat.Rim, 0.8f) || remade)
+        {
+            fail($"the rim's amount: the material's {mat.Rim}, maps made again {remade}");
+            yield break;
+        }
+        notes.Add("undo/redo of + Detail (its settings with it); the rim's amount on the material at once, no map made");
+        // 3. the seam tool: a texture with seams (synthetic) as the source; its wrap edges before and after
+        var seamFile = GameSettings.Globalize($"{MapStore.Dir}/check-seam.png");
+        PbrBuilder.ToImage(GdFfx.Remaster.Materialize.MaterializeCheck.SyntheticSeam(256)).SavePng(seamFile);
+        tab.SelectStep(MaterialStep.Source);
+        tab.Import(MaterialStep.Source, seamFile);
+        foreach (var w in Idle("the seam texture")) yield return w;
+        if (f != null) { fail(f); yield break; }
+        double s0 = GdFfx.Remaster.Materialize.MaterializeCheck.SeamRatio(tab.Pixels(MaterialStep.Source)!), h0 = GdFfx.Remaster.Materialize.MaterializeCheck.SeamRatio(tab.Pixels(MaterialStep.Height)!);
+        var v4 = global.GetVersion();
+        tab.SetSetting("SeamMode", (int)SeamMode.Overlap);
+        foreach (var w in Idle("the overlap")) yield return w;
+        if (f != null) { fail(f); yield break; }
+        double s1 = GdFfx.Remaster.Materialize.MaterializeCheck.SeamRatio(tab.Pixels(MaterialStep.Source)!), h1 = GdFfx.Remaster.Materialize.MaterializeCheck.SeamRatio(tab.Pixels(MaterialStep.Height)!);
+        double r1 = GdFfx.Remaster.Materialize.MaterializeCheck.SeamRatio(tab.Pixels(MaterialStep.Rim)!);
+        if (shots)
+        {
+            tab.Map2D.Tiled = true;
+            for (int i = 0; i < 10; i++) yield return null;
+            Window($"{shotDir}/seam-overlap.png");
+        }
+        tab.SetSetting("SeamMode", (int)SeamMode.Scatter);
+        foreach (var w in Idle("the scatter")) yield return w;
+        if (f != null) { fail(f); yield break; }
+        double s2 = GdFfx.Remaster.Materialize.MaterializeCheck.SeamRatio(tab.Pixels(MaterialStep.Source)!), h2 = GdFfx.Remaster.Materialize.MaterializeCheck.SeamRatio(tab.Pixels(MaterialStep.Height)!);
+        if (shots)
+        {
+            for (int i = 0; i < 10; i++) yield return null;
+            Window($"{shotDir}/seam-scatter.png");
+            tab.Map2D.Tiled = false;
+        }
+        if (global.GetVersion() != v4 + 2 || !tab.Recipe.Wrap || s1 >= s0 || s2 >= s0 || s1 > 1.15 || s2 > 1.15 || h1 >= h0)
+        {
+            fail($"the seam tool: {global.GetVersion() - v4} undo step(s), wrap {tab.Recipe.Wrap}; source {s0:0.00} -> overlap {s1:0.00}, scatter {s2:0.00}; height {h0:0.00} -> {h1:0.00}, {h2:0.00}");
+            yield break;
+        }
+        notes.Add($"seam tool on a synthetic texture with seams (the wrap edges' mean step / the inside boundaries' 95th percentile): source {s0:0.00} -> overlap {s1:0.00}, scatter {s2:0.00}; "
+            + $"height {h0:0.00} -> {h1:0.00}, {h2:0.00}; rim {r1:0.00} (overlap); one undo step each, tiling on");
+        GD.Print($"ffx editortest: seam source {s0:0.000} overlap {s1:0.000} scatter {s2:0.000}; height {h0:0.000} {h1:0.000} {h2:0.000}");
+        // the source back (the texture's own), the seam tool off: three undo steps
+        global.Undo(); global.Undo(); global.Undo();
+        foreach (var w in Idle("the seam undone")) yield return w;
+        if (f != null) { fail(f); yield break; }
+        if (tab.Recipe.SeamMode != SeamMode.Off || tab.Recipe.SourceMode != StepMode.Generate)
+        {
+            fail($"undo of the seam tool: {tab.Recipe.SeamMode}, source {tab.Recipe.SourceMode}");
+            yield break;
+        }
+        // 4. saved: every added map's file, the material's flags and amounts
+        var id = tab.Current!;
+        var vs = global.GetVersion();
+        if (tab.Save() is { } se) { fail(se); yield break; }
+        double ts = _t;
+        while (tab.Saving)
+        {
+            if (_t - ts > 120) { fail("the save with the added maps did not finish"); yield break; }
+            yield return null;
+        }
+        if (global.GetVersion() != vs + 1 || TextureStore.Find(id) is not { Material.Length: > 0, Recipe: { } saved } entry)
+        {
+            fail($"save with the added maps: {tab.SaveResult}");
+            yield break;
+        }
+        var text = FileAccess.GetFileAsString(TextureStore.Absolute(entry.Material));
+        var want = new[] { "bent_normal_enabled = true", "rim_enabled = true", "rim = 0.8", "clearcoat_enabled = true", "anisotropy_enabled = true", "anisotropy_flowmap = ExtResource",
+            "subsurf_scatter_enabled = true", "subsurf_scatter_transmittance_enabled = true", "backlight_enabled = true", "refraction_enabled = true",
+            "detail_enabled = true", "detail_albedo = ExtResource", "detail_normal = ExtResource", "detail_uv_layer = 1", "uv2_scale = Vector3(4" };
+        var missing = want.FirstOrDefault(x => !text.Contains(x));
+        if (missing != null || !saved.RimOn || !saved.DetailOn || saved.DetailTexture != ids[1])
+        {
+            fail($"the saved material lacks '{missing}' (or the recipe its maps)");
+            yield break;
+        }
+        // loaded back once imported: Godot reads the flags and the maps
+        double ti = _t;
+        BaseMaterial3D? loaded = null;
+        while (true)
+        {
+            loaded = ResourceLoader.Load(TextureStore.Absolute(entry.Material), "", ResourceLoader.CacheMode.Ignore) as BaseMaterial3D;
+            if (loaded is { RimTexture: CompressedTexture2D, AnisotropyFlowmap: CompressedTexture2D, DetailAlbedo: CompressedTexture2D, BentNormalTexture: CompressedTexture2D })
+                break;
+            if (_t - ti > 60) { fail($"the saved material did not load with its maps ({entry.Material})"); yield break; }
+            yield return null;
+        }
+        if (!loaded.RimEnabled || !Mathf.IsEqualApprox(loaded.Rim, 0.8f) || !loaded.ClearcoatEnabled || !loaded.AnisotropyEnabled || !loaded.SubsurfScatterEnabled
+            || !loaded.SubsurfScatterTransmittanceEnabled || !loaded.BacklightEnabled || !loaded.RefractionEnabled || !loaded.DetailEnabled || !loaded.BentNormalEnabled
+            || loaded.DetailUVLayer != BaseMaterial3D.DetailUV.UV2 || !Mathf.IsEqualApprox(loaded.UV2Scale.X, 4f))
+        {
+            fail("the saved material loaded without some of its flags");
+            yield break;
+        }
+        int files = text.Split('\n').Count(l => l.StartsWith("[ext_resource", System.StringComparison.Ordinal));
+        notes.Add($"saved ({files} maps, {entry.Material.GetFile()}): every added map's file, flags and amounts, loaded back by Godot");
+        // 5. a profile with the maps: saved, loaded (rock has its own), loaded again; undo and redo
+        var sp = tab.SaveAsProfile("Check maps");
+        var ptext = FileAccess.GetFileAsString(ProfileStore.PathOf("check-maps"));
+        if (sp != null || !ptext.Contains("RimOn = true") || !ptext.Contains("DetailOn = true") || !ptext.Contains("AnisotropyOn = true") || ptext.Contains("DetailAlbedoFile"))
+        {
+            fail($"the profile with the maps: {sp}; {ptext.Length} bytes");
+            yield break;
+        }
+        var rock = MaterialProfiles.Load("rock")!;
+        tab.LoadProfile("rock");
+        foreach (var w in Idle("rock again")) yield return w;
+        if (f != null) { fail(f); yield break; }
+        var onRock = MaterialPipeline.Extras.Where(x => MaterialPipeline.On(tab.Recipe, x)).ToList();
+        if (MaterialPipeline.Extras.Any(x => MaterialPipeline.On(tab.Recipe, x) != MaterialPipeline.On(rock, x)) || tab.Pixels(MaterialStep.Rim) != null && !rock.RimOn)
+        {
+            fail($"loading rock: the added maps {string.Join(",", onRock)}");
+            yield break;
+        }
+        var vl = global.GetVersion();
+        tab.LoadProfile("check-maps");
+        foreach (var w in Idle("check-maps")) yield return w;
+        if (f != null) { fail(f); yield break; }
+        if (global.GetVersion() != vl + 1 || MaterialPipeline.Extras.Any(x => !MaterialPipeline.On(tab.Recipe, x)) || !onMat[MaterialStep.Rim]())
+        {
+            fail("loading the profile with the maps: not all on");
+            yield break;
+        }
+        global.Undo();
+        foreach (var w in Idle("undo the profile")) yield return w;
+        if (f != null) { fail(f); yield break; }
+        bool undone = MaterialPipeline.Extras.All(x => MaterialPipeline.On(tab.Recipe, x) == MaterialPipeline.On(rock, x)) && mat.RimEnabled == rock.RimOn;
+        global.Redo();
+        foreach (var w in Idle("redo the profile")) yield return w;
+        if (f != null) { fail(f); yield break; }
+        if (!undone || !tab.Recipe.RimOn)
+        {
+            fail($"undo/redo of the profile with the maps (undone {undone})");
+            yield break;
+        }
+        notes.Add($"profile check-maps saved ({ptext.Split('\n').Length} lines, the maps' switches in it, no files), loaded over rock ({(onRock.Count == 0 ? "no added maps" : string.Join(", ", onRock))}), undone, redone");
+        if (shots)
+        {
+            tab.SetShapeForCheck(MaterialPreview.Sphere);
+            tab.SelectStep(MaterialStep.Detail);
+            for (int i = 0; i < 20; i++) yield return null;
+            Window($"{shotDir}/maps-all.png");
+        }
+        // back to rock for what follows
+        tab.LoadProfile("rock");
+        tab.SelectStep(MaterialStep.Albedo);
+        foreach (var w in Idle("rock at the end")) yield return w;
+        if (f != null) { fail(f); yield break; }
+        GD.Print($"ffx editortest: materials phase 4: {string.Join("; ", notes)}");
+        _seen.Add($"materials phase 4: {string.Join("; ", notes)}");
     }
 
     /// <summary>

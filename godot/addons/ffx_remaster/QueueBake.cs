@@ -104,9 +104,8 @@ public sealed class QueueBake
             {
                 if (!_bake.Done)
                     return false;
-                var (maps, orm, height, _) = _bake.Finish();
+                (got, _) = _bake.Finish();
                 _bake = null;
-                got = new BakedMaps(maps, orm, height);
             }
             else if (_task != null)
             {
@@ -162,8 +161,8 @@ public sealed class QueueBake
         }
         var px = PbrBuilder.From(img);
         var imports = new Dictionary<string, RgbaImage>();
-        foreach (var s in MaterialPipeline.Steps)
-            if (MaterialPipeline.ModeOf(job.Recipe, s) == StepMode.Import && MaterialPipeline.FileOf(job.Recipe, s) is { Length: > 0 } f && _loadImport(f) is { } ipx)
+        foreach (var f in MaterialPipeline.Files(job.Recipe))
+            if (_loadImport(f) is { } ipx)
                 imports[f] = ipx;
         var inputs = new MaterialPipeline.Inputs(job.Id, px, job.Recipe, imports);
         _cur = job;

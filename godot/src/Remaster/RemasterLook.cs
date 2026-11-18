@@ -87,6 +87,45 @@ uniform float emission_energy = 1.0;
 uniform sampler2D height_tex : hint_default_black, filter_linear_mipmap, FFX_REPEAT;
 uniform float height_scale = 0.02;
 #endif
+// R2b phase 4: the maps added with + map, as Godot's BaseMaterial3D reads them
+#ifdef HAS_BENT
+uniform sampler2D bent_tex : hint_normal, filter_linear_mipmap_anisotropic, FFX_REPEAT;
+#endif
+#ifdef HAS_RIM
+uniform sampler2D rim_tex : hint_default_white, filter_linear_mipmap_anisotropic, FFX_REPEAT;
+uniform float rim = 0.5;
+uniform float rim_tint = 0.5;
+#endif
+#ifdef HAS_CLEARCOAT
+uniform sampler2D clearcoat_tex : hint_default_white, filter_linear_mipmap_anisotropic, FFX_REPEAT;
+uniform float clearcoat = 1.0;
+uniform float clearcoat_roughness = 0.3;
+#endif
+#ifdef HAS_ANISO
+uniform sampler2D flow_tex : hint_anisotropy, filter_linear_mipmap_anisotropic, FFX_REPEAT;
+uniform float anisotropy = 0.5;
+#endif
+#ifdef HAS_SSS
+uniform sampler2D sss_tex : hint_default_white, filter_linear_mipmap_anisotropic, FFX_REPEAT;
+uniform float sss_strength = 0.5;
+#endif
+#ifdef HAS_TRANSMIT
+uniform sampler2D transmit_tex : hint_default_white, filter_linear_mipmap_anisotropic, FFX_REPEAT;
+uniform vec4 transmit_colour : source_color = vec4(1.0);
+uniform float transmit_depth = 0.1;
+uniform float transmit_boost = 0.0;
+#endif
+#ifdef HAS_BACKLIGHT
+uniform sampler2D backlight_tex : hint_default_black, filter_linear_mipmap_anisotropic, FFX_REPEAT;
+uniform vec4 backlight_colour : source_color = vec4(0.0, 0.0, 0.0, 1.0);
+#endif
+#ifdef HAS_DETAIL
+uniform sampler2D detail_mask_tex : hint_default_white, filter_linear_mipmap_anisotropic, FFX_REPEAT;
+uniform sampler2D detail_albedo_tex : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform sampler2D detail_normal_tex : hint_normal, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform float detail_scale = 4.0;
+uniform int detail_blend = 0;
+#endif
 vec3 ffx_to_linear(vec3 c) {
 	c = clamp(c, 0.0, 1.0);
 	return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
@@ -126,6 +165,45 @@ void fragment() {
 #endif
 #ifdef HAS_EMISSION
 	EMISSION = texture(emission_tex, uv).rgb * emission_colour.rgb * emission_energy;
+#endif
+#ifdef HAS_DETAIL
+	// the detail at its own UV scale (the material's file keeps it on UV2 scaled; the game's UVs: UV1 at that scale)
+	vec4 dt = texture(detail_albedo_tex, uv * detail_scale);
+	float dm = texture(detail_mask_tex, uv).r;
+	vec3 db = detail_blend == 1 ? ALBEDO + dt.rgb : detail_blend == 2 ? ALBEDO - dt.rgb : detail_blend == 3 ? ALBEDO * dt.rgb : dt.rgb;
+	ALBEDO = mix(ALBEDO, mix(ALBEDO, db, dt.a), dm);
+#ifdef HAS_NORMAL
+	NORMAL_MAP = mix(NORMAL_MAP, mix(NORMAL_MAP, texture(detail_normal_tex, uv * detail_scale).rgb, dt.a), dm);
+#endif
+#endif
+#ifdef HAS_BENT
+	BENT_NORMAL_MAP = texture(bent_tex, uv).rgb;
+#endif
+#ifdef HAS_RIM
+	vec2 rt = texture(rim_tex, uv).rg;
+	RIM = rim * rt.r;
+	RIM_TINT = rim_tint * rt.g;
+#endif
+#ifdef HAS_CLEARCOAT
+	vec2 ct = texture(clearcoat_tex, uv).rg;
+	CLEARCOAT = clearcoat * ct.r;
+	CLEARCOAT_ROUGHNESS = clearcoat_roughness * ct.g;
+#endif
+#ifdef HAS_ANISO
+	vec4 fl = texture(flow_tex, uv);
+	ANISOTROPY = anisotropy * fl.a;
+	ANISOTROPY_FLOW = fl.rg * 2.0 - 1.0;
+#endif
+#ifdef HAS_SSS
+	SSS_STRENGTH = sss_strength * texture(sss_tex, uv).r;
+#endif
+#ifdef HAS_TRANSMIT
+	SSS_TRANSMITTANCE_COLOR = transmit_colour * texture(transmit_tex, uv);
+	SSS_TRANSMITTANCE_DEPTH = transmit_depth;
+	SSS_TRANSMITTANCE_BOOST = transmit_boost;
+#endif
+#ifdef HAS_BACKLIGHT
+	BACKLIGHT = backlight_colour.rgb + texture(backlight_tex, uv).rgb;
 #endif
 #ifdef BLEND
 	ALPHA = clamp(t.a * albedo_colour.a * material_colour.a * COLOR.a, 0.0, 1.0);
@@ -202,6 +280,25 @@ void fragment() {
         if (normal != null) defines.Add("HAS_NORMAL");
         if (emission != null) defines.Add("HAS_EMISSION");
         if (height != null) defines.Add("HAS_HEIGHT");
+        // the maps added with + map (R2b phase 4); refraction stays the material file's and the
+        // preview's (it needs the screen behind, a transparent pass the map's parts do not have)
+        var bent = std is { BentNormalEnabled: true } ? std.BentNormalTexture : null;
+        var rim = std is { RimEnabled: true } ? std.RimTexture : null;
+        var cc = std is { ClearcoatEnabled: true } ? std.ClearcoatTexture : null;
+        var flow = std is { AnisotropyEnabled: true } ? std.AnisotropyFlowmap : null;
+        var sss = std is { SubsurfScatterEnabled: true } ? std.SubsurfScatterTexture : null;
+        var transmit = std is { SubsurfScatterTransmittanceEnabled: true } ? std.SubsurfScatterTransmittanceTexture : null;
+        var back = std is { BacklightEnabled: true } ? std.BacklightTexture : null;
+        var detail = std is { DetailEnabled: true } ? std.DetailMask : null;
+        if (bent != null) defines.Add("HAS_BENT");
+        if (rim != null) defines.Add("HAS_RIM");
+        if (cc != null) defines.Add("HAS_CLEARCOAT");
+        if (flow != null) defines.Add("HAS_ANISO");
+        if (sss != null) defines.Add("HAS_SSS");
+        if (transmit != null) defines.Add("HAS_TRANSMIT");
+        if (back != null) defines.Add("HAS_BACKLIGHT");
+        if (detail != null && std!.DetailAlbedo != null) defines.Add("HAS_DETAIL");
+        if (std is { SubsurfScatterSkinMode: true } && (sss != null || transmit != null)) modes.Add("sss_mode_skin");
         var m = new ShaderMaterial { Shader = LitShader(string.Join(", ", modes), defines), RenderPriority = classic.RenderPriority };
         foreach (var p in new[] { "material_colour", "alpha_threshold", "scroll", "uv_morph_set" })
         {
@@ -228,6 +325,49 @@ void fragment() {
             Variants.SetParameter(m, "normal_tex", normal);
             Variants.SetParameter(m, "emission_tex", emission);
             Variants.SetParameter(m, "height_tex", height);
+            if (bent != null) Variants.SetParameter(m, "bent_tex", bent);
+            if (rim != null)
+            {
+                Variants.SetParameter(m, "rim_tex", rim);
+                m.SetShaderParameter(Variants.Name("rim"), std.Rim);
+                m.SetShaderParameter(Variants.Name("rim_tint"), std.RimTint);
+            }
+            if (cc != null)
+            {
+                Variants.SetParameter(m, "clearcoat_tex", cc);
+                m.SetShaderParameter(Variants.Name("clearcoat"), std.Clearcoat);
+                m.SetShaderParameter(Variants.Name("clearcoat_roughness"), std.ClearcoatRoughness);
+            }
+            if (flow != null)
+            {
+                Variants.SetParameter(m, "flow_tex", flow);
+                m.SetShaderParameter(Variants.Name("anisotropy"), std.Anisotropy);
+            }
+            if (sss != null)
+            {
+                Variants.SetParameter(m, "sss_tex", sss);
+                m.SetShaderParameter(Variants.Name("sss_strength"), std.SubsurfScatterStrength);
+            }
+            if (transmit != null)
+            {
+                Variants.SetParameter(m, "transmit_tex", transmit);
+                m.SetShaderParameter(Variants.Name("transmit_colour"), std.SubsurfScatterTransmittanceColor);
+                m.SetShaderParameter(Variants.Name("transmit_depth"), std.SubsurfScatterTransmittanceDepth);
+                m.SetShaderParameter(Variants.Name("transmit_boost"), std.SubsurfScatterTransmittanceBoost);
+            }
+            if (back != null)
+            {
+                Variants.SetParameter(m, "backlight_tex", back);
+                m.SetShaderParameter(Variants.Name("backlight_colour"), std.Backlight);
+            }
+            if (defines.Contains("HAS_DETAIL"))
+            {
+                Variants.SetParameter(m, "detail_mask_tex", detail);
+                Variants.SetParameter(m, "detail_albedo_tex", std.DetailAlbedo);
+                Variants.SetParameter(m, "detail_normal_tex", std.DetailNormal);
+                m.SetShaderParameter(Variants.Name("detail_scale"), std.UV2Scale.X);
+                m.SetShaderParameter(Variants.Name("detail_blend"), (int)std.DetailBlendMode);
+            }
             Count.Pbr++;
         }
         else

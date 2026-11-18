@@ -5,7 +5,7 @@
 [resource]
 script = ExtResource("1")
 Title = "Grass and foliage"
-Note = "Leaves, grass, bushes: mostly cut-out textures (the alpha comes from the texture and its classic material). No parallax, soft normals, a little sheen. Tuned on Luca and Baaj leaves, Luca grass, the Mi'ihen tree."
+Note = "Leaves, grass, bushes: mostly cut-out textures (the alpha comes from the texture and its classic material). No parallax, soft normals, a little sheen. Tuned on Luca and Baaj leaves, Luca grass, the Mi'ihen tree. Backlight (the leaves' own colour through them) and subsurface scattering are on."
 Version = 3
 Delight = 0.4
 HeightContrast = 0.8
@@ -26,3 +26,7 @@ NormalBand6 = 0.2
 NormalShape = 0.25
 RoughnessDetail = 0.3
 OcclusionNormalShare = 0.5
+SubsurfaceOn = true
+SubsurfaceStrength = 0.35
+BacklightOn = true
+BacklightValue = 0.4

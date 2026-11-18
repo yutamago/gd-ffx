@@ -245,10 +245,28 @@ void fragment() {
             Object => _objectMesh!,
             _ => new SphereMesh { Radius = 1f, Height = 2f, RadialSegments = 96, Rings = 48 },
         };
-        _objRight.Mesh = mesh;
+        // the material's side reads the detail on UV2 at the detail's own scale (as the saved
+        // material does): UV1 copied there; the compare keeps the mesh as it is (the classic look
+        // may read the game's second UV set)
+        _objRight.Mesh = WithUv1AsUv2(mesh);
         _objLeft.Mesh = mesh;
         ApplyMaterials();
         Frame();
+    }
+
+    /// <summary><paramref name="mesh"/> with its UV1 also as UV2 (a copy; the same without UV1).</summary>
+    public static Mesh WithUv1AsUv2(Mesh mesh)
+    {
+        var copy = new ArrayMesh();
+        for (int i = 0; i < mesh.GetSurfaceCount(); i++)
+        {
+            var arrays = mesh.SurfaceGetArrays(i);
+            if (arrays[(int)Mesh.ArrayType.TexUV].VariantType != Variant.Type.Nil)
+                arrays[(int)Mesh.ArrayType.TexUV2] = arrays[(int)Mesh.ArrayType.TexUV];
+            var type = mesh is ArrayMesh am ? am.SurfaceGetPrimitiveType(i) : Mesh.PrimitiveType.Triangles;
+            copy.AddSurfaceFromArrays(type, arrays);
+        }
+        return copy;
     }
 
     /// <summary>Forgets the game piece (another texture).</summary>
