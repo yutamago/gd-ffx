@@ -392,7 +392,11 @@ docs/remake.md, "Retargeting" to "The stand-in humanoid"; docs/remaster-editor.m
   within 0.0000 units, the hood on the game's cloth, the ponytail on Godot's
   spring bones, the face table driven, the presets; pictures with `--shot`),
   `tools/remaster-editor-check.sh`'s step 5 (the editor, then the game with
-  the editor's scene).
+  the editor's scene); in the deck battle (`--battle=3,0,0`) the sword on the
+  remade socket; on the GPU (the Windows export, Vulkan, Forward+, Intel Arc
+  140T) and under Forward+ on lavapipe the same measures, no shader errors;
+  `--selftest-remake`, `--selftest-besaid`, `--selftest-battle`,
+  `--selftest-mods` and the quick sweep (10 of 10, 0 errors) unchanged.
 
 ### Decisions (R6)
 

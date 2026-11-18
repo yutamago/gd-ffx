@@ -177,8 +177,6 @@ public sealed class CharacterEditorTest
                 var err = d.Error(root.Game, root.Has);
                 _maxAngle = System.Math.Max(_maxAngle, err.MaxAngle);
                 _driven++;
-                var hips = d.Skeleton.FindBone("Pelvis");
-                var pose = d.Skeleton.GetBonePosePosition(hips);
                 var spine = d.Skeleton.GetBoneGlobalPose(d.Skeleton.FindBone("Spine_Upper"));
                 _remadeFirst ??= spine;
                 _remadeMoved = System.Math.Max(_remadeMoved, Mathf.RadToDeg(_remadeFirst.Value.Basis.GetRotationQuaternion().AngleTo(spine.Basis.GetRotationQuaternion())));
@@ -188,7 +186,7 @@ public sealed class CharacterEditorTest
                     return $"the remade bones point {_maxAngle:F2}° away from the classic skeleton's";
                 if (_remadeMoved < 0.2f)
                     return $"the remade spine did not move with the motion ({_remadeMoved:F3}°)";
-                _seen.Add($"driven by the motion in the editor: {_driven} frames, the directions within {_maxAngle:F2}° of the classic skeleton's, the spine turning {_remadeMoved:F1}°, hips at {pose}");
+                _seen.Add($"driven by the motion in the editor: {_driven} frames, the directions within {_maxAngle:F2}° of the classic skeleton's, the spine turning {_remadeMoved:F1}°");
                 Next(Phase.Hand);
                 break;
             }

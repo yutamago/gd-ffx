@@ -727,7 +727,8 @@ public partial class StateView3D : Node3D
             var mi = n.Cloth is { Meshes: [var first, ..] } ? first.Node : FirstMesh(n.Model);
             if (mi == null)
                 continue;
-            var box = mi.GetAabb();
+            // a skinned remade mesh's bounds as drawn (its custom ones: the rig's scale baked)
+            var box = mi.CustomAabb.Size != Vector3.Zero ? mi.CustomAabb : mi.GetAabb();
             var c = mi.GlobalTransform * box.GetCenter();
             float d = Mathf.Max(12f, 3f * box.Size.Length());
             // from the game camera's side, level with the mesh
