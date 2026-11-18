@@ -133,11 +133,11 @@ Open after R1b:
 
 - the packs' layers shown in the editor (it edits the project's layer);
 - thumbnails in the browser (rendered offscreen, cached in `user://`);
-- opening 2D-layer maps and remade maps' own scenes;
+- opening 2D-layer maps (R5: with the game's data only) and remade maps' own scenes;
 - a project index (`res://remaster/project.tres`) if per-map files are not
   enough (statuses without overrides, thumbnails);
 - a jump to any map (the game has none): play starts at developer saves only;
-- the script-moved objects where the game puts them and their morphs (R5);
+- ~~the script-moved objects where the game puts them and their morphs~~ (R5: from the game's capture);
 - ~~the render path is stored but not used until R2~~ (used: R2).
 
 ## R2 in detail
@@ -256,6 +256,96 @@ Open after R3:
 - the Steam Deck's budgets measured on the device (R8);
 - R4's wizard: the defaults are its first pass; the wizard tunes them per map
   (exposure from the classic picture, the vertex light against added lights).
+
+## R5 in detail
+
+R5, the game's data in the editor, is done (2026-11-18; docs/remaster-editor.md,
+"The game's data"; docs/importer.md, "The game's data"):
+
+- **From the archive, no game running**: `ffx-import`'s `gamedata`
+  (`Importer::map_game_data`, `FfxGame.classic_map_game_data`, `MapGameData`):
+  the walk meshes of the map's `MAP1` file (every page; each triangle's map id
+  word), the 2D scenes' camera blocks, and per event the script's entrances
+  and workers (type, the constant positions, models, yaws, trigger lines and
+  boxes, bindings, ranges, enabled triggers, map changes). Under 0.1 s a map.
+  Everything ffx-rust's docs describe and its crates parse (`ffx-script`); no
+  ffx-rust change was needed.
+- **Walk mesh and collision**: translucent, with edges, coloured by kind (open,
+  closed to everyone, to the player, to all but the player, switched by the
+  scripts). Checked against the game: the player stands 0.00 units from it on
+  Besaid beach, and every shown character on it.
+- **Triggers, entrances, events**: line and box triggers and sensors (the
+  exits orange and named by the catalogue: "to Besaid - Crossroads (bsil02,
+  map 0x14)", the inspector's **Open target**), the entrances and the actors'
+  start places with their facing (checked against the game: the player turns
+  within 2° of the facing the yaw gives), clickable with their info in the
+  inspector's "FFX game data" section.
+- **Script-moved objects where the game puts them**: the game captures each
+  map it shows (`MapCapture`, `user://remaster/captures/<level>.json`, once a
+  run, 2 s after the map came, like R3's looks): the placed parts' worlds, the
+  morph values, the camera, the characters. The editor puts those parts there
+  (their classic base too: no edit shows, and a move is an offset on the
+  game's placement), sets the morphs, shows the game's camera and characters;
+  without a capture the file's places.
+- **Map cameras**: the 2D scenes' fixed cameras from the files (on `ptkl14` and
+  `slik04` the game's camera to 0.01 units and 0.02°) and the game's camera
+  from the capture, as Godot cameras (Preview, **View from it**).
+- **The alignment check** (`Alignment`): each walkable triangle sampled every
+  6 units against the remade geometry (additions, replacements, a remade map's
+  scene with **Check scene...**): blocked (a surface within 12 units over the
+  walk mesh) or floating (the nearest surface under it more than 2 units
+  lower); in the editor as marked triangles and a list, in the game as
+  `--selftest-alignment`.
+- **2D-layer maps** open in the editor with their game data (no 3D to edit).
+- **Checks**: `--selftest-alignment --devsave=7` (the data against the game,
+  the capture, the alignment check: an aligned patch of the walk mesh 0
+  issues, a sunken one 17 floating, a misplaced box 4 blocked; the example
+  remade beach 583 floating and 254 blocked of 839, as a plane fitted to the
+  characters is); the editor check's R5 steps (Besaid's data and capture, the
+  alignment with a misplaced box, `ptkl14` and its camera against the
+  game's); `--selftest-overrides`, `--selftest-besaid`, `--selftest-mods`, the
+  quick sweep (10 of 10, 0 errors).
+
+### Decisions (R5)
+
+- **The archive first, the game for what only it knows.** The walk mesh,
+  triggers, entrances, actor starts and 2D cameras are read from the files
+  (the editor stays a game-free tool); where the scripts put objects, the
+  morphs, the follow camera and the characters come from a capture the game
+  writes when it shows the map, as R3's looks do. A capture is one moment
+  (the birds fly on); it is the player's, never in git.
+- **Only what the scripts set with constants.** A worker's position, model,
+  trigger shape and map changes are read where every argument is a constant
+  (entry 0's first); computed values and later event moves are left out
+  rather than guessed. The 3D maps' follow cameras (the camera worker's
+  polar set-ups) wait for a later round.
+- **A captured part's base is the game's place.** The editor moves the part's
+  classic base to where the game had it, so it shows no edit and an edit is an
+  offset on the game's placement, exactly as the game applies overrides; a
+  save keeps the file's place of an added node when the scene still shows it
+  (an anchor far out leaves float noise otherwise).
+- **The alignment check is the walk mesh's view.** It judges walkable
+  triangles where remade geometry covers them (not the remade geometry
+  everywhere), with a tolerance of 2 units and a clearance of 12 (characters
+  are about 17 tall), sampled every 6 units so a piece smaller than a
+  triangle is still seen. Lights, probes, cameras, fog volumes and nodes with
+  `ffx_alignment_skip` are left out.
+- **2D-layer maps open read-only** with their game data; drawing their layers
+  in the editor is R7's (2D rooms rebuilt in 3D).
+- **Game-data nodes are the editor's**: under `GameData`, locked, never saved,
+  rebuilt at each opening; toggled per group in the dock.
+
+Open after R5:
+
+- the 3D maps' follow cameras and camera paths (the camera worker's entries:
+  `CamSetPolar`, `CamSetPos`, the focus lists), their limits;
+- computed trigger and actor positions (variables, spline natives), the
+  workers' later moves, the switched triangle kinds by script;
+- the alignment check on the other walk-mesh pages, per-triangle encounter,
+  sound and water bits shown, thresholds in the dock;
+- several captures per map (moments of an event), captures of maps only
+  battles show;
+- the 2D layers drawn in the editor (R7).
 
 ## Beyond the milestones
 

@@ -12,6 +12,7 @@
 //! ffx-import --game-dir DIR morphs <path or level>...    # its morphing instances (`all`: a census of every map model)
 //! ffx-import --game-dir DIR maps [--json] [LANG...]      # the map catalogue: levels, events, map numbers, places, areas
 //! ffx-import --game-dir DIR parts <path or level>...     # a model's stable part IDs: nodes, instances, parts
+//! ffx-import --game-dir DIR gamedata <level>...          # a map's game data as JSON: walk meshes, scene cameras, entrances, workers
 //! ```
 //!
 //! `--game-dir` defaults to `FFX_GAME_DIR`. Only reads the game; writes only
@@ -464,6 +465,19 @@ fn devsaves(imp: &ffx_import::Importer) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// `gamedata <level>`: the level's game data as JSON
+/// (`Importer::map_game_data`: walk meshes, scene cameras, entrances,
+/// workers).
+fn gamedata(imp: &ffx_import::Importer, level: &str) -> bool {
+    if let Some(v) = imp.map_game_data(level) {
+        println!("{v:#}");
+        true
+    } else {
+        eprintln!("{level}: not in the map catalogue");
+        false
+    }
+}
+
 /// The archive's texts and raw files: `cat <path>...` (raw bytes to
 /// stdout), `loc`, `wname`, `devnames`; `None` for another command.
 fn inspect(imp: &ffx_import::Importer, what: &str, names: &[String]) -> Option<ExitCode> {
@@ -479,6 +493,7 @@ fn inspect(imp: &ffx_import::Importer, what: &str, names: &[String]) -> Option<E
         "wname" => wname(imp, names),
         "devnames" => each(names, |n| devnames(imp, n)),
         "exits" => each(names, |n| exits(imp, n)),
+        "gamedata" => each(names, |n| gamedata(imp, n)),
         "flash" => flash(imp, names),
         "maps" => maps(imp, names),
         "parts" => each(names, |n| parts(imp, n)),

@@ -818,6 +818,18 @@ impl FfxGame {
             .map_or_else(GString::new, |s| GString::from(s.as_str()))
     }
 
+    /// `level`'s game data as JSON (docs/remaster-editor.md, "The game's
+    /// data"): per event its script's entrances and workers (triggers,
+    /// positions, models, exits), its `MAP1` file's walk meshes and scene
+    /// cameras. Parsing only (a few milliseconds); empty without the
+    /// archive or for a level the catalogue does not have.
+    #[func]
+    fn classic_map_game_data(&self, level: GString) -> GString {
+        classic()
+            .map_game_data(&level.to_string())
+            .map_or_else(GString::new, |s| GString::from(s.as_str()))
+    }
+
     /// Whether the material texture at `path` is a cube map.
     #[func]
     fn classic_texture_is_cube(&self, path: GString) -> bool {

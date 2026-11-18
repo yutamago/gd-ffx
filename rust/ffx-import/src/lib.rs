@@ -24,6 +24,7 @@ use serde_json::{Value, json};
 pub mod effect;
 pub mod exits;
 pub mod flash;
+pub mod gamedata;
 pub mod ids;
 pub mod maps;
 pub mod morph;

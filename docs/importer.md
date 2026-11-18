@@ -244,6 +244,49 @@ the player's copy each time.
 `ffx-import maps [languages...] [--json]` prints it (one line a level: kind,
 key, area, 3D/2D, place, events with their map numbers, level).
 
+## The game's data
+
+What the game walks on, triggers and looks through on a map, read for the
+remaster editor (docs/remaster-editor.md, "The game's data"; R5) from the
+player's archive without running the game (`rust/ffx-import/src/gamedata.rs`,
+`Importer::map_game_data`; ffx-rust's docs/formats/field.md, script.md,
+scene-maps.md, chara.md describe the formats):
+
+- **The `MAP1` file** of each event's map index (`mapout.vpa`, the catalogue's
+  map module, now kept per event as `map_file`): its sections by the offsets at
+  `+0x10 + 4 i`.
+- **The walk meshes**: sections 2 to 8 (pages 0 to 6) and 9 (page 7), each
+  page's vertices (`i16` over the page's scale / 10: field units) and
+  triangles (three vertices, three neighbours, the map id word). Besaid beach:
+  518 vertices, 839 triangles; `ptkl14` 50; `slik04` three pages.
+- **The scenes' cameras**: section 0's chunks (a 16-byte header, `+4` the
+  body's length in 16-byte units; `YNDT` first, `YNED` last), each `YNSC`
+  body's layers skipped as `rcbgSceneLoad` reads them (a `0x90`-byte record,
+  the frames and their transfer, 16 bytes, the image transfer), then the
+  camera block (eye, target, up, the field of view, a y offset). The block is
+  a tenth of field units: times 10 and `(-x, -y, z)` it is the game's camera
+  (developer saves 12 and 14, `slik04` and `ptkl14`: 0.0 units and 0.02°
+  from the camera the game drew with; the vertical field of view
+  `2 atan(0.75 tan(fov / 2))`, as the game's).
+- **The event script** (`ffx-script`): the camera worker, the entrances
+  (`0x20` bytes: map index, camera entry `+6`, yaw `+8`, position `+0xc`) and
+  per worker its type and what its entries set with constant arguments (a
+  small stack over `pushimm`, `pushc`, `pushfc`, `neg` and the four sums; a
+  call with every argument known): `SetModel` (the model, `kind << 12 |
+  number` as `c001`, `n172`), `setPosition`/`SetPos`, `SetYaw`, the trigger
+  line (`0x0054`) and its extension (`0x007a`), the box's point (`0x0057`),
+  half extents and half height (`0x0059`, `0x0058`), yaw (`0x005a`), the
+  ranges, the map group or display object it binds, the triggers it enables,
+  and the map changes (map, entrance; the natives of "Map transitions" and
+  `0x010b`). A setting in entry 0 wins over the others'.
+- Field space to render space as the characters': `(-x, -y, z)`; the facing
+  of a yaw is field `(cos yaw, 0, sin yaw)` (the game's check walks the
+  player and compares: 2°).
+
+`FfxGame.classic_map_game_data(level)` returns it as JSON (parsing only,
+under 0.1 s), `godot/src/Remaster/MapGameData.cs` reads it. Nothing of it is
+stored.
+
 ## Command line
 
 ```bash
@@ -256,6 +299,7 @@ cargo run --release -p ffx-import -- --game-dir <game> model /map/kami/kami01/  
 cargo run --release -p ffx-import -- --game-dir <game> effects /map/bsil/bsil00/  # its materials' effect variant states, instances' render orders
 cargo run --release -p ffx-import -- --game-dir <game> parts /map/bsil/bsil00/  # a model's stable part IDs
 cargo run --release -p ffx-import -- --game-dir <game> maps us jp [--json]   # the map catalogue
+cargo run --release -p ffx-import -- --game-dir <game> gamedata bsil00 ptkl14   # a map's game data as JSON: walk meshes, scene cameras, entrances, workers
 cargo run --release -p ffx-import -- --game-dir <game> effect --wgsl TransparentNoMSAA 'PS3Data/Shaders/PhyreDefaultLitShader.fx#DE71...'  # a variant's programs as WGSL (ffx-dxbc)
 ```
 
@@ -276,10 +320,10 @@ from the player's own files; keep them out of git.
 
 ## Not yet
 
-- The PS2 map camera file is not read; the 2D layers' texture animation is
-  not played.
-- No collision mesh (the game does the walking), no lights or fog from the
-  files, no texture animation. A colour morph whose `COLOR1` a segment
+- The 3D maps' follow cameras (the event scripts' camera worker) are not
+  read; the 2D layers' texture animation is not played.
+- The walk mesh is read for the editor only (the game does the walking); no
+  lights or fog from the files, no texture animation. A colour morph whose `COLOR1` a segment
   context binds to another stream has not been seen (see "Morphing
   meshes"). glTF `TEXCOORD_2` and up are not
   read (no map segment seen has more than two UV sets).

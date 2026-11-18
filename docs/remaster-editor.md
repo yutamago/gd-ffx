@@ -1,12 +1,14 @@
 # The remaster editor
 
-gd-ffx's editor plugin for the remaster (docs/remaster-plan.md, R1b to R3):
+gd-ffx's editor plugin for the remaster (docs/remaster-plan.md, R1b to R3, R5):
 browse the game's maps, open one as an editable scene of its classic parts,
 move, hide, remove, replace and add parts with Godot's own tools, and save
 the edits as the map's override files (docs/remake.md, "Overrides"), which
 the game applies; replace textures, make physically based materials for them
 and draw a map remastered ("Textures" and below), and light it: the game's
-lights and fog as nodes, sky, GI, volumes ("Lighting"). What it writes into the
+lights and fog as nodes, sky, GI, volumes ("Lighting"); see the game's own data on
+the map (walk mesh, triggers, entrances, cameras) and check that remade geometry
+lines up with it ("The game's data"). What it writes into the
 project is IDs and your own work; images made from the game's textures are
 your work products too, but never belong in gd-ffx's git ("Your work and
 git").
@@ -86,14 +88,18 @@ bsil00                    MapEditRoot (render space, at the origin)
   segments; an edit on a segment is split off in the game, as the game
   does (docs/remake.md, "In the game").
 - The materials are the game's (`ClassicMaterials`: the classic look). The
-  map is shown as the file places it: objects the game moves at run time
-  (Besaid's birds) are at their file place; their edits are relative to
-  the game's placement in the game.
+  map is shown as the file places it, except the parts the game's scripts
+  move (Besaid's birds): when the game has shown the map on this machine
+  (its capture, "The game's data") they are where the game had them, with
+  their morphs; without one they are at their file place. Either way their
+  edits are offsets on the game's placement, as the game applies them.
 - The map's existing overrides show as edits: removed parts are out of the
   scene (the Parts list keeps them, for Revert), hidden ones hidden, moved
   ones moved, replaced ones drawn by their replacement, added nodes under
   their anchors.
-- Maps with 2D layers only cannot be opened (nothing 3D to edit yet).
+- Maps with 2D layers only open with the game's data alone (the walk mesh,
+  triggers, entrances, the scene's fixed camera; "The game's data"): there
+  is nothing 3D to edit, and **Save edits** writes nothing for them.
 
 ## Editing
 
@@ -523,6 +529,94 @@ installed. Check D3D12 again after a Godot or driver upgrade
 A remastered picture identical to the classic one (a
 frame not drawn, as a lost device leaves) fails the colour check.
 
+## The game's data
+
+The game's logic stays the game's (docs/remaster-plan.md, "Rules that stay"):
+characters walk on its walk mesh, its triggers start its events, its cameras
+frame the rooms. Opening a map shows that data as read-only nodes under
+`GameData`, so remastered geometry can be made to line up with it (R5):
+
+```
+bsil00                    MapEditRoot
+├── ClassicMap ...
+├── Additions, Lighting
+└── GameData              the game's data (the editor's: locked, never saved)
+    ├── WalkMesh          Page0 (shown), Page1... (the pages the scripts switch to), each with its Edges
+    ├── Triggers          bsil0000_w32 ... a line trigger (a wall along the line) or box; labelled "to <place> (<key>, map 0x..)" when it changes the map
+    ├── Entrances         bsil0000_e0 ... an arrow where the player arrives by entrance N, facing as the game turns them
+    ├── Actors            bsil0000_w3_n172 ... where an actor's script places it at the start (model, facing)
+    ├── Cameras           Scene0... (a 2D scene's fixed camera), Game (the game's camera as it last showed the map)
+    ├── Characters        Player_c001, Slot3_n172 ... where the game had them (the capture)
+    └── Alignment         Flagged: the triangles the alignment check flags
+```
+
+- **Walk mesh**: the triangles the characters stand on (`MAP1` sections 2 to
+  8, pages 0 to 6 of `yiSetIDPage`; docs/importer.md, "The game's data"),
+  translucent with their edges, coloured by each triangle's kind (bits 0-6 of
+  its map id word, `Sg_IdMatchChr`): green open, red closed to everyone,
+  orange closed to the player, yellow closed to all but the player or to
+  chocobos, blue switched by the scripts (`0x30..0x3f`), grey other kinds
+  (they block no one). Besaid beach: one page, 839 triangles, all open; the
+  map starts on page 0, the others are shown hidden.
+- **Triggers**: the event scripts' trigger workers as their init entries set
+  them with constant arguments: line triggers (type 2, yellow) and line
+  sensors (5, cyan) as a wall 16 units high along the line (extended as the
+  game extends it), box triggers (3, magenta) and box sensors (6) as boxes
+  turned by their yaw (30 units high when the box has any height). One that
+  changes the map is orange and labelled with where it leads, by the
+  catalogue (Besaid beach's exit: "to Besaid - Crossroads (bsil02, map
+  0x14)"); the inspector's **Open target** opens that map.
+- **Entrances**: where the player arrives by each entrance of each event of
+  the level (the script's table: position, facing, camera entry); **Actors**:
+  the type-1 workers' start places (`setPosition`, `SetModel`, `SetYaw` in
+  their scripts), which events change later.
+- **Cameras**: a 2D-layer scene's fixed camera (the `YNSC` block: eye,
+  target, up, field of view; the game's camera on developer saves 12 and 14
+  is the file's to 0.01 units and 0.02°) and the game's camera as it last
+  showed the map (the capture). Both are Godot cameras: select one and tick
+  the 3D view's **Preview**, or the inspector's **View from it**. 3D maps'
+  follow cameras (the scripts' camera worker) are not read yet.
+- Click any of them: the inspector's **FFX game data** section says what it
+  is (worker, type, coordinates, where it leads, the kinds of a walk mesh).
+  The dock's **Game data** box toggles each group (also the eyes in the
+  scene tree) and says what the map has.
+
+### The capture
+
+The editor runs no game, so the game writes what only it knows a few seconds
+after it shows a map (once a run; like R3's looks): each placed part's world
+(the parts the scripts move: Besaid's birds), the display objects' morph
+values, the camera, the characters. `user://remaster/captures/<level>.json`
+(`MapCapture`; a check writes it only into `--remaster-captures=DIR`), on the
+player's machine, never in git (it is read from the running game). Opening
+the map then puts those parts where the game had them (their classic base
+moves there too, so they show no edit and a move is an offset on the game's
+placement, as the game applies it), sets their morphs, and shows the game's
+camera and characters. A map the game has not shown here keeps the file's
+places ("no capture" in the dock).
+
+### The alignment check
+
+**Check alignment** in the dock: where the open map's remade geometry (every
+added node's meshes, every replacement) disagrees with the walk mesh. Each
+walkable triangle is sampled every 6 units; along the vertical through a
+sample:
+
+| Result | When |
+|---|---|
+| **Blocked** (magenta) | a remade surface over the walk mesh within the clearance (12 units: the characters stand in it or walk through it) |
+| **Floating** (yellow) | else the nearest remade surface under it is lower than the tolerance (2 units: a gap under their feet) |
+| ok | a remade surface within the tolerance and nothing in the way, or only a roof far over it |
+
+Samples no remade surface covers are not judged (the classic map is there).
+The flagged triangles are marked under `GameData/Alignment`, the dock lists
+them (kind, by how much, the node), a click puts the view over one.
+**Check scene...** checks a remade map's scene (render space, at the map's
+root) the same way without keeping it. A node with the metadata
+`ffx_alignment_skip` is left out (a sky dome); lights, probes, cameras and
+fog volumes always are. The game's check runs it too (`--selftest-alignment`,
+"Checks").
+
 ## Your work and git
 
 Replacements and generated maps are your own work products, but the ones
@@ -535,6 +629,10 @@ move the folder to `res://mods/<pack>/remaster/textures/` (its paths are
 relative) and export it with the pack's other files. Whether you may
 publish such a pack depends on what it holds; textures made by hand from
 nothing of the game's are yours.
+
+The game's data in the editor is read from the player's archive each time a
+map opens and never stored; the captures (`user://remaster/captures/`) stay on
+the player's machine like the looks.
 
 A map's `lighting.tres` holds IDs and values only (directions, colours,
 energies, the volumes' boxes, an HDRI path of the project's): original work,
@@ -549,6 +647,11 @@ FFX_GAME_DIR=<game> tools/remaster-editor-check.sh [OUT_DIR]                    
 FFX_EDITOR_SHOT=1 FFX_GAME_DIR=<game> tools/remaster-editor-check.sh [OUT_DIR]  # under Xvfb, with pictures
 ```
 
+0. R5, before the editor: the game's `--selftest-alignment --devsave=7
+   --remaster-captures=DIR/captures` (below: "The alignment check in the
+   game") and the map check on developer save 14 (`--selftest-map
+   --devsave=14`) leave their captures of Besaid beach and Kilika's inn in
+   `DIR/captures`, which every editor run below reads.
 1. The editor (`--editor -- --remaster-editor-test --remaster-maps=DIR`;
    the overrides go to DIR, never the project's) drives the plugin through
    the dock's and the inspector's code: the archive and the catalogue
@@ -590,7 +693,21 @@ FFX_EDITOR_SHOT=1 FFX_GAME_DIR=<game> tools/remaster-editor-check.sh [OUT_DIR]  
    absolute ID, no path of this machine), read back; the map opened again (the
    turned key light, the facets' values, the volume; the preview on, the
    editor camera in the volume), saved again the same. It writes
-   `DIR/lighting-expect.json`; the game's check (2) then also takes
+   `DIR/lighting-expect.json`. Then R5: Besaid beach's game data (the walk
+   mesh drawn whole, 839 triangles; 49 triggers with the exit named by the
+   crossroads; 5 entrances; 21 actor starts; every node the editor's, locked,
+   not an addition; the inspector's section), the capture's bird
+   `#FBXASC0498_0Shape/*` where the game had it and showing no edit, the
+   game's camera and characters; the alignment check on the check's edits,
+   then a box added 8 units over the walk mesh's middle triangle (one undo
+   step): that triangle flagged blocked and marked, undone, the check as
+   before; then the 2D-layer map `ptkl14` (developer save 14) opened: no 3D
+   map, its walk mesh (50 triangles), triggers and entrances, its scene
+   camera looking at the room and within 0.5 units and 0.5° of the game's
+   (the capture), nothing saved. With pictures: `editor-gamedata.png` (the
+   beach's game data from above), `editor-gamedata-window.png`,
+   `editor-ptkl14.png` and `editor-ptkl14-camera.png` (through its fixed
+   camera). The game's check (2) then also takes
    `--lighting-file=DIR/bsil00/lighting.tres --lighting-expect=...`: the map
    drawn remastered, the editor's lighting in force (the key light as turned,
    the exposure, the volume's exposure by the camera, the fog's mode).
@@ -599,7 +716,34 @@ FFX_EDITOR_SHOT=1 FFX_GAME_DIR=<game> tools/remaster-editor-check.sh [OUT_DIR]  
    --devsave=7`; "The game's check" below).
 4. The round trip (`--remaster-editor-roundtrip`, DIR holding R1a's
    example): opened, each entry shown as its edit and both additions at
-   their anchors; saved without an edit, the same entries and additions.
+   their anchors; saved without an edit, the same entries and additions
+   (with the capture: the bird and the marker on it where the game had it,
+   saved back without float noise). Then the alignment check on the
+   example's additions and replacement (none over the walk mesh) and the
+   misplaced test box (flagged).
+
+### The alignment check in the game
+
+```bash
+FFX_GAME_DIR=<game> godot --headless --path godot -- --selftest-alignment --devsave=7
+```
+
+`--selftest-alignment` (`AlignmentTest`) boots on Besaid beach with R1a's
+example registered (as `--selftest-overrides`) and checks the game's data
+against the running game: the archive's data in under 0.1 s (the walk mesh
+839 triangles, 5 entrances, 49 triggers, 21 actor starts, the line trigger to
+map 0x14), the player on the walk mesh (0.00 units off it: the units and axes
+line up) and every shown character on it; the capture (into its own
+`user://selftest-alignment`, removed at the end, or `--remaster-captures=DIR`,
+kept): 73 placed parts with the bird far from the file's place, the morphs,
+the camera, the characters; the alignment check on the example's additions and
+replacement, then on three pieces made at run time beside the player: a patch
+of the walk mesh itself (no issue), the same patch 5 units low (floating) and
+a box 8 units over the ground (blocked); the example remade beach
+(`stand_in_map.tscn`, a plane fitted to the characters: counted only, most of
+it floating or under the sea and sky); last, the player walked forward 1.2 s:
+the facing from the game's yaw (as the entrance and actor arrows use it) is
+within 30° of the walk (2°).
 
 ### The game's check
 
@@ -667,12 +811,20 @@ export that holds either (`project.godot` still names the plugin's
 - The packs' layers are applied in the game but not shown in the editor;
   it edits the project's layer only.
 - No thumbnails in the browser.
-- 2D-layer maps (the painted rooms) and remade maps' own scenes are not
+- 2D-layer maps (the painted rooms) open with the game's data only (their
+  layers are not drawn in the editor); remade maps' own scenes are not
   opened (the editor always shows the classic import; overrides on a remade
-  map's tagged nodes are made by hand).
-- Script-moved objects are shown at their file place, not where the game
-  puts them, and morphs are not played (R5 brings the game's data into the
-  editor).
+  map's tagged nodes are made by hand; the alignment check takes one with
+  **Check scene...**).
+- Script-moved objects are where the game had them at its last capture of
+  the map (one moment: the birds fly on in the game), the morphs as they were
+  then; without a capture at their file place.
+- The game's data (R5): the triggers, positions and models the scripts set
+  with constant arguments only (computed ones, and what events change later,
+  are not shown); the 3D maps' follow cameras (the camera worker's polar
+  set-ups) are not read; walk-mesh pages other than the first are drawn but
+  the alignment check uses the first; the triangles' encounter, sound and
+  water bits are in the data, not coloured.
 - The where-used index covers the maps' 3D models only (not characters,
   2D layers, effects or menus).
 - Godot prints a few "Failed loading resource" lines while new PNGs are
@@ -715,6 +867,7 @@ export that holds either (`project.godot` still names the plugin's
 | `LightingEdit.cs` | the map's lighting as nodes, the preview, the save of `lighting.tres` |
 | `LightingFacet.cs` | the ambient, fog and environment nodes (a part of `MapLighting` as the node's properties) |
 | `VolumeNode.cs` | a lighting volume's node (the box) |
+| `GameDataEdit.cs` | the game's data as nodes (R5): walk meshes, triggers, entrances, actors, cameras, the capture's characters and placements; the alignment check's marks |
 | `EditorSelfTest.cs` | the check |
 
 Game side (R2): `RemasterTexture`, `RemasterTextureSet`, `PbrRecipe` (the
@@ -731,6 +884,11 @@ the defaults from the look, the volumes, GI, the quality), `LookCache` (the
 looks for the editor), `ColourBalance` (the colour check), `LightingTest`;
 `RemasterLook` (`ffx_lit_gamma`, the blended parts), `ClassicMaterials`
 (premultiplied output under the linear one).
+
+Game side (R5): `MapGameData` (the archive's walk meshes, scene cameras,
+entrances and workers in render space, from `FfxGame.classic_map_game_data`),
+`MapCapture` (the game's capture for the editor; `StateView3D` writes it),
+`Alignment` (the check), `AlignmentTest`.
 
 Game side: `GameHost.ClassicGame` (the running game's object, else the
 editor's), `ClassicLibrary.Load` in the editor (the glTF images kept in

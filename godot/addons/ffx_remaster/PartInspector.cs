@@ -23,13 +23,62 @@ public partial class PartInspector : EditorInspectorPlugin
 
     public override bool _CanHandle(GodotObject @object) =>
         @object is Node3D n && _plugin?.Current is { Built: true } root
-        && (root.PartOf(n) != null || root.Added().Any(a => a.Node == n));
+        && (n.HasMeta(GameDataEdit.Info) || root.PartOf(n) != null || root.Added().Any(a => a.Node == n));
 
     public override void _ParseBegin(GodotObject @object)
     {
-        if (@object is Node3D n && _plugin.Current is { Built: true } root)
+        if (@object is not Node3D n || _plugin.Current is not { Built: true } root)
+            return;
+        if (n.HasMeta(GameDataEdit.Info))
+            AddCustomControl(new GameDataPanel(_plugin, n));
+        else
             AddCustomControl(new PartPanel(_plugin, root, n));
     }
+}
+
+/// <summary>
+/// The inspector's "FFX game data" section on a game-data node (R5: a walk mesh, a trigger, an
+/// entrance, an actor, a camera): what it is, read-only; for a trigger that changes the map,
+/// <b>Open target</b> opens that map; for a camera, <b>View from it</b> puts the 3D view there.
+/// </summary>
+[Tool]
+public partial class GameDataPanel : VBoxContainer
+{
+    private readonly RemasterPlugin _plugin;
+    private readonly Node3D _node;
+
+    public GameDataPanel(RemasterPlugin plugin, Node3D node)
+    {
+        _plugin = plugin;
+        _node = node;
+        if (node == null)
+            return;
+        AddChild(new Label { Text = "FFX game data (read-only)", ThemeTypeVariation = "HeaderSmall" });
+        AddChild(new Label { Text = node.GetMeta(GameDataEdit.Info).AsString(), AutowrapMode = TextServer.AutowrapMode.WordSmart });
+        if (node.HasMeta(GameDataEdit.TargetMap))
+        {
+            int map = node.GetMeta(GameDataEdit.TargetMap).AsInt32();
+            var open = new Button { Text = "Open target", TooltipText = $"Open the map this trigger leads to (map 0x{map:x})" };
+            open.Pressed += () =>
+            {
+                if (_plugin.Session.Catalogue?.FindMap(map) is { } e)
+                    _plugin.Dock?.Say(_plugin.OpenMap(e) ?? $"opening {e.Key}");
+            };
+            AddChild(open);
+        }
+        if (node is Camera3D cam)
+        {
+            var view = new Button { Text = "View from it", TooltipText = "Put the 3D view's camera here (or tick Preview in the 3D view's menu)" };
+            view.Pressed += () =>
+            {
+                var c = EditorInterface.Singleton.GetEditorViewport3D(0).GetCamera3D();
+                c.GlobalTransform = cam.GlobalTransform;
+            };
+            AddChild(view);
+        }
+    }
+
+    public GameDataPanel() : this(null!, null!) { }
 }
 
 /// <summary>The section's controls (refreshed a few times a second: a gizmo move shows at once).</summary>

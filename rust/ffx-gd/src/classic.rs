@@ -311,6 +311,15 @@ impl Classic {
         Some(serde_json::json!({"model": model, "textures": textures}).to_string())
     }
 
+    /// `level`'s game data (`ffx_import::Importer::map_game_data`: walk
+    /// meshes, scene cameras, entrances, workers) as JSON; `None` without the
+    /// archive or for a level the catalogue does not have.
+    #[must_use]
+    pub fn map_game_data(&self, level: &str) -> Option<String> {
+        let o = lock(&self.open).clone()?;
+        o.importer.map_game_data(level).map(|v| v.to_string())
+    }
+
     /// The developers' saves (`ffx_import::Importer::dev_saves`); empty
     /// without the archive.
     #[must_use]

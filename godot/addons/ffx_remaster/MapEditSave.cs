@@ -91,10 +91,15 @@ public static class MapEditSave
         var b = root.BaseWorld(info);
         var x = new Transform3D(w.Basis * b.Basis.Inverse(), w.Origin - b.Origin);
         // what the file said, when the scene still shows it (no float noise in the diff)
-        if (info.Loaded is { TransformMode: TransformOp.Offset } o && o.Transform.IsEqualApprox(x))
+        if (info.Loaded is { TransformMode: TransformOp.Offset } o && Near(o.Transform, x))
             return (TransformOp.Offset, o.Transform);
         return (TransformOp.Offset, Snap(x));
     }
+
+    /// <summary>Equal but for float noise: origins within 1e-3 units, the axes within 1e-5.</summary>
+    public static bool Near(Transform3D a, Transform3D b) =>
+        a.Origin.DistanceTo(b.Origin) < 1e-3f && (a.Basis.Column0 - b.Basis.Column0).Length() < 1e-5f
+        && (a.Basis.Column1 - b.Basis.Column1).Length() < 1e-5f && (a.Basis.Column2 - b.Basis.Column2).Length() < 1e-5f;
 
     /// <summary>Rounded for the text file: origins to 1e-4 units, the basis to 1e-6.</summary>
     private static Transform3D Snap(Transform3D t)
@@ -126,7 +131,10 @@ public static class MapEditSave
                 node.Name = name;
             var copy = (Node3D)node.Duplicate();
             copy.Name = name;
-            copy.Transform = Snap(root.Frame(anchor).AffineInverse() * node.GlobalTransform);
+            var place = root.Frame(anchor).AffineInverse() * node.GlobalTransform;
+            // what the file said, when the scene still shows it (an anchor far out, as a bird the
+            // game flies, leaves float noise in the round trip)
+            copy.Transform = root.LoadedPlace(node) is { } loaded && Near(loaded, place) ? loaded : Snap(place);
             if (anchor != null)
                 PartIds.SetString(copy, "ffx_anchor", anchor.Short(root.Model));
             scene.AddChild(copy);

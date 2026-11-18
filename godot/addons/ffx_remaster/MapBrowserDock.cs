@@ -56,6 +56,11 @@ public partial class MapBrowserDock : EditorDock
     private Tree _parts = null!;
     private CheckBox _partsChangedOnly = null!;
     private OptionButton _addKind = null!;
+    private Label _gameInfo = null!;
+    private readonly Dictionary<string, CheckBox> _gameToggles = new();
+    private Tree _issues = null!;
+    private EditorFileDialog? _sceneDialog;
+    private GameDataEdit? _gameShown;
     private EditorFileDialog? _dirDialog;
 
     private MapEntry? _selected;
@@ -197,8 +202,119 @@ public partial class MapBrowserDock : EditorDock
         _parts.SetColumnCustomMinimumWidth(1, 150);
         _parts.ItemSelected += OnPartSelected;
         col.AddChild(_parts);
+        // R5: the game's data on the open map
+        col.AddChild(new HSeparator());
+        col.AddChild(new Label { Text = "Game data (read-only)" });
+        var flow = new HFlowContainer();
+        col.AddChild(flow);
+        foreach (var g in GameDataEdit.GroupNames)
+        {
+            var name = g;
+            var box = new CheckBox { Text = name, ButtonPressed = true, TooltipText = $"Show the game's {name.ToLowerInvariant()} on the map" };
+            box.Toggled += on => ShowGameGroup(name, on);
+            _gameToggles[name] = box;
+            flow.AddChild(box);
+        }
+        _gameInfo = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart };
+        col.AddChild(_gameInfo);
+        row = new HBoxContainer();
+        col.AddChild(row);
+        var check = new Button { Text = "Check alignment", TooltipText = "Where the additions and replacements disagree with the walk mesh: floating over it, or in the way" };
+        check.Pressed += () => CheckAlignment(null);
+        row.AddChild(check);
+        var checkScene = new Button { Text = "Check scene...", TooltipText = "The same with a remade map's scene placed at the map's root (not kept)" };
+        checkScene.Pressed += ChooseScene;
+        row.AddChild(checkScene);
+        _issues = new Tree { Columns = 3, HideRoot = true, CustomMinimumSize = new Vector2(0, 120) };
+        _issues.SetColumnExpand(0, false);
+        _issues.SetColumnCustomMinimumWidth(0, 70);
+        _issues.SetColumnExpand(1, false);
+        _issues.SetColumnCustomMinimumWidth(1, 70);
+        _issues.ItemSelected += OnIssueSelected;
+        col.AddChild(_issues);
         _message = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart };
         col.AddChild(_message);
+    }
+
+    // ---- R5: the game's data ------------------------------------------------------------------
+
+    private void ShowGameGroup(string name, bool on)
+    {
+        if (_plugin.Current?.GameData?.GroupByName(name) is { } g)
+            g.Visible = on;
+    }
+
+    /// <summary>The open map's game data in the dock (its counts, the toggles applied, the last check's issues).</summary>
+    private void FillGameData()
+    {
+        var gd = _plugin.Current is { Built: true } root ? root.GameData : null;
+        if (ReferenceEquals(gd, _gameShown))
+            return;
+        _gameShown = gd;
+        _gameInfo.Text = gd?.Describe() ?? "";
+        if (gd != null)
+            foreach (var (name, box) in _gameToggles)
+                ShowGameGroup(name, box.ButtonPressed);
+        FillIssues();
+    }
+
+    private void FillIssues()
+    {
+        _issues.Clear();
+        var top = _issues.CreateItem();
+        if (_gameShown?.Report is not { } r)
+            return;
+        for (int i = 0; i < r.Issues.Count; i++)
+        {
+            var x = r.Issues[i];
+            var it = _issues.CreateItem(top);
+            it.SetText(0, x.Kind.ToString());
+            it.SetText(1, $"{x.Distance:0.0}");
+            it.SetText(2, $"triangle {x.Triangle}: {x.Source}");
+            it.SetMetadata(0, i);
+        }
+    }
+
+    /// <summary>Runs the alignment check on the open map (with <paramref name="scene"/>: a remade map's scene at its root).</summary>
+    public AlignmentReport? CheckAlignment(string? scene)
+    {
+        if (_plugin.Current is not { Built: true, GameData: { } gd })
+        {
+            Say("open a map first");
+            return null;
+        }
+        var r = scene != null ? gd.CheckScene(scene) : gd.Check();
+        Say(r == null ? "no walk mesh to check against" : $"alignment{(scene != null ? $" with {scene}" : "")}: {r.Summary()}");
+        _gameShown = null;
+        FillGameData();
+        return r;
+    }
+
+    private void ChooseScene()
+    {
+        _sceneDialog ??= new EditorFileDialog
+        {
+            FileMode = EditorFileDialog.FileModeEnum.OpenFile,
+            Access = EditorFileDialog.AccessEnum.Resources,
+            Title = "A remade map's scene (render space, at the map's root)",
+            Filters = ["*.tscn, *.scn, *.glb ; Scenes"],
+        };
+        if (_sceneDialog.GetParent() == null)
+        {
+            AddChild(_sceneDialog);
+            _sceneDialog.FileSelected += f => CheckAlignment(f);
+        }
+        _sceneDialog.PopupCentered(new Vector2I(800, 500));
+    }
+
+    private void OnIssueSelected()
+    {
+        if (_issues.GetSelected() is not { } it || _gameShown?.Issue(it.GetMetadata(0).AsInt32()) is not { } issue)
+            return;
+        // the view over the flagged sample
+        var cam = EditorInterface.Singleton.GetEditorViewport3D(0).GetCamera3D();
+        cam.GlobalTransform = new Transform3D(Basis.LookingAt(-new Vector3(0, 60, 80).Normalized(), Vector3.Up), issue.Point + new Vector3(0, 60, 80));
+        Say($"{issue.Kind} by {issue.Distance:0.0} units at {issue.Point.Round()} (walk-mesh triangle {issue.Triangle}, {issue.Source})");
     }
 
     public override void _Process(double delta)
@@ -208,6 +324,7 @@ public partial class MapBrowserDock : EditorDock
             return;
         _sinceRefresh = 0;
         FillParts();
+        FillGameData();
     }
 
     /// <summary>Shows a message at the dock's foot (and in the log).</summary>

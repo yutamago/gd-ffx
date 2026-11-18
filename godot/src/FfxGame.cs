@@ -29,6 +29,7 @@ public partial class FfxGame : RefCounted
         public static readonly StringName classic_texture_is_cube = "classic_texture_is_cube";
         public static readonly StringName classic_map_catalogue = "classic_map_catalogue";
         public static readonly StringName classic_texture_uses = "classic_texture_uses";
+        public static readonly StringName classic_map_game_data = "classic_map_game_data";
         public static readonly StringName classic_dev_saves = "classic_dev_saves";
         public static readonly StringName decode_text = "decode_text";
         public static readonly StringName effect_draws = "effect_draws";
@@ -446,6 +447,17 @@ public partial class FfxGame : RefCounted
     public string ClassicTextureUses(string level)
     {
         using var v = Node.Call(M.classic_texture_uses, level);
+        return v.AsString();
+    }
+
+    /// <summary>
+    /// <paramref name="level"/>'s game data as JSON (docs/remaster-editor.md, "The game's data";
+    /// parsing only): per event its script's entrances and workers, its <c>MAP1</c> file's walk
+    /// meshes and scene cameras. Empty without the archive. <see cref="Remaster.MapGameData"/> reads it.
+    /// </summary>
+    public string ClassicMapGameData(string level)
+    {
+        using var v = Node.Call(M.classic_map_game_data, level);
         return v.AsString();
     }
 
