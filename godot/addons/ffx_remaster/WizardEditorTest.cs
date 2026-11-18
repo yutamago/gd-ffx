@@ -14,7 +14,7 @@ namespace GdFfx.RemasterEditor;
 /// written). Through the code the Wizard dock uses:
 /// <list type="number">
 /// <item>Besaid beach from the map browser's selection: its textures listed with a profile, a score
-/// and reasons each, the materials made, the lighting staged (GI by the map's size), under a renderer
+/// and reasons each, the materials made, the lighting staged (VoxelGI), under a renderer
 /// the before/after pictures and the colour check; the project untouched (no entry, no render path,
 /// no lighting file) before the accept;</item>
 /// <item>the review: a texture rejected (one undo step, undone, redone), another made again with a

@@ -12,14 +12,12 @@ public sealed record WizardTexture(string Id, TextureUseInfo Use, TextureFeature
 /// The remaster wizard's first pass over one map (docs/remaster-plan.md, "R4 in detail"), the part
 /// the editor and the game share: the map's colour textures with a kind and a starter profile each
 /// (<see cref="TextureClassifier"/>), and its remastered lighting from the game's look (R3's
-/// defaults, which follow the game's key light, ambient, fog and sky) with GI chosen by the map's
-/// size and the exposure matched to the classic picture when there is a renderer. The editor stages
+/// defaults, which follow the game's key light, ambient, fog and sky) with VoxelGI
+/// and the exposure matched to the classic picture when there is a renderer. The editor stages
 /// it for review (<c>addons/ffx_remaster/Wizard.cs</c>); <c>--selftest-wizard</c> runs it in the game.
 /// </summary>
 public static class WizardPass
 {
-    /// <summary>VoxelGI's box at most (render units, <see cref="RemasterLighting.VoxelBox"/>): a map that fits in 1.5 times it takes VoxelGI, a bigger one SDFGI.</summary>
-    public static readonly Vector3 VoxelMax = new(1200, 400, 1200);
 
     /// <summary>A texture smaller than this on its longer side is left classic (a flare, a dot, a strip: no relief to make).</summary>
     public const int MinSide = 32;
@@ -50,13 +48,17 @@ public static class WizardPass
         return (list, box);
     }
 
-    /// <summary>The GI for a map of <paramref name="box"/> (no sky): VoxelGI where its box covers most of it, else SDFGI (high quality only; medium and low draw none, as R3's quality says).</summary>
-    public static GiMode GiFor(Aabb box) =>
-        box.Size.X <= VoxelMax.X * 1.5f && box.Size.Y <= VoxelMax.Y * 1.5f && box.Size.Z <= VoxelMax.Z * 1.5f ? GiMode.VoxelGi : GiMode.Sdfgi;
+    /// <summary>
+    /// The GI for a map of <paramref name="box"/> (no sky): VoxelGI, baked on the player's machine
+    /// (medium and high quality), over the map's middle at most 1,200 x 400 x 1,200 units (a bigger
+    /// map has GI there only). Not SDFGI: on the GPU it leaked light over Besaid beach (the cliffs
+    /// sand-yellow, the foliage white; the colour check's hue 29 degrees off), so it is a hand choice.
+    /// </summary>
+    public static GiMode GiFor(Aabb box) => GiMode.VoxelGi;
 
     /// <summary>
     /// The wizard's lighting for <paramref name="level"/>: R3's defaults (the game's key light as
-    /// the sun, its ambient and fog, a sky in the game's colours) with GI for the map's size, the
+    /// the sun, its ambient and fog, a sky in the game's colours) with VoxelGI (<see cref="GiFor"/>), the
     /// exposure as given (1: the default).
     /// </summary>
     public static MapLighting Lighting(string level, Aabb box, float exposure = 1f)
@@ -104,6 +106,6 @@ public static class WizardPass
         int count = textures.Count(t => t.Made && t.Profile.Length > 0);
         return $"wizard pass {when}: {count} material(s)"
             + (made.Count > 0 ? $" ({string.Join(", ", made)})" : "") + $", {kept} kept classic; lighting from the game's look, GI {lighting.GiMode}"
-            + (Math.Abs(lighting.ToneExposure - 1f) > 1e-4f ? $", exposure {lighting.ToneExposure:0.##}" : "");
+            + (Math.Abs(lighting.ToneExposure - 1f) > 1e-4f ? ", exposure " + lighting.ToneExposure.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) : "");
     }
 }

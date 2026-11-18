@@ -284,9 +284,9 @@ remaster wizard"):
   when the Materials tab uses it, else the CPU), in the background with progress
   and cancel; their files content-named in the texture folders, no entry written.
 - **The lighting from the game's look**: R3's defaults (the sun from the game's
-  key light, its ambient, fog and a sky in its colours), GI by the map's size
-  (VoxelGI when the map without its sky fits 1.5 times VoxelGI's box, else SDFGI,
-  which only the high quality draws), and with a renderer the exposure matched to
+  key light, its ambient, fog and a sky in its colours), VoxelGI (baked on the
+  player's machine, drawn at medium and high quality, over the map's middle at
+  most 1,200 x 400 x 1,200 units), and with a renderer the exposure matched to
   the classic picture once (`WizardPass.TuneExposure`: the lightness ratio cubed,
   0.6 to 1.6, kept only if it brings the lightness nearer). Written as
   `lighting.tres` (only what differs from the defaults: `GiMode`, `ToneExposure`).
@@ -342,6 +342,7 @@ llvmpipe, Compatibility):
 | Besaid's colour check in the editor's review | dL +0.042, chroma x0.93, hue 4.3°; exposure tuned 1 → 0.8: dL +0.005, x0.94, 2.7° (cells 0.076, 1.6°) |
 | the game with the editor's accepted pass (Compatibility, Xvfb) | 50 of 50 materials drawn with their maps; dL -0.006, chroma x0.97, hue 0.9° (cells 0.064, 1.8°) |
 | the game running the pass itself (Compatibility, Xvfb) | 51 materials at 512 px in 59 s (the CPU); dL +0.033 → exposure 0.85 → +0.005, x0.96, 1.5° |
+| the same on the GPU (the Windows export, Vulkan, Forward+, Intel Arc 140T), VoxelGI drawn | 51 materials in 40 s; dL -0.065 → exposure 1.4 → -0.005, x0.90, 1.9° (cells 0.059, 1.1°); with SDFGI (the first rule): hue 28.8° off, failed; with no GI: -0.002, x0.89, 1.4° |
 
 ### Decisions (R4)
 
@@ -366,9 +367,16 @@ llvmpipe, Compatibility):
   water's shaders, additive and soft-alpha blended textures, mostly cut-out
   textures that are not green, and tiny ones (under 32 px). Blended alone is not
   a reason: Besaid's sand is a blended terrain.
-- **GI by size.** VoxelGI where its box covers most of the map (baked on the
-  player's machine, medium and high quality), SDFGI for big outdoor maps (high
-  quality only); one mode per map, as R3's file holds.
+- **VoxelGI, not SDFGI.** The first rule chose SDFGI for maps bigger than
+  VoxelGI's box (Besaid beach: 6,026 x 1,139 x 6,026 units). On the GPU (the
+  Windows export, Vulkan, Intel Arc 140T) SDFGI leaked light over the beach: the
+  cliffs sand-yellow, the foliage and the village white, the colour check's hue 29°
+  off (the lightness +0.11 before the exposure was tuned). With VoxelGI the same
+  pass scored dL -0.005, chroma x0.90, hue 1.9° (after the exposure, from -0.065),
+  with none -0.002, x0.89, 1.4°. So the wizard always chooses VoxelGI (a big map has
+  GI in its middle only, which elsewhere is none); SDFGI stays a hand choice, and
+  its settings for FFX's scale want a look of their own (R3's GPU check had used
+  VoxelGI).
 - **The exposure is tuned once**, from the review's classic and remastered
   pictures, and kept only when it brought the lightness nearer; the other R3
   defaults stay (they follow the game's look). Without a renderer (headless)

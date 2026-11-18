@@ -864,8 +864,8 @@ until a map is accepted.
   sky, water, glows and effects, background paintings) with a score and its
   reasons, makes the materials with those profiles (R2b's run: the GPU when the
   Materials tab uses it, else the CPU), stages the lighting (R3's defaults from
-  the game's look, GI by the map's size: VoxelGI for maps that fit its box, else
-  SDFGI), and, with a renderer, renders the before/after pictures, matches the
+  the game's look, VoxelGI over the map's middle; not SDFGI, which leaked light on
+  the GPU), and, with a renderer, renders the before/after pictures, matches the
   exposure to the classic picture once and runs the colour check.
 - **Pause** stops after the map being made, **Resume** goes on (in the next
   editor session too), **Cancel** drops the map being made. 2D-layer maps are
@@ -888,7 +888,7 @@ until a map is accepted.
   differ from it), the render path remastered, the status in progress (a higher
   one set by hand stays), the pass's note added to the map's notes ("wizard pass
   2026-11-18: 50 material(s) (grass-and-foliage 20, sand-and-dirt 14, ...), 3 kept
-  classic; lighting from the game's look, GI Sdfgi, exposure 0.8"), and
+  classic; lighting from the game's look, GI VoxelGi, exposure 0.8"), and
   `lighting.tres` (only what differs from the defaults). An open map is opened
   again. **Discard** drops the pass. Each review action is one undo step of the
   global history; making a pass is none (no project file changes).

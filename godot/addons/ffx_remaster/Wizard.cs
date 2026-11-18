@@ -16,7 +16,7 @@ namespace GdFfx.RemasterEditor;
 /// (<see cref="WizardPass.Analyze"/>: a starter profile each, or keep classic), the materials made
 /// with those profiles (<see cref="QueueBake"/>: GPU when the Materials tab uses it, else the CPU,
 /// in the background; their files content-named in the texture folders, no entry written), the
-/// lighting from the game's look with GI for the map's size, with a renderer the before/after
+/// lighting from the game's look with VoxelGI, with a renderer the before/after
 /// pictures (<see cref="WizardRender"/>), the exposure matched to the classic picture and R3's
 /// colour check; all of it staged in <see cref="WizardState"/> for the review. Nothing reaches the
 /// project until a map is accepted (<see cref="RemasterPlugin.WizardAccept"/>: one undo step).
