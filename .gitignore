@@ -60,3 +60,7 @@ Thumbs.db
 /godot/remaster/textures/
 # the remaster wizard's state in this checkout (its batch and staged passes: docs/remaster-editor.md, "The remaster wizard")
 /godot/remaster/wizard/
+
+# Python
+__pycache__/
+*.pyc
