@@ -1,4 +1,5 @@
 #if TOOLS
+using System.Collections.Generic;
 using Godot;
 
 namespace GdFfx.RemasterEditor;
@@ -23,6 +24,8 @@ uniform float zoom = 1.0;
 uniform vec2 pan = vec2(0.0);
 uniform float tiles = 1.0;
 uniform float split = -1.0;
+uniform sampler2D overlay : filter_linear, repeat_enable;
+uniform float overlay_on = 0.0;
 void fragment() {
 	vec2 uv = ((UV - 0.5) / fit) / zoom + 0.5 + pan;
 	vec2 t = uv * tiles;
@@ -31,6 +34,7 @@ void fragment() {
 	float chk = mod(floor(UV.x * 40.0) + floor(UV.y * 40.0 * fit.y / max(fit.x, 0.001)), 2.0);
 	vec3 bg = mix(vec3(0.16), vec3(0.2), chk);
 	COLOR.rgb = inside ? mix(bg, c.rgb, c.a) : bg * 0.6;
+	if (inside && overlay_on > 0.5) { vec4 o = texture(overlay, t); COLOR.rgb = mix(COLOR.rgb, o.rgb, o.a); }
 	if (split >= 0.0 && abs(UV.x - split) < 0.002) COLOR.rgb = vec3(1.0, 0.85, 0.2);
 	COLOR.a = 1.0;
 }";
@@ -72,6 +76,150 @@ void fragment() {
     /// <summary>The colour a pick at a UV would take (the swatch beside the cursor), or null.</summary>
     public System.Func<Vector2, Color?>? Sampler { get; set; }
 
+    /// <summary>The region tools (R2b phase 6): none (the view pans), a rectangle, a polygon, the brush, the eraser.</summary>
+    public enum RegionTool { None, Rect, Polygon, Brush, Erase }
+
+    private RegionTool _tool;
+
+    /// <summary>The region tool in use: left clicks and drags draw with it instead of panning (the middle button still pans).</summary>
+    public RegionTool Tool
+    {
+        get => _tool;
+        set
+        {
+            _tool = value;
+            _polygon.Clear();
+            _overlay.PolyMarks.Clear();
+            (_overlay.RectMark, _overlay.BrushAt, _overlay.PolyCursor) = (null, null, null);
+            MouseDefaultCursorShape = value == RegionTool.None ? (Picking ? CursorShape.Cross : CursorShape.Arrow) : CursorShape.Cross;
+            _overlay.QueueRedraw();
+        }
+    }
+
+    /// <summary>The brush's radius in mask pixels, and the mask's width (the circle drawn to scale).</summary>
+    public float BrushRadius { get; set; } = 8;
+    public int MaskWidth { get; set; } = 512;
+
+    /// <summary>A rectangle drawn (its corners, UV), a polygon closed (its points, UV).</summary>
+    public event System.Action<Vector2, Vector2>? RectDrawn;
+    public event System.Action<List<Vector2>>? PolygonDrawn;
+
+    /// <summary>A brush or eraser stroke: began (0), moved (1), ended (2), with the UV.</summary>
+    public event System.Action<Vector2, int>? Stroke;
+
+    private readonly List<Vector2> _polygon = new();
+    private Vector2? _rectFrom;
+    private bool _stroking;
+
+    /// <summary>The region overlay (colour-coded masks over the map, in the map's UV), or null.</summary>
+    public Texture2D? Overlay
+    {
+        set
+        {
+            _mat.SetShaderParameter("overlay", value ?? (Texture2D)new PlaceholderTexture2D());
+            _mat.SetShaderParameter("overlay_on", value != null ? 1f : 0f);
+        }
+    }
+
+    /// <summary>Closes the polygon being drawn (Enter, a double click, a click on its first point; at least three points).</summary>
+    public void ClosePolygon()
+    {
+        if (_polygon.Count >= 3)
+            PolygonDrawn?.Invoke(new List<Vector2>(_polygon));
+        _polygon.Clear();
+        _overlay.PolyMarks.Clear();
+        _overlay.PolyCursor = null;
+        _overlay.QueueRedraw();
+    }
+
+    /// <summary>The map's UV under a point, not wrapped into the first tile and not clamped (the tools' corners).</summary>
+    private Vector2 RawUv(Vector2 pos)
+    {
+        var fit = _mat.GetShaderParameter("fit").AsVector2();
+        var uv = (pos / Size - new Vector2(0.5f, 0.5f)) / fit / _zoom + new Vector2(0.5f, 0.5f) + _pan;
+        return new Vector2(Mathf.Clamp(uv.X, 0, 1), Mathf.Clamp(uv.Y, 0, 1));
+    }
+
+    /// <summary>Handles a region tool's input (true: taken).</summary>
+    private bool ToolInput(InputEvent e)
+    {
+        if (_tool == RegionTool.None)
+            return false;
+        switch (e)
+        {
+            case InputEventMouseButton { ButtonIndex: MouseButton.Left } b when _tool == RegionTool.Rect:
+                if (b.Pressed)
+                    _rectFrom = RawUv(b.Position);
+                else if (_rectFrom is { } from)
+                {
+                    _rectFrom = null;
+                    _overlay.RectMark = null;
+                    var to = RawUv(b.Position);
+                    if ((to - from).Abs() is { X: > 0.002f, Y: > 0.002f })
+                        RectDrawn?.Invoke(from, to);
+                }
+                _overlay.QueueRedraw();
+                return true;
+            case InputEventMouseMotion m when _tool == RegionTool.Rect && _rectFrom is { } rf:
+            {
+                var a = PointOf(rf);
+                _overlay.RectMark = new Rect2(a, Vector2.Zero).Expand(m.Position);
+                _overlay.QueueRedraw();
+                return true;
+            }
+            case InputEventMouseButton { ButtonIndex: MouseButton.Left, Pressed: true } b when _tool == RegionTool.Polygon:
+                if (b.DoubleClick || (_polygon.Count >= 3 && b.Position.DistanceTo(PointOf(_polygon[0])) < 8))
+                    ClosePolygon();
+                else
+                {
+                    _polygon.Add(RawUv(b.Position));
+                    _overlay.PolyMarks.Add(b.Position);
+                    _overlay.QueueRedraw();
+                }
+                return true;
+            case InputEventMouseButton { ButtonIndex: MouseButton.Right, Pressed: true } when _tool == RegionTool.Polygon:
+                ClosePolygon();
+                return true;
+            case InputEventMouseMotion m when _tool == RegionTool.Polygon && _polygon.Count > 0:
+                _overlay.PolyCursor = m.Position;
+                _overlay.QueueRedraw();
+                return true;
+            case InputEventMouseButton { ButtonIndex: MouseButton.Left } b when _tool is RegionTool.Brush or RegionTool.Erase:
+                if (b.Pressed)
+                {
+                    _stroking = true;
+                    Stroke?.Invoke(RawUv(b.Position), 0);
+                }
+                else if (_stroking)
+                {
+                    _stroking = false;
+                    Stroke?.Invoke(RawUv(b.Position), 2);
+                }
+                return true;
+            case InputEventMouseMotion m when _tool is RegionTool.Brush or RegionTool.Erase:
+            {
+                if (_stroking)
+                    Stroke?.Invoke(RawUv(m.Position), 1);
+                var fit = _mat.GetShaderParameter("fit").AsVector2();
+                _overlay.BrushAt = m.Position;
+                _overlay.BrushR = BrushRadius * Size.X * fit.X * _zoom / (Mathf.Max(1, MaskWidth) * (Tiled ? 2f : 1f));
+                _overlay.Erasing = _tool == RegionTool.Erase;
+                _overlay.QueueRedraw();
+                return true;
+            }
+            case InputEventKey { Pressed: true, Keycode: Key.Enter or Key.KpEnter } when _tool == RegionTool.Polygon:
+                ClosePolygon();
+                return true;
+            case InputEventKey { Pressed: true, Keycode: Key.Escape } when _tool == RegionTool.Polygon:
+                _polygon.Clear();
+                _overlay.PolyMarks.Clear();
+                _overlay.PolyCursor = null;
+                _overlay.QueueRedraw();
+                return true;
+        }
+        return false;
+    }
+
     /// <summary>The painted light's angle (degrees anticlockwise from the right; null: no arrow).</summary>
     public float? Arrow
     {
@@ -95,12 +243,38 @@ void fragment() {
         public float PickR;
         public Color? Swatch;
 
+        /// <summary>The region tools' marks (R2b phase 6): a rectangle being dragged, a polygon's points, the brush's circle (screen).</summary>
+        public Rect2? RectMark;
+        public List<Vector2> PolyMarks = new();
+        public Vector2? PolyCursor;
+        public Vector2? BrushAt;
+        public float BrushR;
+        public bool Erasing;
+
         public Vector2 Tip => Size / 2 + Dir * Radius;
         public Vector2 Dir => Angle is { } a ? new Vector2(Mathf.Cos(Mathf.DegToRad(a)), -Mathf.Sin(Mathf.DegToRad(a))) : Vector2.Zero;
         public float Radius => Mathf.Min(Size.X, Size.Y) * 0.36f;
 
         public override void _Draw()
         {
+            var mark = new Color(1, 0.9f, 0.3f);
+            if (RectMark is { } rm)
+            {
+                DrawRect(rm, Colors.Black, false, 3);
+                DrawRect(rm, mark, false, 1.5f);
+            }
+            for (int i = 0; i < PolyMarks.Count; i++)
+            {
+                DrawCircle(PolyMarks[i], 4, mark);
+                var next = i + 1 < PolyMarks.Count ? PolyMarks[i + 1] : PolyCursor;
+                if (next is { } nx)
+                    DrawLine(PolyMarks[i], nx, mark, 1.5f, true);
+            }
+            if (BrushAt is { } ba)
+            {
+                DrawArc(ba, Mathf.Max(2, BrushR), 0, Mathf.Tau, 48, Colors.Black, 3, true);
+                DrawArc(ba, Mathf.Max(2, BrushR), 0, Mathf.Tau, 48, Erasing ? new Color(1, 0.4f, 0.4f) : Colors.White, 1.5f, true);
+            }
             if (PickAt is { } at)
             {
                 // the eyedropper's disc and the colour it takes
@@ -225,6 +399,11 @@ void fragment() {
 
     public override void _GuiInput(InputEvent e)
     {
+        if (!Picking && ToolInput(e))
+        {
+            AcceptEvent();
+            return;
+        }
         switch (e)
         {
             case InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.WheelUp }:

@@ -66,6 +66,7 @@ public partial class RemasterPlugin : EditorPlugin
         TextureStore.Attach();
         ProfileStore.Attach();
         ComfyUpscaler.RegisterSettings();
+        ComfyAi.RegisterSettings();
         var fs = EditorInterface.Singleton.GetResourceFilesystem();
         fs.ResourcesReimported += OnReimported;
         fs.FilesystemChanged += OnFilesystemChanged;
@@ -388,7 +389,12 @@ public partial class RemasterPlugin : EditorPlugin
             foreach (var t in ProfileStore.Users(name))
             {
                 var after = TextureStore.Copy(t.Id);
-                after.Profile = to;
+                if (after.Profile == name)
+                    after.Profile = to;
+                // its regions' too (R2b phase 6)
+                foreach (var v in after.Regions)
+                    if (v.VariantType == Variant.Type.Dictionary && MaterialRegionStore.ProfileOf(v.AsGodotDictionary()) == name)
+                        v.AsGodotDictionary()[MaterialRegionStore.Profile] = to;
                 Undo.AddDoMethod(this, MethodName.ApplyTexture, t.Id, TextureStore.ToDictionary(after));
                 Undo.AddUndoMethod(this, MethodName.ApplyTexture, t.Id, TextureStore.ToDictionary(TextureStore.Copy(t.Id)));
             }

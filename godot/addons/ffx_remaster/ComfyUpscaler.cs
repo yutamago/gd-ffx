@@ -95,7 +95,25 @@ public static class ComfyUpscaler
     /// <paramref name="png"/> upscaled <paramref name="factor"/> times (2 or 4) by the server's
     /// model (its x4, then scaled by factor / 4). Any thread; throws on failure (with ComfyUI's reason).
     /// </summary>
-    public static async Task<byte[]> Upscale(string url, string model, byte[] png, int factor, CancellationToken cancel = default,
+    public static Task<byte[]> Upscale(string url, string model, byte[] png, int factor, CancellationToken cancel = default,
+        IProgress<(double Done, string Stage)>? progress = null) =>
+        Run(url, png, name => new JsonObject
+        {
+            ["1"] = Node("LoadImage", new JsonObject { ["image"] = name }),
+            ["2"] = Node("UpscaleModelLoader", new JsonObject { ["model_name"] = model }),
+            ["3"] = Node("ImageUpscaleWithModel", new JsonObject { ["upscale_model"] = Link("2"), ["image"] = Link("1") }),
+            ["4"] = Node("ImageScaleBy", new JsonObject { ["upscale_method"] = "lanczos", ["scale_by"] = Math.Clamp(factor, 1, 4) / 4.0, ["image"] = Link("3") }),
+            ["5"] = Node("SaveImage", new JsonObject { ["filename_prefix"] = "gdffx/upscale", ["images"] = Link("4") }),
+        }, "5", cancel, progress);
+
+    /// <summary>
+    /// Runs a workflow on <paramref name="png"/> (any thread; throws with ComfyUI's reason): the
+    /// image uploaded (<c>POST /upload/image</c>), the workflow made for its uploaded name by
+    /// <paramref name="workflow"/> and queued (<c>POST /prompt</c>), its progress from
+    /// <c>GET /queue</c> while <c>GET /history/&lt;id&gt;</c> has no answer, then the first image
+    /// of node <paramref name="output"/> downloaded (<c>GET /view</c>).
+    /// </summary>
+    public static async Task<byte[]> Run(string url, byte[] png, Func<string, JsonObject> workflow, string output, CancellationToken cancel = default,
         IProgress<(double Done, string Stage)>? progress = null)
     {
         progress?.Report((0.05, "uploading"));
@@ -111,16 +129,8 @@ public static class ComfyUpscaler
             var uploaded = JsonNode.Parse(await up.Content.ReadAsStringAsync(cancel));
             name = (uploaded?["subfolder"]?.GetValue<string>() is { Length: > 0 } sub ? sub + "/" : "") + (uploaded?["name"]?.GetValue<string>() ?? name);
         }
-        var workflow = new JsonObject
-        {
-            ["1"] = Node("LoadImage", new JsonObject { ["image"] = name }),
-            ["2"] = Node("UpscaleModelLoader", new JsonObject { ["model_name"] = model }),
-            ["3"] = Node("ImageUpscaleWithModel", new JsonObject { ["upscale_model"] = Link("2"), ["image"] = Link("1") }),
-            ["4"] = Node("ImageScaleBy", new JsonObject { ["upscale_method"] = "lanczos", ["scale_by"] = Math.Clamp(factor, 1, 4) / 4.0, ["image"] = Link("3") }),
-            ["5"] = Node("SaveImage", new JsonObject { ["filename_prefix"] = "gdffx/upscale", ["images"] = Link("4") }),
-        };
         progress?.Report((0.15, "queueing the workflow"));
-        var body = new JsonObject { ["prompt"] = workflow, ["client_id"] = $"gdffx-{Guid.NewGuid():N}" };
+        var body = new JsonObject { ["prompt"] = workflow(name), ["client_id"] = $"gdffx-{Guid.NewGuid():N}" };
         var queued = await http.PostAsync($"{url}/prompt", new StringContent(body.ToJsonString(), System.Text.Encoding.UTF8, "application/json"), cancel);
         var answer = await queued.Content.ReadAsStringAsync(cancel);
         if (!queued.IsSuccessStatusCode)
@@ -142,9 +152,9 @@ public static class ComfyUpscaler
             }
             if (h["status"]?["status_str"]?.GetValue<string>() == "error")
                 throw new InvalidOperationException($"ComfyUI failed: {h["status"]}");
-            var img = h["outputs"]?["5"]?["images"]?[0];
+            var img = h["outputs"]?[output]?["images"]?[0];
             if (img == null)
-                throw new InvalidOperationException("ComfyUI finished without an image");
+                throw new InvalidOperationException($"ComfyUI finished without an image from node {output}");
             var q = $"filename={Uri.EscapeDataString(img["filename"]!.GetValue<string>())}"
                 + $"&subfolder={Uri.EscapeDataString(img["subfolder"]?.GetValue<string>() ?? "")}&type={img["type"]?.GetValue<string>() ?? "output"}";
             progress?.Report((0.9, "downloading"));

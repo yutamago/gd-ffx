@@ -1291,6 +1291,15 @@ public sealed partial class EditorSelfTest
         }
         foreach (var w in WaitIdle("the first texture")) yield return w;
         if (fail != null) { yield return fail; yield break; }
+        // --materials-phase6: straight to R2b phase 6 (regions, AI; a quicker run while working on it)
+        if (GameSettings.Flag("materials-phase6"))
+        {
+            string? only6 = null;
+            foreach (var w in Phase6(tab, global, ids, root, shots, shotDir, f => only6 = f)) yield return w;
+            if (only6 != null) { yield return only6; yield break; }
+            EditorInterface.Singleton.SetMainScreenEditor("3D");
+            yield break;
+        }
         // small first, then refined
         var arrivals = tab.Arrivals.ToList();
         int small = arrivals.Count > 0 ? arrivals[0].Side : 0;
@@ -1575,6 +1584,10 @@ public sealed partial class EditorSelfTest
         string? p5fail = null;
         foreach (var w in Phase5(tab, global, ids, root, shots, shotDir, f => p5fail = f)) yield return w;
         if (p5fail != null) { yield return p5fail; yield break; }
+        // R2b phase 6: regions within one texture, AI estimation through a fake server
+        string? p6fail = null;
+        foreach (var w in Phase6(tab, global, ids, root, shots, shotDir, f => p6fail = f)) yield return w;
+        if (p6fail != null) { yield return p6fail; yield break; }
         // the open map's textures
         int more = tab.AddOpenMap();
         if (tab.Queue.Count != onMap.Count)

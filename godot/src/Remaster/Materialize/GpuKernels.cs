@@ -300,12 +300,12 @@ vec4 run(ivec2 P, vec2 uv) {
         ["rough"] = @"uniform float u_base; uniform float u_range; uniform float u_dw; uniform bool u_invert;
 uniform vec4 u_s1; uniform vec4 u_s2; uniform vec4 u_s3; uniform float u_v1; uniform float u_v2; uniform float u_v3;
 uniform float u_mh; uniform float u_ms; uniform float u_ml; uniform float u_lo; uniform float u_hi;
-uniform float u_metal_r; uniform float u_contrast; uniform float u_bias; uniform float u_overlay; uniform float u_wear;
+uniform float u_metal_r; uniform float u_contrast; uniform float u_bias; uniform float u_overlay; uniform float u_wear; uniform bool u_ai;
 vec4 run(ivec2 P, vec2 uv) {
 	float l = fet(t1, P).r; float v = max(0.0, bil(t2, uv).r);
 	float detail = v < 1e-6 ? 0.0 : min(1.0, sqrt(v) * 4.0);
 	float t = (1.0 - u_dw) * (1.0 - l) + u_dw * detail;
-	float r = clamp(u_base + u_range * (t - 0.5), 0.0, 1.0);
+	float r = u_ai ? fet(t6, P).r : clamp(u_base + u_range * (t - 0.5), 0.0, 1.0);
 	if (u_invert) r = 1.0 - r;
 	vec3 c = fet(t0, P).rgb;
 	if (u_s1.a > 0.0) r += (u_v1 - r) * cmask(c, u_s1.rgb, u_mh, u_ms, u_ml, u_lo, u_hi);
@@ -457,6 +457,28 @@ vec4 run(ivec2 P, vec2 uv) {
 	float thin = u_invert ? th : 1.0 - th;
 	return vec4(t, clamp((thin - 0.5) * u_contrast + 0.5 + u_bias, 0.0, 1.0));
 }",
+        // R2b phase 6: regions (a mask at the working size, the composite, the height's level under the border) and an AI normal map's slopes
+        ["rmask"] = @"vec4 run(ivec2 P, vec2 uv) { return vec4(clamp(bil(t0, uv).r, 0.0, 1.0), 0.0, 0.0, 1.0); }",
+        ["rg_hstat"] = @"vec4 run(ivec2 P, vec2 uv) { float m = clamp(fet(t2, P).r, 0.0, 1.0); return vec4(fet(t0, P).r, fet(t1, P).r, 0.0, 4.0 * m * (1.0 - m)); }",
+        ["rcomp"] = @"uniform int u_mode; uniform bool u_match;
+vec4 run(ivec2 P, vec2 uv) {
+	vec4 a = fet(t0, P); vec4 b = fet(t1, P); float m = clamp(fet(t2, P).r, 0.0, 1.0);
+	if (u_mode == 1) {
+		vec3 na = a.rgb * 2.0 - 1.0; vec3 nb = b.rgb * 2.0 - 1.0;
+		vec2 d = mix(na.xy / max(na.z, 0.05), nb.xy / max(nb.z, 0.05), m);
+		vec3 n = normalize(vec3(d, 1.0));
+		return vec4(n * 0.5 + 0.5, mix(a.a, b.a, m));
+	}
+	if (u_mode == 2) {
+		float off = 0.0;
+		if (u_match) { vec4 s = texelFetch(t3, ivec2(0), 0); off = s.a > 1e-6 ? s.r - s.g : 0.0; }
+		float h = mix(a.r, clamp(b.r + off, 0.0, 1.0), m);
+		return vec4(h, h, h, 1.0);
+	}
+	return mix(a, b, m);
+}",
+        ["n_from_map"] = @"uniform float u_k;
+vec4 run(ivec2 P, vec2 uv) { vec3 n = fet(t0, P).rgb * 2.0 - 1.0; float z = max(n.z, 0.05); return vec4(-n.x / z * u_k, n.y / z * u_k, 0.0, 1.0); }",
     };
 
     private const string Footer = @"

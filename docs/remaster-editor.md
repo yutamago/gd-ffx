@@ -354,6 +354,71 @@ material on the texture's surfaces, the classic look across the wipe); and
 cached per texture and model, the tool, model and licence in the texture's
 Source).
 
+### Regions
+
+R2b's phase 6 (docs/remaster-materials.md, "Phase 6: what there is"). Many
+FFX textures are atlases: rock, grass and wood side by side. A texture can be
+split into **regions**, each made with its own profile and settings, and
+composited over the texture's own maps with soft borders. The **Regions** box
+is at the top of the Source step:
+
+- **From UV islands**: the parts of the map that draw the texture each cover
+  some of it; their UV islands, grouped by the part that draws them (parts
+  over the same pixels joined; a part that covers the whole texture, a
+  repeating use, left out), become regions, largest first. From the open map
+  when it draws the texture, else from the first map that uses it.
+- **By colour**: pick a colour in the 2D map (**Pick**) or with the swatch,
+  set how alike (lower: more pixels), **Add**: the pixels of that colour
+  (the colour mask the samples use), specks and pinholes cleaned.
+- **By hand**: **+ Region** (empty), then the tools under the list:
+  rectangle (drag), polygon (click the corners; a double click, Enter or a
+  right click closes it), **Brush** and **Erase** (Size in texture pixels;
+  the middle button still pans). **Snap**: a shape or stroke takes the whole
+  UV islands it touches.
+
+The 2D map shows the regions in their colours (**Overlay**; the region being
+edited stronger). Choosing a region in the list (or **Editing** atop every
+step) makes the steps edit that region's settings: its profile (**Its
+profile**) and every change as its own exception; the Source step's settings
+(the upscale, sizes, tiling, the seam tool) and the material's own amounts
+(parallax depth, emission energy, the added maps' amounts) stay the whole
+texture's. **Feather** softens a region's border (classic texels); a later
+region lies over an earlier one (▲ ▼ change the order). The preview (the
+objects and In map) shows the composited material; the wipe compares it as
+before. Every action is one undo step. **Save**, **Apply to queue** and
+**Make again** write the regions on the texture's entry (`Regions`: each
+region's name, colour, profile, its profile's hash, its exceptions, its
+settings as made, its mask's file, feather, origin); the masks are small grey
+PNGs in the texture's folder (`region-mask.<hash>.png`, named by their
+content, gitignored with the maps). A region's changed profile marks the
+texture as changed (Make again makes it with every region's profile as it is).
+
+### AI estimation of maps
+
+Optional, with a ComfyUI server and workflows of your own (R2b phase 6;
+docs/remaster-materials.md, "AI estimation"). The albedo, height, normal and
+roughness steps have a fourth mode, **AI**: the texture is sent to your server
+(`ffx_remaster/comfyui_url`) with your workflow for that map, in the
+background (progress, **Cancel**, **Run again**); meanwhile the step
+generates as before. The answer is cached per texture, workflow and map
+(`user://remaster/comfyui-cache/`, this machine's) and becomes the step's
+input, its settings applied on top (the height's bands and contrast, the
+normal's strength, bands and contrast, the roughness's samples, contrast and
+bias, the albedo's colour match). Per map, three editor settings:
+`ffx_remaster/ai_<map>_workflow` (an API workflow JSON: in ComfyUI,
+Workflow, Export (API)), `ffx_remaster/ai_<map>_model` (the model's name, for
+the record) and `ffx_remaster/ai_<map>_licence` (the licence of the model or
+models it runs). **A workflow whose licence is empty is not run**: the step
+says so. In the workflow, `%gdffx_input%` stands for the texture's image (a
+LoadImage node's `image`), `%gdffx_output%` for the `filename_prefix` of the
+SaveImage node whose image is the map, `%gdffx_map%` (optional) for the map's
+name. gd-ffx ships no model and no third-party workflow, only a template of
+placeholder nodes, `godot/addons/ffx_remaster/comfyui/example-map-workflow.json`
+(and its README). Save and Apply to queue write the tool, workflow, model and
+licence into the texture's `Source` (`material ai normal: normal estimated by
+ComfyUI (workflow ..., model ...; licence: ...)`). Checked against the editor
+check's fake server only.
+
 ### Profiles and the queue
 
 R2b's phase 3 (docs/remaster-materials.md, "Profiles", "Phase 3: what there
@@ -1259,6 +1324,30 @@ FFX_EDITOR_SHOT=1 FFX_GAME_DIR=<game> tools/remaster-editor-check.sh [OUT_DIR]  
    the metal, and its classic side differs from the live one; `r2b5-shortcuts.png`,
    `r2b5-pick-mask.png`, `r2b5-pick-in-map.png`, `r2b5-in-map.png`,
    `r2b5-in-map-wipe.png`, `r2b5-in-map-changed.png`.
+   Phase 6 (after phase 5's; `--materials-only --materials-phase6`: straight
+   there): the beach texture whose UV islands propose the most regions (each
+   region against its parts' islands, IoU, and the regions' overlap), its
+   regions from the islands (one undo step, undone, redone), one by a colour
+   picked in the 2D map, one drawn by hand (+ Region, a brush stroke, a
+   rectangle, a polygon, the eraser: five undo steps; the eraser undone and
+   redone), two profiles on one texture (stone and concrete; metal on one
+   region, grass and foliage on another: the metallic inside against outside,
+   the grass's backlight there only), a region's setting as its own exception
+   (one undo step, the texture's settings untouched), the composite built
+   again on the CPU (normals unit length; each region's border in the height
+   and the normal against the steps inside; the height's level across the
+   border with the levels matched and without), saved (the masks as
+   content-named files, the regions' profiles, hashes and exceptions on the
+   entry, the grass's backlight in the material; undone, redone; read back
+   from the entry alone), Apply to queue with the regioned texture, Make
+   again after a region's profile changed (its hash follows); AI estimation
+   of the normal step through the fake server with the shipped example
+   template (refused with an empty licence and nothing sent, progress, a
+   cancel, Run again, the estimate cached and the step's input with no
+   placeholder left in the workflow, the strength on top, the cache folder
+   without a request, the Source note on Save). Under a renderer
+   `r2b6-regions-islands.png`, `r2b6-regions-all.png`,
+   `r2b6-composite-normal.png`, `r2b6-composite-object.png`.
    Phase 3 (after the save; profiles into `--remaster-profiles=res://remaster/check/profiles`,
    a layer after the project's, gitignored, removed at the end): the eight
    starter profiles listed (the project's layer), their files as the editor
@@ -1643,8 +1732,13 @@ export that holds either (`project.godot` still names the plugin's
 - Godot prints a few "Failed loading resource" lines while new PNGs are
   being imported (a scan and an import after a texture's first edit); they
   load from the files meanwhile.
-- The ComfyUI client is untested against a real server; there is no PBR
-  model template yet (ffx-remix's `pbr-from-albedo` is the model to port).
+- The ComfyUI client (upscaling and the AI estimation of maps) is untested
+  against a real server; the AI's template is placeholder nodes only (a
+  workflow of one's own is needed). Regions: a region's maps are a whole graph
+  each (two to four regions cost two to four times the passes); the material's
+  own amounts (parallax depth, emission energy, the added maps' amounts) are
+  one per texture; the UV islands come from the maps' 3D models (the
+  where-used index's), not from characters or effects.
 - Lighting (R3): the lighting file layers whole, not per field; LightmapGI
   is not drawn (no lightmap UVs); the VoxelGI bake sees albedo textures, not
   the PBR materials' emission; the editor previews the key light from the
@@ -1699,6 +1793,8 @@ export that holds either (`project.godot` still names the plugin's
 | `TextureStore.cs` | the project's texture index and files, the import |
 | `MaterialsTab.cs` | the Materials tab (R2b): the queue, the steps and their settings, undo, the pipeline's results, save; profiles, exceptions, Apply to queue, Make again |
 | `MaterialsTab.Keys.cs`, `.Pick.cs`, `.InMap.cs`, `.Comfy.cs` | the tab's shortcuts, colour picks, the In map preview, ComfyUI in the Source step (R2b phase 5) |
+| `MaterialsTab.Regions.cs`, `MaterialRegionStore.cs` | regions within one texture: the Regions box, the tools, undo, the entry's region dictionaries and masks (R2b phase 6) |
+| `MaterialsTab.Ai.cs`, `ComfyAi.cs`, `comfyui/` | AI estimation of maps: the AI mode, the user's workflow and its placeholders, the licence, the cache; the example template (R2b phase 6) |
 | `InMapScene.cs` | the In map preview's copy of a map (the live and classic surfaces of the texture) |
 | `RemasterPlugin.Pick.cs` | textures picked in the open map (Alt+click, Pick texture) |
 | `FakeComfy.cs` | the editor check's stand-in ComfyUI server (loopback) |
@@ -1710,7 +1806,7 @@ export that holds either (`project.godot` still names the plugin's
 | `PreviewObject.cs` | the game piece that draws a texture, as one mesh |
 | `hdri/` | the preview's HDRIs (CC0, Poly Haven; README) |
 | `WhereUsed.cs` | the where-used index and its cache |
-| `ComfyUpscaler.cs` | the optional ComfyUI upscaling |
+| `ComfyUpscaler.cs` | the optional ComfyUI upscaling, and the client every workflow runs through (`Run`) |
 | `LightingEdit.cs` | the map's lighting as nodes, the preview, the save of `lighting.tres` |
 | `LightingFacet.cs` | the ambient, fog and environment nodes (a part of `MapLighting` as the node's properties) |
 | `VolumeNode.cs` | a lighting volume's node (the box) |
