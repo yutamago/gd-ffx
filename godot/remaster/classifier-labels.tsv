@@ -1,0 +1,147 @@
+# R4's hand-labelled textures for the wizard classifier (docs/remaster-plan.md, "R4 in detail";
+# --selftest-wizard-classifier). Labelled by eye from thumbnails of the player's textures (no image here),
+# as the wizard should decide: a starter profile's kind, or keep (keep classic: sky, effects, glows,
+# background paintings, creatures). Ice and snow (Macalania's lake) were left out: no profile fits.
+# kind	map	texture	note
+keep	bsil00	x:/ffx_data/gamedata/ps3data/map/bsil/bsil00/tex/d3d11/12544_19_000_000_8_128_64.dds.phyre	a bird
+sand	bsil00	x:/ffx_data/gamedata/ps3data/map/bsil/bsil00/tex/d3d11/12800_20_128_000_4_128_128.dds.phyre	
+sand	bsil00	x:/ffx_data/gamedata/ps3data/map/bsil/bsil00/tex/d3d11/13568_20_128_000_4_128_128.dds.phyre	footprints
+sand	bsil00	x:/ffx_data/gamedata/ps3data/map/bsil/bsil00/tex/d3d11/12032_20_128_128_4_128_128.dds.phyre	
+keep	bsil00	x:/ffx_data/gamedata/ps3data/map/bsil/bsil00/tex/d3d11/16128_19_000_000_8_256_256.dds.phyre	sky, clouds
+grass	bsil00	x:/ffx_data/gamedata/ps3data/map/bsil/bsil00/tex/d3d11/16256_20_000_000_4_256_256.dds.phyre	flowering bush
+grass	bsil00	x:/ffx_data/gamedata/ps3data/map/bsil/bsil00/tex/d3d11/16128_20_128_000_4_128_128.dds.phyre	pink flower
+grass	bsil00	x:/ffx_data/gamedata/ps3data/map/bsil/bsil00/tex/d3d11/13696_20_000_128_4_128_128.dds.phyre	foliage, cut out
+sand	bsil00	x:/ffx_data/gamedata/ps3data/map/bsil/bsil00/tex/d3d11/09472_36_000_000_4_128_128.dds.phyre	
+wood	bsil00	x:/ffx_data/gamedata/ps3data/map/bsil/bsil00/tex/d3d11/12928_20_128_000_4_128_256.dds.phyre	planks, bolts
+grass	bsil00	x:/ffx_data/gamedata/ps3data/map/bsil/bsil00/tex/d3d11/13696_20_128_000_4_128_128.dds.phyre	sea anemone-like plant
+rock	bsil00	x:/ffx_data/gamedata/ps3data/map/bsil/bsil00/tex/d3d11/12544_19_128_000_8_128_128.dds.phyre	pebbles
+grass	bsil00	x:/ffx_data/gamedata/ps3data/map/bsil/bsil00/tex/d3d11/12032_20_000_128_4_64_128.dds.phyre	fern
+grass	bsil00	x:/ffx_data/gamedata/ps3data/map/bsil/bsil00/tex/d3d11/12032_20_128_000_4_128_128.dds.phyre	grass blades
+grass	bsil00	x:/ffx_data/gamedata/ps3data/map/bsil/bsil00/tex/d3d11/12288_20_128_128_4_128_128.dds.phyre	bush
+grass	bsil00	x:/ffx_data/gamedata/ps3data/map/bsil/bsil00/tex/d3d11/13568_20_000_000_4_128_128.dds.phyre	leaves
+rock	bsil00	x:/ffx_data/gamedata/ps3data/map/bsil/bsil00/tex/d3d11/13184_20_000_000_4_256_256.dds.phyre	earth bank with grass on top
+wood	bsil00	x:/ffx_data/gamedata/ps3data/map/bsil/bsil00/tex/d3d11/12416_20_000_000_4_256_128.dds.phyre	door with fittings
+rock	bsil00	x:/ffx_data/gamedata/ps3data/map/bsil/bsil00/tex/d3d11/12160_20_000_000_4_256_256.dds.phyre	cracked sandstone
+stone	bsil00	x:/ffx_data/gamedata/ps3data/map/bsil/bsil00/tex/d3d11/13568_20_064_128_4_48_48.dds.phyre	carved stone panel
+fabric	bsil00	x:/ffx_data/gamedata/ps3data/map/bsil/bsil00/tex/d3d11/bsil01_fabric_03.dds.phyre	patterned fabric
+sand	bsil00	x:/ffx_data/gamedata/ps3data/map/bsil/bsil00/tex/d3d11/16128_20_000_000_4_128_128.dds.phyre	
+sand	bsil00	x:/ffx_data/gamedata/ps3data/map/bsil/bsil00/tex/d3d11/16128_20_000_128_4_128_128.dds.phyre	
+sand	bsil00	x:/ffx_data/gamedata/ps3data/map/bsil/bsil00/tex/d3d11/13696_20_128_128_4_128_128.dds.phyre	
+sand	bsil00	x:/ffx_data/gamedata/ps3data/map/bsil/bsil00/tex/d3d11/15744_19_128_128_8_128_128.dds.phyre	sand, pebbles at a corner
+sand	bsil00	x:/ffx_data/gamedata/ps3data/map/bsil/bsil00/tex/d3d11/15744_19_000_128_8_128_128.dds.phyre	sand, pebbles at a corner
+rock	bsil00	x:/ffx_data/gamedata/ps3data/map/bsil/bsil00/tex/d3d11/15744_19_128_000_8_128_128.dds.phyre	pebbles over sand
+sand	bsil00	x:/ffx_data/gamedata/ps3data/map/bsil/bsil00/tex/d3d11/15744_19_000_000_8_128_128.dds.phyre	sand, pebbles at a corner
+grass	bsil00	x:/ffx_data/gamedata/ps3data/map/bsil/bsil00/tex/d3d11/12928_20_000_128_4_128_128.dds.phyre	bush
+grass	bsil00	x:/ffx_data/gamedata/ps3data/map/bsil/bsil00/tex/d3d11/15872_20_000_000_4_256_256.dds.phyre	bush
+stone	lchb00	x:/ffx_data/gamedata/ps3data/map/lchb/lchb00/tex/d3d11/lchb00_brickground_04.dds.phyre	stone slabs
+rock	lchb00	x:/ffx_data/gamedata/ps3data/map/lchb/lchb00/tex/d3d11/lchb00_rockwall_06.dds.phyre	sandstone rock
+rock	lchb00	x:/ffx_data/gamedata/ps3data/map/lchb/lchb00/tex/d3d11/lchb00_rockwall_05.dds.phyre	light rock
+stone	lchb00	x:/ffx_data/gamedata/ps3data/map/lchb/lchb00/tex/d3d11/lchb00_brickground_08.dds.phyre	green marble
+rock	lchb00	x:/ffx_data/gamedata/ps3data/map/lchb/lchb00/tex/d3d11/lchb00_rockwall_04.dds.phyre	rock
+grass	lchb00	x:/ffx_data/gamedata/ps3data/map/lchb/lchb00/tex/d3d11/lchb00_leaves_03.dds.phyre	leaf, cut out
+stone	lchb00	x:/ffx_data/gamedata/ps3data/map/lchb/lchb00/tex/d3d11/lchb00_brickground_07.dds.phyre	violet stone, gold trim
+stone	lchb00	x:/ffx_data/gamedata/ps3data/map/lchb/lchb00/tex/d3d11/lchb00_rockwall_03a.dds.phyre	carved stone wall
+stone	lchb00	x:/ffx_data/gamedata/ps3data/map/lchb/lchb00/tex/d3d11/lchb00_decoration_10.dds.phyre	carved stone panel
+stone	lchb00	x:/ffx_data/gamedata/ps3data/map/lchb/lchb00/tex/d3d11/lchb00_rockwall_03b.dds.phyre	stone frieze
+stone	lchb00	x:/ffx_data/gamedata/ps3data/map/lchb/lchb00/tex/d3d11/lchb00_decoration_11.dds.phyre	carved relief
+stone	lchb00	x:/ffx_data/gamedata/ps3data/map/lchb/lchb00/tex/d3d11/lchb00_brickground_03b.dds.phyre	stone slabs
+stone	lchb00	x:/ffx_data/gamedata/ps3data/map/lchb/lchb00/tex/d3d11/lchb00_brickground_09b.dds.phyre	violet marble
+stone	lchb00	x:/ffx_data/gamedata/ps3data/map/lchb/lchb00/tex/d3d11/lchb00_brickground_09a.dds.phyre	violet marble
+stone	lchb00	x:/ffx_data/gamedata/ps3data/map/lchb/lchb00/tex/d3d11/lchb00_brickground_01c.dds.phyre	paving with trim
+grass	lchb00	x:/ffx_data/gamedata/ps3data/map/lchb/lchb00/tex/d3d11/lchb00_leaves_01.dds.phyre	palm leaf
+grass	lchb00	x:/ffx_data/gamedata/ps3data/map/lchb/lchb00/tex/d3d11/lchb00_leaves_02.dds.phyre	palm leaf
+grass	lchb00	x:/ffx_data/gamedata/ps3data/map/lchb/lchb00/tex/d3d11/lchb00_leaves_04.dds.phyre	bush
+grass	lchb00	x:/ffx_data/gamedata/ps3data/map/lchb/lchb00/tex/d3d11/lchb00_grassground_01.dds.phyre	grass ground
+plaster	lchb00	x:/ffx_data/gamedata/ps3data/map/lchb/lchb00/tex/d3d11/lchb00_brickground_05.dds.phyre	painted ornament
+plaster	lchb00	x:/ffx_data/gamedata/ps3data/map/lchb/lchb00/tex/d3d11/lchb00_brickground_06.dds.phyre	painted arch
+stone	lchb00	x:/ffx_data/gamedata/ps3data/map/lchb/lchb00/tex/d3d11/lchb00_decoration_12.dds.phyre	carved tile
+stone	lchb00	x:/ffx_data/gamedata/ps3data/map/lchb/lchb00/tex/d3d11/lchb00_rockground_01.dds.phyre	carved bands
+stone	lchb00	x:/ffx_data/gamedata/ps3data/map/lchb/lchb00/tex/d3d11/lchb00_concretewall_03.dds.phyre	concrete
+wood	mcfr00	x:/ffx_data/gamedata/ps3data/map/mcfr/mcfr00/tex/d3d11/12288_19_000_000_8_256_256.dds.phyre	glowing bark
+rock	mcfr00	x:/ffx_data/gamedata/ps3data/map/mcfr/mcfr00/tex/d3d11/15872_19_000_000_8_256_256.dds.phyre	crystal rock
+wood	mcfr00	x:/ffx_data/gamedata/ps3data/map/mcfr/mcfr00/tex/d3d11/15360_19_000_000_8_256_256.dds.phyre	roots
+wood	mcfr00	x:/ffx_data/gamedata/ps3data/map/mcfr/mcfr00/tex/d3d11/12032_19_000_000_8_256_256.dds.phyre	bark
+keep	mcfr00	x:/ffx_data/gamedata/ps3data/map/mcfr/mcfr00/tex/d3d11/background.dds.phyre	background painting
+rock	mcfr00	x:/ffx_data/gamedata/ps3data/map/mcfr/mcfr00/tex/d3d11/13056_19_128_000_8_64_256.dds.phyre	crystal
+grass	mcfr00	x:/ffx_data/gamedata/ps3data/map/mcfr/mcfr00/tex/d3d11/12800_19_000_000_8_256_256.dds.phyre	canopy, cut out
+rock	mcfr00	x:/ffx_data/gamedata/ps3data/map/mcfr/mcfr00/tex/d3d11/16128_19_000_000_8_128_256.dds.phyre	crystal pebbles
+keep	mcfr00	x:/ffx_data/gamedata/ps3data/map/mcfr/mcfr00/tex/d3d11/15616_19_000_000_8_64_256.dds.phyre	glowing crystal
+keep	mcfr00	x:/ffx_data/gamedata/ps3data/map/mcfr/mcfr00/tex/d3d11/13056_19_192_000_8_64_256.dds.phyre	crystal glow
+keep	mcfr00	x:/ffx_data/gamedata/ps3data/map/mcfr/mcfr00/tex/d3d11/13312_19_000_000_8_256_256.dds.phyre	glowing crystals, cut out
+keep	mcfr00	x:/ffx_data/gamedata/ps3data/map/mcfr/mcfr00/tex/d3d11/13056_19_000_000_8_128_256.dds.phyre	glowing arch
+rock	mcfr00	x:/ffx_data/gamedata/ps3data/map/mcfr/mcfr00/tex/d3d11/15616_19_128_000_8_128_256.dds.phyre	crystal shard
+grass	mcfr00	x:/ffx_data/gamedata/ps3data/map/mcfr/mcfr00/tex/d3d11/12544_19_000_000_8_256_256.dds.phyre	coloured plants
+keep	maca02	x:/ffx_data/gamedata/ps3data/map/maca/maca02/tex/d3d11/01024_27_000_000_8_256_256.dds.phyre	dark sky
+metal	bvyt00	x:/ffx_data/gamedata/ps3data/map/bvyt/bvyt00/tex/d3d11/12032_20_000_000_4_256_256.dds.phyre	statue parts atlas
+metal	bvyt00	x:/ffx_data/gamedata/ps3data/map/bvyt/bvyt00/tex/d3d11/12416_20_000_128_4_256_128.dds.phyre	armour parts atlas
+keep	bvyt00	x:/ffx_data/gamedata/ps3data/map/bvyt/bvyt00/tex/d3d11/12416_20_000_000_4_64_64.dds.phyre	glow over a gold bar
+fabric	bvyt00	x:/ffx_data/gamedata/ps3data/map/bvyt/bvyt00/tex/d3d11/16128_19_000_000_8_128_256.dds.phyre	painted hanging
+stone	bvyt00	x:/ffx_data/gamedata/ps3data/map/bvyt/bvyt00/tex/d3d11/12160_19_000_000_8_128_256.dds.phyre	frieze, red trim
+fabric	bvyt00	x:/ffx_data/gamedata/ps3data/map/bvyt/bvyt00/tex/d3d11/15872_20_064_000_4_64_256.dds.phyre	banner
+stone	bvyt00	x:/ffx_data/gamedata/ps3data/map/bvyt/bvyt00/tex/d3d11/12928_19_000_000_8_256_128.dds.phyre	concrete
+metal	bvyt00	x:/ffx_data/gamedata/ps3data/map/bvyt/bvyt00/tex/d3d11/12416_20_064_000_4_32_64.dds.phyre	gold relief
+keep	bvyt00	x:/ffx_data/gamedata/ps3data/map/bvyt/bvyt00/tex/d3d11/12416_20_096_000_4_16_64.dds.phyre	soft gradient
+stone	bvyt00	x:/ffx_data/gamedata/ps3data/map/bvyt/bvyt00/tex/d3d11/12160_19_128_000_8_128_256.dds.phyre	painted frieze
+stone	bvyt00	x:/ffx_data/gamedata/ps3data/map/bvyt/bvyt00/tex/d3d11/12544_19_000_128_8_128_128.dds.phyre	red band on concrete
+fabric	bvyt00	x:/ffx_data/gamedata/ps3data/map/bvyt/bvyt00/tex/d3d11/13184_19_000_000_8_256_192.dds.phyre	carpet
+plaster	bvyt00	x:/ffx_data/gamedata/ps3data/map/bvyt/bvyt00/tex/d3d11/12416_20_000_064_4_64_64.dds.phyre	painted wall
+keep	bvyt00	x:/ffx_data/gamedata/ps3data/map/bvyt/bvyt00/tex/d3d11/12416_20_112_000_4_16_64.dds.phyre	soft streaks
+metal	bvyt00	x:/ffx_data/gamedata/ps3data/map/bvyt/bvyt00/tex/d3d11/13568_20_000_000_4_256_256.dds.phyre	gold with lattice
+grass	bvyt00	x:/ffx_data/gamedata/ps3data/map/bvyt/bvyt00/tex/d3d11/09472_36_000_000_4_128_256.dds.phyre	plant, cut out
+grass	bvyt00	x:/ffx_data/gamedata/ps3data/map/bvyt/bvyt00/tex/d3d11/12416_20_128_000_4_64_64.dds.phyre	grass, cut out
+grass	bvyt00	x:/ffx_data/gamedata/ps3data/map/bvyt/bvyt00/tex/d3d11/08448_27_000_000_8_128_256.dds.phyre	flowering plant, cut out
+grass	bvyt00	x:/ffx_data/gamedata/ps3data/map/bvyt/bvyt00/tex/d3d11/12416_20_064_064_4_64_64.dds.phyre	roses
+keep	bvyt00	x:/ffx_data/gamedata/ps3data/map/bvyt/bvyt00/tex/d3d11/02048_27_000_000_8_256_256.dds.phyre	sky, clouds
+fabric	bvyt00	x:/ffx_data/gamedata/ps3data/map/bvyt/bvyt00/tex/d3d11/16128_19_192_000_8_64_256.dds.phyre	hanging with rings
+plaster	bvyt00	x:/ffx_data/gamedata/ps3data/map/bvyt/bvyt00/tex/d3d11/12928_19_000_128_8_256_64.dds.phyre	red painted band
+rock	znkd06	x:/ffx_data/gamedata/ps3data/map/znkd/znkd06/tex/d3d11/znkd06_wall_08.dds.phyre	rubble
+keep	znkd06	x:/ffx_data/gamedata/ps3data/map/znkd/znkd06/tex/d3d11/znkd06_hill_01.dds.phyre	distant hills
+stone	znkd06	x:/ffx_data/gamedata/ps3data/map/znkd/znkd06/tex/d3d11/znkd06_wall_06.dds.phyre	ruined facade
+stone	znkd06	x:/ffx_data/gamedata/ps3data/map/znkd/znkd06/tex/d3d11/znkd06_wall_09.dds.phyre	rusty facade
+stone	znkd06	x:/ffx_data/gamedata/ps3data/map/znkd/znkd06/tex/d3d11/znkd06_wall_01.dds.phyre	ruined facade
+sand	znkd06	x:/ffx_data/gamedata/ps3data/map/znkd/znkd06/tex/d3d11/znkd06_ground_05.dds.phyre	dirt
+rock	znkd06	x:/ffx_data/gamedata/ps3data/map/znkd/znkd06/tex/d3d11/znkd06_wall_10.dds.phyre	rubble
+stone	znkd06	x:/ffx_data/gamedata/ps3data/map/znkd/znkd06/tex/d3d11/znkd06_wall_07.dds.phyre	facade, windows
+stone	znkd06	x:/ffx_data/gamedata/ps3data/map/znkd/znkd06/tex/d3d11/znkd06_wall_11.dds.phyre	facade, arches
+stone	znkd06	x:/ffx_data/gamedata/ps3data/map/znkd/znkd06/tex/d3d11/znkd06_wall_12.dds.phyre	facade, arches
+sand	znkd06	x:/ffx_data/gamedata/ps3data/map/znkd/znkd06/tex/d3d11/znkd06_ground_03.dds.phyre	dirt
+rock	znkd06	x:/ffx_data/gamedata/ps3data/map/znkd/znkd06/tex/d3d11/znkd06_wall_13.dds.phyre	dark rock
+stone	znkd06	x:/ffx_data/gamedata/ps3data/map/znkd/znkd06/tex/d3d11/znkd06_wall_05.dds.phyre	ruined facade
+stone	znkd06	x:/ffx_data/gamedata/ps3data/map/znkd/znkd06/tex/d3d11/znkd06_wall_04.dds.phyre	facade strip
+sand	znkd06	x:/ffx_data/gamedata/ps3data/map/znkd/znkd06/tex/d3d11/znkd06_ground_02.dds.phyre	dirt
+keep	znkd06	x:/ffx_data/gamedata/ps3data/map/znkd/znkd06/tex/d3d11/znkd06_sky_01.dds.phyre	flames sky
+# held out: Kilika, Mi'ihen, Djose, Guadosalam, Moonflow, Gagazet, labelled after the rules were frozen (snow left out)
+wood	klyt10	x:/ffx_data/gamedata/ps3data/map/klyt/klyt10/tex/d3d11/12032_19_000_000_8_256_256.dds.phyre	boards, earth on top
+rock	klyt11	x:/ffx_data/gamedata/ps3data/map/klyt/klyt11/tex/d3d11/13440_20_000_128_4_128_128.dds.phyre	crystal band in rock
+grass	klyt01	x:/ffx_data/gamedata/ps3data/map/klyt/klyt01/tex/d3d11/15488_20_000_000_4_256_64.dds.phyre	thatch
+sand	klyt09	x:/ffx_data/gamedata/ps3data/map/klyt/klyt09/tex/d3d11/12032_20_000_000_4_256_256.dds.phyre	dirt
+grass	klyt00	x:/ffx_data/gamedata/ps3data/map/klyt/klyt00/tex/d3d11/12032_20_000_128_4_128_128.dds.phyre	grass ground, twigs
+stone	klyt03	x:/ffx_data/gamedata/ps3data/map/klyt/klyt03/tex/d3d11/12160_19_128_000_8_128_128.dds.phyre	carved stone, arches
+grass	mihn04	x:/ffx_data/gamedata/ps3data/map/mihn/mihn04/tex/d3d11/12032_20_000_000_4_64_128.dds.phyre	leaf
+grass	mihn02	x:/ffx_data/gamedata/ps3data/map/mihn/mihn02/tex/d3d11/12288_20_000_000_4_256_256.dds.phyre	bush, cut out
+grass	mihn07	x:/ffx_data/gamedata/ps3data/map/mihn/mihn07/tex/d3d11/12032_20_000_128_4_256_128.dds.phyre	tall grass, cut out
+grass	mihn01	x:/ffx_data/gamedata/ps3data/map/mihn/mihn01/tex/d3d11/12672_20_128_128_4_128_128.dds.phyre	tall grass
+grass	mihn05	x:/ffx_data/gamedata/ps3data/map/mihn/mihn05/tex/d3d11/12416_19_000_000_8_128_256.dds.phyre	grass ground
+grass	mihn06	x:/ffx_data/gamedata/ps3data/map/mihn/mihn06/tex/d3d11/12416_20_000_128_4_64_128.dds.phyre	leaf
+rock	djyt01	x:/ffx_data/gamedata/ps3data/map/djyt/djyt01/tex/d3d11/12032_19_000_000_8_256_256.dds.phyre	rough rock
+rock	djyt07	x:/ffx_data/gamedata/ps3data/map/djyt/djyt07/tex/d3d11/15360_19_128_000_8_128_128.dds.phyre	crystal band in rock
+rock	djyt08	x:/ffx_data/gamedata/ps3data/map/djyt/djyt08/tex/d3d11/15360_19_128_000_8_128_128.dds.phyre	crystal band in rock
+stone	djyt06	x:/ffx_data/gamedata/ps3data/map/djyt/djyt06/tex/d3d11/12032_19_064_000_8_64_64.dds.phyre	stone with a gem ornament
+stone	djyt03	x:/ffx_data/gamedata/ps3data/map/djyt/djyt03/tex/d3d11/12416_20_000_128_4_128_128.dds.phyre	dark slate
+grass	djyt00	x:/ffx_data/gamedata/ps3data/map/djyt/djyt00/tex/d3d11/13184_20_000_000_4_256_256.dds.phyre	plant, cut out
+wood	guad00	x:/ffx_data/gamedata/ps3data/map/guad/guad00/tex/d3d11/12288_19_000_000_8_256_256.dds.phyre	roots
+wood	guad05	x:/ffx_data/gamedata/ps3data/map/guad/guad05/tex/d3d11/12064_19_000_000_8_256_256.dds.phyre	roots
+sand	guad06	x:/ffx_data/gamedata/ps3data/map/guad/guad06/tex/d3d11/12032_20_000_000_4_256_256.dds.phyre	mossy dirt
+wood	guad07	x:/ffx_data/gamedata/ps3data/map/guad/guad07/tex/d3d11/15360_19_192_000_8_64_128.dds.phyre	wood with metal trim
+wood	guad00	x:/ffx_data/gamedata/ps3data/map/guad/guad00/tex/d3d11/12544_19_000_000_8_256_256.dds.phyre	roots
+wood	guad05	x:/ffx_data/gamedata/ps3data/map/guad/guad05/tex/d3d11/12320_19_000_000_8_256_256.dds.phyre	roots
+sand	kami00	x:/ffx_data/gamedata/ps3data/map/kami/kami00/tex/d3d11/13440_20_128_000_4_128_128.dds.phyre	sand with root shapes
+sand	kami03	x:/ffx_data/gamedata/ps3data/map/kami/kami03/tex/d3d11/13696_20_128_000_4_128_128.dds.phyre	sand with root shapes
+rock	kami00_a	x:/ffx_data/gamedata/ps3data/btlmap/kami/kami00_a/tex/d3d11/12160_20_000_000_4_128_128.dds.phyre	rock with moss
+metal	kami02	x:/ffx_data/gamedata/ps3data/map/kami/kami02/tex/d3d11/12032_20_000_000_4_32_32.dds.phyre	gold metal
+metal	kami04	x:/ffx_data/gamedata/ps3data/map/kami/kami04/tex/d3d11/12032_20_128_000_4_32_64.dds.phyre	copper plate, rivets
+rock	kami00	x:/ffx_data/gamedata/ps3data/map/kami/kami00/tex/d3d11/12544_20_128_128_4_128_64.dds.phyre	rock with lichen
+rock	mtgz07	x:/ffx_data/gamedata/ps3data/map/mtgz/mtgz07/tex/d3d11/12800_19_000_000_8_256_256.dds.phyre	rock, snow streaks
+rock	mtgz06	x:/ffx_data/gamedata/ps3data/map/mtgz/mtgz06/tex/d3d11/12544_19_000_000_8_256_256.dds.phyre	rock strata
+rock	mtgz02	x:/ffx_data/gamedata/ps3data/map/mtgz/mtgz02/tex/d3d11/12032_19_000_000_8_256_256.dds.phyre	rock, snow patches
+rock	mtgz06_a	x:/ffx_data/gamedata/ps3data/btlmap/mtgz/mtgz06_a/tex/d3d11/12544_19_000_000_8_256_256.dds.phyre	rock strata

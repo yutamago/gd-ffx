@@ -255,8 +255,156 @@ Open after R3:
 - volumes by the player's place (now the camera's), per-field layering of
   lighting files, the VoxelGI bake seeing the PBR materials' emission;
 - the Steam Deck's budgets measured on the device (R8);
-- R4's wizard: the defaults are its first pass; the wizard tunes them per map
-  (exposure from the classic picture, the vertex light against added lights).
+- ~~R4's wizard: the defaults are its first pass; the wizard tunes them per map
+  (exposure from the classic picture~~ (R4), the vertex light against added lights).
+
+## R4 in detail
+
+R4, the remaster wizard, is done (2026-11-18; docs/remaster-editor.md, "The
+remaster wizard"):
+
+- **A first automated pass per map**, from the **Wizard** dock over the map
+  browser's map, its area, the maps the project changes or all maps. Each map's
+  classic import is loaded on its own (no scene opened), and its colour textures
+  are listed with how the map draws them (`MapTextures`: surfaces, area, which way
+  they face, blend, alpha test, additive, scrolling, sky parts, the water's
+  shaders).
+- **A profile per texture** (`TextureClassifier`): rock, stone and concrete,
+  sand and dirt, grass and foliage, wood, metal, fabric, plaster and painted walls,
+  or keep classic (sky, water, glows and effects, background paintings, creatures).
+  A hand-made scorer: the texture's name (FFX's HD maps name theirs:
+  `lchb00_rockwall_06`), how the map draws it, the map's area, and its colour and
+  statistics (`TextureFeatures`: OKLab lightness, chroma and hue shares, lightness
+  spread, local and coarse contrast, edge density, direction, seams, alpha
+  coverage) against each kind's prototype (the medians of its labelled
+  textures). Every point is a named reason; the review shows the strongest
+  ("sand 3.7: on the ground +1.0, common in bsil +0.4, warm share 0.995 (its 0.98)
+  +0.2, ...; then wood 1.5").
+- **The materials** by those profiles, through R2b's run (`QueueBake`; the GPU
+  when the Materials tab uses it, else the CPU), in the background with progress
+  and cancel; their files content-named in the texture folders, no entry written.
+- **The lighting from the game's look**: R3's defaults (the sun from the game's
+  key light, its ambient, fog and a sky in its colours), VoxelGI (baked on the
+  player's machine, drawn at medium and high quality, over the map's middle at
+  most 1,200 x 400 x 1,200 units), and with a renderer the exposure matched to
+  the classic picture once (`WizardPass.TuneExposure`: the lightness ratio cubed,
+  0.6 to 1.6, kept only if it brings the lightness nearer). Written as
+  `lighting.tres` (only what differs from the defaults: `GiMode`, `ToneExposure`).
+- **Staged, then reviewed**: per map the before/after pictures rendered offscreen
+  in the editor (`WizardRender`: the map in a viewport of its own, from the game's
+  camera of R5's capture, else three views over the walk mesh), R3's colour check
+  (a warning when it fails), per texture the profile, score, lead over the
+  runner-up, reasons and the made albedo and normal; a texture accepted, rejected
+  (classic) or made again with another profile; the pictures drawn again; the map
+  accepted (the materials, the render path remastered, the status in progress, the
+  pass's note added to the notes, `lighting.tres`: one undo step) or discarded.
+  Every review action is one undo step; making a pass is none (it changes no
+  project file).
+- **Batch**: the queue with progress, pause (after the map being made) and resume,
+  in this session or the next (`res://remaster/wizard/state.json`, saved after
+  each map), 2D-layer maps skipped or noted as kept classic, a summary (maps done,
+  materials per profile, failures, the time per map); headless with
+  `--remaster-wizard --maps=a,b,c` (`--wizard-resume`, `--wizard-accept`,
+  `--wizard-pause-after=N`) in the editor.
+- **In the game**: `--selftest-wizard` draws Besaid beach with the editor's
+  accepted pass (`--wizard-expect`) or runs the same pass in the game (the
+  Windows GPU check, where the editor's files are not at hand).
+
+**The classifier's accuracy** (`--selftest-wizard-classifier --devsave=7`;
+the labels: `godot/remaster/classifier-labels.tsv`, 141 texture IDs with kinds
+labelled by eye from thumbnails of Besaid, Luca, Macalania, Bevelle, Zanarkand,
+Kilika, Mi'ihen, Djose, Guadosalam, Moonflow and Gagazet; no images; ice and snow
+left out, no profile fits them):
+
+| | textures | right |
+|---|---|---|
+| the rules frozen, scored on six areas labelled only afterwards (Kilika, Mi'ihen, Djose, Guadosalam, Moonflow, Gagazet) | 34 | 14 (41 %) |
+| the shipped prototypes, leave one area out (each area scored by prototypes fitted to the others: the honest number) | 141 | 77 (55 %) |
+| the shipped prototypes, fitted to all labels | 141 | 91 (65 %) |
+
+Per kind, leave one area out (right / labelled; precision): keep 8/14 (8/13),
+rock 6/24 (6/22), stone 17/30 (17/35), sand 16/17 (16/20), grass 27/30 (27/29),
+wood 1/11 (1/7), metal 0/6 (0/4), fabric 2/5 (2/6), plaster 0/4 (0/5). Grass,
+sand and keep classic are reliable; rock against stone is half chance (FFX's
+carved stonework and its cliffs share colour and statistics), wood, metal and
+plaster are mostly missed (few examples, and Macalania's blue bark and Guadosalam's
+roots look like nothing else). The mistakes that matter most are rare: 7 textures
+to keep classic given a material, 4 materials kept classic. So the review is
+needed, and it is where the scores and reasons are shown.
+
+**Measured** (2026-11-18, the development machine, the editor under Xvfb:
+llvmpipe, Compatibility):
+
+| | |
+|---|---|
+| Besaid beach, a pass | 53 textures, 51 materials (sand 16, grass 20, rock 4, plaster 4, fabric 4, wood 2, stone 1), 2 kept classic; 66 to 78 s (the bakes 37 to 46 s on the GPU pass graph under llvmpipe; the imports and pictures the rest); headless (the CPU) 90 s |
+| small maps | slik08 (5 textures) 10.5 s, mtgz03 (4, all sky) 1.7 s |
+| Besaid's colour check in the editor's review | dL +0.042, chroma x0.93, hue 4.3°; exposure tuned 1 → 0.8: dL +0.005, x0.94, 2.7° (cells 0.076, 1.6°) |
+| the game with the editor's accepted pass (Compatibility, Xvfb) | 50 of 50 materials drawn with their maps; dL -0.006, chroma x0.97, hue 0.9° (cells 0.064, 1.8°) |
+| the game running the pass itself (Compatibility, Xvfb) | 51 materials at 512 px in 59 s (the CPU); dL +0.033 → exposure 0.85 → +0.005, x0.96, 1.5° |
+| the same on the GPU (the Windows export, Vulkan, Forward+, Intel Arc 140T), VoxelGI drawn | 51 materials in 40 s; dL -0.065 → exposure 1.4 → -0.005, x0.90, 1.9° (cells 0.059, 1.1°); with SDFGI (the first rule): hue 28.8° off, failed; with no GI: -0.002, x0.89, 1.4° |
+
+### Decisions (R4)
+
+- **The pass is staged, not applied.** Making a pass writes no project file but
+  the made maps (content-named, unreferenced until accepted, as Apply to queue
+  writes them before its undo step) and the wizard's state; accepting a map is
+  one undo step that sets the texture entries, the render path, status and notes,
+  and writes `lighting.tres`. A discarded pass leaves its maps' files in the
+  texture folders (a later bake of the same settings reuses them).
+- **A hand-made scorer with prototypes, not a model.** No learned model (none
+  needed, no licence question): rules for names, uses and areas, and per kind a
+  prototype of features (the medians of its labelled textures), each feature's
+  fit a named reason. The prototypes are numbers, fitted to the labels; the labels
+  file is texture IDs and kinds (no game data).
+- **Honest numbers**: the rules were tuned on Besaid, Luca, Macalania and Bevelle;
+  Zanarkand was held out and looked at once (it showed that "wall" says nothing:
+  Zanarkand's "wall" textures are ruined facades, so the word went); six more
+  areas were labelled after the rules were frozen (41 %). The shipped prototypes
+  are fitted to every label, so their number is leave one area out (55 %).
+- **"Keep classic"** for sky parts (with scrolling UVs, or facing no ground: the
+  sky rule `MapLook.FindSky` takes some of Luca's big ground textures too), the
+  water's shaders, additive and soft-alpha blended textures, mostly cut-out
+  textures that are not green, and tiny ones (under 32 px). Blended alone is not
+  a reason: Besaid's sand is a blended terrain.
+- **VoxelGI, not SDFGI.** The first rule chose SDFGI for maps bigger than
+  VoxelGI's box (Besaid beach: 6,026 x 1,139 x 6,026 units). On the GPU (the
+  Windows export, Vulkan, Intel Arc 140T) SDFGI leaked light over the beach: the
+  cliffs sand-yellow, the foliage and the village white, the colour check's hue 29°
+  off (the lightness +0.11 before the exposure was tuned). With VoxelGI the same
+  pass scored dL -0.005, chroma x0.90, hue 1.9° (after the exposure, from -0.065),
+  with none -0.002, x0.89, 1.4°. So the wizard always chooses VoxelGI (a big map has
+  GI in its middle only, which elsewhere is none); SDFGI stays a hand choice, and
+  its settings for FFX's scale want a look of their own (R3's GPU check had used
+  VoxelGI).
+- **The exposure is tuned once**, from the review's classic and remastered
+  pictures, and kept only when it brought the lightness nearer; the other R3
+  defaults stay (they follow the game's look). Without a renderer (headless)
+  there are no pictures, no colour check and no tuning.
+- **The status becomes in progress** on accept (a status set higher by hand
+  stays); "remastered" and "approved" are the reviewer's.
+- **The review renders in a viewport of its own**, after Godot imported the made
+  maps: a material whose maps did not load drew as plain metal (its metallic
+  multiplier alone), which first made the review's picture far darker than the
+  game's.
+- **The state is the project's** (`res://remaster/wizard/state.json`, IDs,
+  profiles, scores, the staged entries; gitignored in gd-ffx's checkout); the
+  pictures and thumbnails are the player's game (`user://remaster/wizard/`).
+
+Open after R4:
+
+- the classifier: more labelled textures (wood, metal, plaster have 4 to 11),
+  regions within an atlas (R2b phase 6), per-area prototypes; ice and snow need a
+  profile of their own;
+- maps the game has not shown on this machine have no look: their lighting
+  follows the defaults' key light and a sky without the game's colours (the
+  review says so; play the map once);
+- the vertex light against added lights, per-map tuning of the key and ambient
+  beyond the exposure;
+- the review's pictures need a renderer; the headless batch stages without them;
+- a discarded pass's files stay in the texture folders (no clean-up action yet);
+- MapLook's sky rule takes Luca's large ground textures as sky (they keep the
+  classic look on the remastered path): a finding for R3's rule.
 
 ## R5 in detail
 
