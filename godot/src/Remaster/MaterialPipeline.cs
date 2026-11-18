@@ -13,7 +13,11 @@ using GdFfx.Remaster.Texturing;
 
 namespace GdFfx.Remaster;
 
-/// <summary>The material workbench's core steps, in the strip's order (docs/remaster-materials.md, "The steps").</summary>
+/// <summary>
+/// The material workbench's steps, in the strip's order (docs/remaster-materials.md, "The
+/// steps"): the core ones (Source to Emission, always in the strip), then the maps added per
+/// profile with "+ map" (R2b phase 4: <see cref="PbrRecipe"/>'s <c>&lt;Step&gt;On</c>).
+/// </summary>
 public enum MaterialStep
 {
     Source,
@@ -24,6 +28,15 @@ public enum MaterialStep
     Metallic,
     Occlusion,
     Emission,
+    BentNormal,
+    Rim,
+    Clearcoat,
+    Anisotropy,
+    Subsurface,
+    Transmittance,
+    Backlight,
+    Refraction,
+    Detail,
 }
 
 /// <summary>What a pipeline result is: a step's map, the ORM pack, or the isolated colour mask.</summary>
@@ -32,6 +45,8 @@ public enum ResultKind
     Map,
     Orm,
     Mask,
+    /// <summary>A map besides the steps' own: the detail's albedo or normal (<see cref="MaterialPipeline.Result.Aux"/> names it).</summary>
+    Aux,
 }
 
 /// <summary>The colour check (OKLab means): the source's lightness and chroma, the albedo's.</summary>
@@ -77,7 +92,7 @@ public sealed class MaterialPipeline
 
     /// <summary>A made map: the run, its size (the side asked for), the step (null: the ORM pack or the mask), the pixels, ms since the request; the height also as floats (the 16-bit save); the albedo's colour check.</summary>
     public sealed record Result(int Run, int Side, MaterialStep? Step, RgbaImage Image, double Ms, bool Last, ResultKind Kind = ResultKind.Map,
-        float[]? Float = null, ColourCheck? Check = null);
+        float[]? Float = null, ColourCheck? Check = null, string? Aux = null);
 
     /// <summary>Each step's inputs.</summary>
     public static readonly IReadOnlyDictionary<MaterialStep, MaterialStep[]> Needs = new Dictionary<MaterialStep, MaterialStep[]>
@@ -90,10 +105,63 @@ public sealed class MaterialPipeline
         [MaterialStep.Roughness] = [MaterialStep.Albedo, MaterialStep.Metallic, MaterialStep.Normal],
         [MaterialStep.Metallic] = [MaterialStep.Albedo],
         [MaterialStep.Emission] = [MaterialStep.Albedo],
+        [MaterialStep.BentNormal] = [MaterialStep.Height, MaterialStep.Normal],
+        [MaterialStep.Rim] = [MaterialStep.Albedo, MaterialStep.Height, MaterialStep.Normal],
+        [MaterialStep.Clearcoat] = [MaterialStep.Albedo, MaterialStep.Height, MaterialStep.Normal],
+        [MaterialStep.Anisotropy] = [MaterialStep.Albedo],
+        [MaterialStep.Subsurface] = [MaterialStep.Albedo, MaterialStep.Height, MaterialStep.Normal],
+        [MaterialStep.Transmittance] = [MaterialStep.Albedo, MaterialStep.Height],
+        [MaterialStep.Backlight] = [MaterialStep.Albedo, MaterialStep.Height, MaterialStep.Normal],
+        [MaterialStep.Refraction] = [MaterialStep.Albedo, MaterialStep.Height, MaterialStep.Normal],
+        [MaterialStep.Detail] = [MaterialStep.Albedo, MaterialStep.Height, MaterialStep.Normal],
     };
 
     /// <summary>Every step, in order.</summary>
     public static readonly MaterialStep[] Steps = Enum.GetValues<MaterialStep>();
+
+    /// <summary>The core steps (always in the strip and the material).</summary>
+    public static readonly MaterialStep[] Core = Steps.Where(s => s <= MaterialStep.Emission).ToArray();
+
+    /// <summary>The maps added per profile with "+ map" (R2b phase 4).</summary>
+    public static readonly MaterialStep[] Extras = Steps.Where(s => s > MaterialStep.Emission).ToArray();
+
+    /// <summary>The mask steps (one kernel: a constant, the brightness, a colour mask, the height or the normals' tilt).</summary>
+    public static readonly MaterialStep[] MaskSteps =
+        [MaterialStep.Rim, MaterialStep.Clearcoat, MaterialStep.Subsurface, MaterialStep.Backlight, MaterialStep.Refraction, MaterialStep.Detail];
+
+    /// <summary>Whether <paramref name="s"/> is a core step.</summary>
+    public static bool IsCore(MaterialStep s) => s <= MaterialStep.Emission;
+
+    /// <summary>A "+ map" step's switch (<c>RimOn</c>...).</summary>
+    public static string OnProp(MaterialStep s) => $"{s}On";
+
+    /// <summary>Whether <paramref name="s"/> is made (a core step, or an added map that is on).</summary>
+    public static bool On(PbrRecipe r, MaterialStep s) => IsCore(s) || (bool)Prop(OnProp(s)).GetValue(r)!;
+
+    /// <summary>The steps <paramref name="r"/> makes, in order.</summary>
+    public static List<MaterialStep> Active(PbrRecipe r) => Steps.Where(s => On(r, s)).ToList();
+
+    /// <summary>Godot's name of an added map's texture file (the store's role).</summary>
+    public static string Role(MaterialStep s) => s switch
+    {
+        MaterialStep.BentNormal => "bent_normal",
+        MaterialStep.Anisotropy => "flowmap",
+        MaterialStep.Detail => "detail_mask",
+        _ => s.ToString().ToLowerInvariant(),
+    };
+
+    /// <summary>The detail's albedo and normal (aux maps of the Detail step).</summary>
+    public const string DetailAlbedo = "detail_albedo", DetailNormal = "detail_normal";
+
+    /// <summary>
+    /// The keys the detail's albedo and normal are read under (<see cref="Inputs.Imports"/>): the
+    /// files, or <c>texture:&lt;id&gt;:albedo</c> and <c>:normal</c> (another texture's made maps,
+    /// read by the editor on the main thread). Empty: none.
+    /// </summary>
+    public static (string Albedo, string Normal) DetailKeys(PbrRecipe r) =>
+        !r.DetailOn ? ("", "")
+        : r.DetailFrom == DetailFrom.Texture ? (r.DetailTexture.Length > 0 ? ($"texture:{r.DetailTexture}:albedo", $"texture:{r.DetailTexture}:normal") : ("", ""))
+        : (r.DetailAlbedoFile, r.DetailNormalFile);
 
     /// <summary>The steps <paramref name="step"/> depends on, all the way up (itself last).</summary>
     public static List<MaterialStep> Chain(MaterialStep step)
@@ -126,6 +194,19 @@ public sealed class MaterialPipeline
             new("WorkingSide", "Working size", 256, 2048, 256, "The preview's size (the largest side); Save makes the maps at the full size"),
             new("MaxSide", "Full size", 64, 8192, 64, "The largest side of the saved maps (after the upscale)"),
             new("Wrap", "Tiling", 0, 1, 1, "The texture repeats: every filter wraps at the edges"),
+            new("SeamMode", "Seam tool", 0, 2, 1, "Make a texture that does not tile tile: a height-aware overlap across the edges (the taller feature wins), or a scatter of rotated copies; every map follows"),
+            new("SeamOverlap", "Overlap", 0.02, 0.45, 0.01, "The overlap's width, a fraction of the side"),
+            new("SeamHeight", "Taller wins", 0, 10, 0.1, "How much the taller feature wins across the seam (0: a plain cross-fade)"),
+            new("SeamSoftness", "Seam softness", 0.05, 2, 0.05, "The blend's width (smaller: a harder edge)"),
+            new("SeamHeightBlur", "Height smoothing", 0, 8, 0.1, "The brightness the seam tool reads as height, smoothed first (classic texels)"),
+            new("ScatterGrid", "Stamps", 2, 16, 2, "Scatter: stamps per side (even)"),
+            new("ScatterScale", "Stamp size", 0.8, 3, 0.05, "Scatter: a stamp's size against its cell"),
+            new("ScatterRotation", "Rotation", 0, 360, 1, "Scatter: every stamp's rotation (degrees)"),
+            new("ScatterRandomRotation", "Random rotation", 0, 180, 1, "Scatter: each stamp's random turn, up to this either way (degrees)"),
+            new("ScatterJitter", "Jitter", 0, 1, 0.01, "Scatter: each stamp's random offset (a fraction of a cell)"),
+            new("ScatterSeed", "Seed", 0, 9999, 1, "Scatter: another random layout"),
+            new("ScatterSoftness", "Stamp softness", 0.05, 1, 0.01, "Scatter: the stamps' soft edge"),
+            new("ScatterHeight", "Taller stamp wins", 0, 24, 0.5, "Scatter: how much the taller stamp wins where they overlap (0: an even blend)"),
         ],
         [MaterialStep.Albedo] =
         [
@@ -212,7 +293,82 @@ public sealed class MaterialPipeline
             new("EmissionSoftness", "Softness", 0, 0.5, 0.01, "The ramp around the threshold"),
             new("EmissionEnergy", "Energy", 0, 16, 0.05, "The material's emission energy", MaterialOnly: true),
         ],
+        [MaterialStep.BentNormal] =
+        [
+            new("BentNormalStrength", "Strength", 0, 1, 0.05, "0: the surface's own normal; 1: the mean open direction (from the occlusion's directions: its radius and depth)"),
+            new("BentNormalFromNormals", "From the normals", 0, 1, 0.05, "How much the normal map's own tilt bends it too"),
+        ],
+        [MaterialStep.Rim] =
+        [
+            .. MaskStep("Rim", "rim"),
+            new("RimAmount", "Rim", 0, 1, 0.01, "The material's rim light (soft light at grazing angles: cloth, velvet, moss)", MaterialOnly: true),
+            new("RimTint", "Rim tint", 0, 1, 0.01, "0: the light's colour; 1: the albedo's", MaterialOnly: true),
+        ],
+        [MaterialStep.Clearcoat] =
+        [
+            .. MaskStep("Clearcoat", "lacquer"),
+            new("ClearcoatAmount", "Coat", 0, 1, 0.01, "The material's clearcoat (a lacquer layer: polished wood, wet stone, paint)", MaterialOnly: true),
+            new("ClearcoatRoughness", "Coat roughness", 0, 1, 0.01, "The coat's roughness (1 - gloss)", MaterialOnly: true),
+        ],
+        [MaterialStep.Anisotropy] =
+        [
+            new("AnisotropySource", "Direction", 0, 1, 1, "From the texture's own grain (the brightness gradient's orientation, smoothed), or a fixed angle"),
+            new("AnisotropyAngle", "Angle", 0, 180, 1, "The fixed direction (degrees: 0 right, 90 up); with the grain: its turn"),
+            new("AnisotropySmooth", "Grain smoothing", 0.5, 16, 0.5, "The grain's direction field smoothed (classic texels)"),
+            new("AnisotropyAlongGrain", "Along the grain", 0, 1, 1, "The highlight along the grain instead of across it (brushed metal and hair: across)"),
+            new("AnisotropyCoherence", "From clarity", 0, 1, 0.05, "How much a clear grain sets the strength (0: the same everywhere)"),
+            new("AnisotropyAmount", "Anisotropy", -1, 1, 0.01, "The material's anisotropy: highlights stretched along the flow", MaterialOnly: true),
+        ],
+        [MaterialStep.Subsurface] =
+        [
+            .. MaskStep("Subsurface", "scattering"),
+            new("SubsurfaceStrength", "Strength", 0, 1, 0.01, "The material's subsurface scattering (skin, wax, leaves; Forward+ only)", MaterialOnly: true),
+            new("SubsurfaceSkin", "Skin", 0, 1, 1, "Godot's skin profile", MaterialOnly: true),
+        ],
+        [MaterialStep.Transmittance] =
+        [
+            new("TransmittanceTint", "Colour from", 0, 1, 1, "The light's colour through the surface: the albedo's, or a colour"),
+            new("TransmittanceColour", "Colour", 0, 1, 1, "The colour (Colour from: Colour)"),
+            new("TransmittanceSaturation", "Saturation", 0, 2, 0.05, "The albedo's tint's saturation"),
+            new("TransmittanceThickness", "Thickness from", 0, 2, 1, "The height (high is thick), the brightness, or one thickness"),
+            new("TransmittanceInvert", "High is thin", 0, 1, 1, "Invert the thickness"),
+            new("TransmittanceContrast", "Contrast", 0, 4, 0.05, "The thinness's contrast around mid grey"),
+            new("TransmittanceBias", "Bias", -0.5, 0.5, 0.01, "Added after the contrast"),
+            new("TransmittanceDepth", "Depth", 0.001, 8, 0.001, "The material's transmittance depth", MaterialOnly: true),
+            new("TransmittanceBoost", "Boost", 0, 1, 0.01, "The material's transmittance boost", MaterialOnly: true),
+        ],
+        [MaterialStep.Backlight] =
+        [
+            .. MaskStep("Backlight", "light through"),
+            new("BacklightTint", "Tint", 0, 1, 1, "The light's colour through the surface"),
+            new("BacklightFromAlbedo", "Tint from albedo", 0, 1, 0.05, "The tint taken from the albedo instead (leaves: their own green)"),
+        ],
+        [MaterialStep.Refraction] =
+        [
+            .. MaskStep("Refraction", "refraction"),
+            new("RefractionScale", "Scale", -1, 1, 0.005, "The material's refraction (the normal map bends what is behind: glass, water; makes it transparent)", MaterialOnly: true),
+        ],
+        [MaterialStep.Detail] =
+        [
+            .. MaskStep("Detail", "detail"),
+            new("DetailFrom", "Detail from", 0, 1, 1, "The detail albedo and normal: two files, or another texture's made maps"),
+            new("DetailScale", "Detail repeats", 1, 32, 0.5, "How often the detail repeats over the texture (its own UV scale)", MaterialOnly: true),
+            new("DetailBlend", "Blend", 0, 3, 1, "How the detail albedo is laid over", MaterialOnly: true),
+        ],
     };
+
+    /// <summary>A mask step's settings: where the mask comes from, the colour mask, the ramp, the value.</summary>
+    private static IEnumerable<StepSetting> MaskStep(string step, string what) =>
+    [
+        new($"{step}Source", "Mask from", 0, 4, 1, $"Where the {what} is: everywhere (Constant), by brightness, by a colour (pick it), by height, by the normals' tilt"),
+        new($"{step}Colour", "Colour", 0, 1, 1, "Mask from Colour: pick the colour (none: off)", Group: "sample"),
+        .. MaskSettings(step),
+        new($"{step}Threshold", "Ramp at", 0, 1, 0.01, "Brightness, height or tilt: where the mask turns on"),
+        new($"{step}Softness", "Ramp softness", 0, 1, 0.01, "The ramp around it"),
+        new($"{step}Invert", "Invert", 0, 1, 1, "Invert the mask (not the constant)"),
+        new($"{step}Value", "Value", 0, 1, 0.01, "The mask's value where it is on"),
+        new($"{step}Blur", "Pre-blur", 0, 8, 0.1, "The colour and brightness read from a blurred copy (classic texels)"),
+    ];
 
     private static IEnumerable<StepSetting> Band(string prefix, string label, double min, double max, double step, string group, string tip) =>
         Enumerable.Range(0, 7).Select(k => new StepSetting($"{prefix}{k}", $"{label} {k}", min, max, step, tip, Group: group));
@@ -246,6 +402,19 @@ public sealed class MaterialPipeline
 
     public static StepMode ModeOf(PbrRecipe r, MaterialStep s) =>
         s == MaterialStep.Source && r.SourceMode == StepMode.Skip ? StepMode.Generate : (StepMode)Prop(ModeProps(s).Mode).GetValue(r)!;
+
+    /// <summary>Every file a recipe reads (the steps' imports, the detail's albedo and normal), by key.</summary>
+    public static IEnumerable<string> Files(PbrRecipe r)
+    {
+        foreach (var s in Steps)
+            if (On(r, s) && ModeOf(r, s) == StepMode.Import && FileOf(r, s) is { Length: > 0 } f)
+                yield return f;
+        var (a, n) = DetailKeys(r);
+        if (a.Length > 0)
+            yield return a;
+        if (n.Length > 0)
+            yield return n;
+    }
 
     public static string FileOf(PbrRecipe r, MaterialStep s) => (string)Prop(ModeProps(s).File).GetValue(r)!;
 
@@ -336,7 +505,10 @@ public sealed class MaterialPipeline
                     var outs = MaterializeGraph.Build(b, inputs.Key, inputs.Original, inputs.Imports, inputs.Recipe,
                         new BuildRequest(w, h, scale, bake || small ? -1 : 1, isolate));
                     foreach (var s in order)
-                        Post(MakeResult(b, outs, run, sides[i], s, clock));
+                        if (outs.Maps.ContainsKey(s))
+                            Post(MakeResult(b, outs, run, sides[i], s, clock));
+                    foreach (var (name, t) in outs.Aux)
+                        Post(new Result(run, sides[i], null, ToImage8(b, t), clock.Elapsed.TotalMilliseconds, false, ResultKind.Aux, Aux: name));
                     Post(new Result(run, sides[i], null, ToImage8(b, outs.Orm), clock.Elapsed.TotalMilliseconds, false, ResultKind.Orm));
                     if (outs.Mask != null)
                         Post(new Result(run, sides[i], null, ToImage8(b, outs.Mask), clock.Elapsed.TotalMilliseconds, false, ResultKind.Mask));
@@ -345,6 +517,8 @@ public sealed class MaterialPipeline
                         // the occlusion's other directions
                         outs = MaterializeGraph.Build(b, inputs.Key, inputs.Original, inputs.Imports, inputs.Recipe, new BuildRequest(w, h, scale, 64, isolate));
                         Post(MakeResult(b, outs, run, sides[i], MaterialStep.Occlusion, clock));
+                        if (outs.Maps.ContainsKey(MaterialStep.BentNormal))
+                            Post(MakeResult(b, outs, run, sides[i], MaterialStep.BentNormal, clock));
                         Post(new Result(run, sides[i], null, ToImage8(b, outs.Orm), clock.Elapsed.TotalMilliseconds, false, ResultKind.Orm));
                     }
                     if (bake)

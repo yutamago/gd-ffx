@@ -4,8 +4,8 @@ using Godot;
 
 namespace GdFfx.Remaster.Materialize;
 
-/// <summary>Every map of a bake: the maps (8-bit), the ORM pack, the height as floats (the 16-bit file).</summary>
-public sealed record BakedMaps(Dictionary<MaterialStep, RgbaImage> Maps, RgbaImage Orm, Image Height);
+/// <summary>Every map of a bake: the maps (8-bit; the steps the recipe makes), the ORM pack, the height as floats (the 16-bit file), the aux maps (the detail's albedo and normal).</summary>
+public sealed record BakedMaps(Dictionary<MaterialStep, RgbaImage> Maps, RgbaImage Orm, Image Height, Dictionary<string, RgbaImage>? Aux = null);
 
 /// <summary>
 /// A texture's material made at the full size by the workbench's graph (docs/remaster-materials.md,
@@ -32,7 +32,10 @@ public static class MaterialBaker
         var bytes = new byte[f.Length * 4];
         System.Buffer.BlockCopy(f, 0, bytes, 0, bytes.Length);
         var height = Image.CreateFromData(maps[MaterialStep.Height].Width, maps[MaterialStep.Height].Height, false, Image.Format.Rf, bytes);
-        return new BakedMaps(maps, b.Get(outs.Orm).ToRgba(), height);
+        var aux = new Dictionary<string, RgbaImage>();
+        foreach (var (name, t) in outs.Aux)
+            aux[name] = b.Get(t).ToRgba();
+        return new BakedMaps(maps, b.Get(outs.Orm).ToRgba(), height, aux);
     }
 
     /// <summary>
@@ -51,8 +54,17 @@ public static class MaterialBaker
             if (h.GetFormat() != Image.Format.Rh)
                 h.Convert(Image.Format.Rh);
         }
+        // the maps added with "+ map", by their file role
+        var extra = new Dictionary<string, Image>();
+        foreach (var s in MaterialPipeline.Extras)
+            if (MaterialPipeline.On(r, s) && baked.Maps.TryGetValue(s, out var img))
+                extra[MaterialPipeline.Role(s)] = PbrBuilder.ToImage(img);
+        if (r.DetailOn && baked.Aux != null)
+            foreach (var name in new[] { MaterialPipeline.DetailAlbedo, MaterialPipeline.DetailNormal })
+                if (baked.Aux.TryGetValue(name, out var a))
+                    extra[name] = PbrBuilder.ToImage(a);
         return new PbrImages(PbrBuilder.ToImage(baked.Maps[MaterialStep.Albedo]), PbrBuilder.ToImage(baked.Maps[MaterialStep.Normal]),
-            PbrBuilder.ToImage(baked.Orm), h, emission ? PbrBuilder.ToImage(baked.Maps[MaterialStep.Emission]) : null);
+            PbrBuilder.ToImage(baked.Orm), h, emission ? PbrBuilder.ToImage(baked.Maps[MaterialStep.Emission]) : null, extra);
     }
 
     /// <summary>The material of <paramref name="original"/> by profile (or recipe) <paramref name="r"/>, made on the CPU, as files take it.</summary>

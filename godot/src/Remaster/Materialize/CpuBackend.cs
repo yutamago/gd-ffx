@@ -214,6 +214,22 @@ public sealed class CpuBackend : IMaterializeBackend
 
     private static Vector3 Xyz(Vector4 v) => new(v.X, v.Y, v.Z);
 
+    private static Vector3 SafeNormal(Vector3 v) => v.LengthSquared() > 1e-12f ? Vector3.Normalize(v) : Vector3.UnitZ;
+
+    /// <summary>An encoded normal (0-1) made unit length again (after a blend).</summary>
+    private static Vector4 Renormal(Vector4 c)
+    {
+        var n = SafeNormal(new Vector3(c.X * 2 - 1, c.Y * 2 - 1, c.Z * 2 - 1));
+        return new Vector4(n.X * 0.5f + 0.5f, n.Y * 0.5f + 0.5f, n.Z * 0.5f + 0.5f, c.W);
+    }
+
+    /// <summary>The tilt of an encoded normal (0: facing out; 1: 30 degrees or more).</summary>
+    private static float Tilt(Vector4 n)
+    {
+        float x = n.X * 2 - 1, y = n.Y * 2 - 1;
+        return MathF.Min(1, 2 * MathF.Sqrt(x * x + y * y));
+    }
+
     private void Run(CpuTex o)
     {
         var u = o.Uni;
@@ -399,6 +415,7 @@ public sealed class CpuBackend : IMaterializeBackend
                 var (ht, nt) = (In(0), In(1));
                 float radius = u.F("radius"), depth = u.F("depth"), nshare = u.F("nshare");
                 int dirs = u.I("dirs"), first = u.I("first"), count = u.I("count");
+                bool bent = u.B("bent");
                 bool flatN = nt.W == 1 && nt.H == 1;
                 // each direction's angle without the pixel's own turn (added by a rotation per pixel)
                 var bc = new float[Math.Max(0, count)];
@@ -415,7 +432,7 @@ public sealed class CpuBackend : IMaterializeBackend
                     float nx = n.X * 2 - 1, ny = -(n.Y * 2 - 1), nz = n.Z * 2 - 1;
                     float r1 = Rnd(x, y, 1), r2 = Rnd(x, y, 2);
                     float turn = 6.2831853f * r1 / dirs, ct = MathF.Cos(turn), st = MathF.Sin(turn);
-                    float acc = 0;
+                    float acc = 0, bx = 0, by = 0, bz = 0;
                     for (int i = 0; i < count; i++)
                     {
                         float dx = bc[i] * ct - bs[i] * st, dy = bs[i] * ct + bc[i] * st;
@@ -431,8 +448,17 @@ public sealed class CpuBackend : IMaterializeBackend
                         float ns = MathF.Max(0, -(nx * dx + ny * dy) / MathF.Max(0.05f, nz));
                         float on = ns / MathF.Sqrt(1 + ns * ns);
                         acc += oh + (on - oh) * nshare;
+                        if (bent)
+                        {
+                            // the open arc above the horizon (elevation a to the zenith), cosine-weighted: its mean direction
+                            float a = MathF.Atan(best), hz = (1 - oh * oh) * 0.5f;
+                            bx += hz * dx;
+                            by += hz * dy;
+                            bz += (MathF.PI / 2 - a) * 0.5f + MathF.Sin(2 * a) * 0.25f;
+                        }
                     }
-                    return new Vector4(count > 0 ? acc / count : 0, 0, 0, 1);
+                    float inv = count > 0 ? 1f / count : 0;
+                    return new Vector4(acc * inv, bx * inv, by * inv, bent ? bz * inv : 1);
                 });
                 break;
             }
@@ -673,13 +699,14 @@ public sealed class CpuBackend : IMaterializeBackend
                     p[i] = In(i);
                 Each(o, (x, y) =>
                 {
-                    float s = 0, n = 0;
+                    Vector4 s = Vector4.Zero;
+                    float n = 0;
                     for (int c = 0; c < done; c++)
                     {
-                        s += p[c].Fet(x, y).X * counts[c];
+                        s += p[c].Fet(x, y) * counts[c];
                         n += counts[c];
                     }
-                    return new Vector4(n > 0 ? s / n : 0, 0, 0, 1);
+                    return n > 0 ? s / n : Vector4.Zero;
                 });
                 break;
             }
@@ -783,6 +810,205 @@ public sealed class CpuBackend : IMaterializeBackend
                 {
                     float m = sample.W > 0 ? ColourMask(Xyz(t.Bil(Ux(x), Uy(y))), Xyz(sample), mh, ms, ml, lo, hi) : 0;
                     return new Vector4(m, m, m, 1);
+                });
+                break;
+            }
+            case "bent_out":
+            {
+                var (sum, nt) = (In(0), In(1));
+                float strength = u.F("strength"), fromN = u.F("from_normals");
+                bool flatN = nt.W == 1 && nt.H == 1;
+                Each(o, (x, y) =>
+                {
+                    var v = sum.Fet(x, y);
+                    var b = new Vector3(v.Y, v.Z, v.W);
+                    float l = b.Length();
+                    b = l > 1e-6f ? b / l : Vector3.UnitZ;
+                    var n = flatN ? new Vector4(0.5f, 0.5f, 1, 1) : nt.Fet(x, y);
+                    var nn = new Vector3(n.X * 2 - 1, -(n.Y * 2 - 1), n.Z * 2 - 1);
+                    b = SafeNormal(b + fromN * (nn - Vector3.UnitZ));
+                    b = SafeNormal(Vector3.Lerp(Vector3.UnitZ, b, strength));
+                    return new Vector4(b.X * 0.5f + 0.5f, -b.Y * 0.5f + 0.5f, b.Z * 0.5f + 0.5f, 1);
+                });
+                break;
+            }
+            case "seam":
+            {
+                var (t, hgt) = (In(0), In(1));
+                int dir = u.I("dir");
+                float ov = u.F("o"), k = u.F("k"), sm = u.F("s");
+                bool normal = u.B("normal");
+                Each(o, (x, y) =>
+                {
+                    // near the edges the copy shifted by half the size (its own seam in the middle, under
+                    // the original) takes over; across the band the taller of the two wins
+                    int n = dir == 0 ? W : H, i = dir == 0 ? x : y, j = (i + n / 2) % n;
+                    float dist = MathF.Min(i + 0.5f, n - i - 0.5f);
+                    float ramp = Math.Clamp(2 * (dist - 1) / MathF.Max(1, ov - 1) - 1, -1, 1);
+                    if (ramp >= 1)
+                        return t.Fet(x, y);
+                    var a = t.Fet(x, y);
+                    var b = dir == 0 ? t.Fet(j, y) : t.Fet(x, j);
+                    float ha = hgt.Fet(x, y).X, hb = (dir == 0 ? hgt.Fet(j, y) : hgt.Fet(x, j)).X;
+                    float wa = SmoothStep(-sm, sm, (ha - hb) * k + ramp * (sm + k));
+                    var c = Vector4.Lerp(b, a, wa);
+                    return normal ? Renormal(c) : c;
+                });
+                break;
+            }
+            case "scatter":
+            {
+                var (t, hgt) = (In(0), In(1));
+                int n = u.I("grid");
+                float scale = u.F("scale"), rot = u.F("rot"), rrot = u.F("rrot"), jitter = u.F("jitter"), soft = u.F("soft"), k = u.F("k");
+                uint salt = (uint)u.I("seed") * 8u;
+                bool normal = u.B("normal");
+                float cell = 1f / n, size = scale * cell;
+                // the stamps' sources stay inside the image (no wrap inside a stamp)
+                float lo = size * 0.75f < 0.5f ? size * 0.75f : 0.5f, span = 1 - 2 * lo;
+                Each(o, (x, y) =>
+                {
+                    float qx = Ux(x), qy = Uy(y);
+                    int jq = (int)MathF.Floor(qy * n);
+                    Vector4 acc = Vector4.Zero;
+                    float wsum = 0;
+                    for (int dj = -2; dj <= 2; dj++)
+                    {
+                        int j = jq + dj;
+                        float off = ((j + 4 * n) & 1) == 1 ? 0.5f * cell : 0;
+                        int iq = (int)MathF.Floor((qx - off) * n);
+                        for (int di = -2; di <= 2; di++)
+                        {
+                            int i = iq + di;
+                            int wi = (i + 4 * n) % n, wj = (j + 4 * n) % n;
+                            float cx = (i + 0.5f) * cell + off + (Rnd(wi, wj, salt + 1) - 0.5f) * jitter * cell;
+                            float cy = (j + 0.5f) * cell + (Rnd(wi, wj, salt + 2) - 0.5f) * jitter * cell;
+                            float th = rot + rrot * (2 * Rnd(wi, wj, salt + 3) - 1);
+                            float cs = MathF.Cos(th), sn = MathF.Sin(th);
+                            float dx = qx - cx, dy = qy - cy;
+                            float lx = (cs * dx + sn * dy) / size, ly = (-sn * dx + cs * dy) / size;
+                            float rr = 2 * MathF.Sqrt(lx * lx + ly * ly);
+                            if (rr >= 1.5f)
+                                continue;
+                            float su = lo + span * Rnd(wi, wj, salt + 4) + lx * size, sv = lo + span * Rnd(wi, wj, salt + 5) + ly * size;
+                            float m = 1 - SmoothStep(1 - soft, 1, rr);
+                            float w = (m + 1e-4f * (1.5f - rr)) * MathF.Exp(k * (hgt.BilR(su, sv) - 1));
+                            var c = t.Bil(su, sv);
+                            if (normal)
+                            {
+                                // the normal turned with its stamp (x right, y up in the map; the image's y down)
+                                float nx = c.X * 2 - 1, ny = -(c.Y * 2 - 1);
+                                c = new Vector4((cs * nx - sn * ny) * 0.5f + 0.5f, -(sn * nx + cs * ny) * 0.5f + 0.5f, c.Z, c.W);
+                            }
+                            acc += w * c;
+                            wsum += w;
+                        }
+                    }
+                    if (wsum < 1e-20f)
+                        return t.Fet(x, y);
+                    var r = acc / wsum;
+                    return normal ? Renormal(r) : r;
+                });
+                break;
+            }
+            case "xmask":
+            {
+                var (cb, ht, nt, alb) = (In(0), In(1), In(2), In(3));
+                int src = u.I("src");
+                var smp = Xyz(u.V("smp"));
+                float thr = u.F("threshold"), soft = u.F("softness"), value = u.F("value"), from = u.F("from_albedo");
+                bool invert = u.B("invert"), rgb = u.B("rgb");
+                var tint = Lin(Xyz(u.V("tint")));
+                float mh = u.F("mh"), ms = u.F("ms"), ml = u.F("ml"), lo = u.F("lo"), hi = u.F("hi");
+                Each(o, (x, y) =>
+                {
+                    float uu = Ux(x), vv = Uy(y);
+                    float m = src switch
+                    {
+                        1 => Ramp(Lum(Xyz(cb.Bil(uu, vv))), thr, soft),
+                        2 => ColourMask(Xyz(cb.Bil(uu, vv)), smp, mh, ms, ml, lo, hi),
+                        3 => Ramp(ht.BilR(uu, vv), thr, soft),
+                        4 => Ramp(Tilt(nt.Fet(x, y)), thr, soft),
+                        _ => 1,
+                    };
+                    if (src != 0 && invert)
+                        m = 1 - m;
+                    m *= value;
+                    if (!rgb)
+                        return new Vector4(m, 1, 0, 1);
+                    // the albedo's hue at full brightness (dark leaves still let their green through)
+                    var al = Lin(Xyz(alb.Fet(x, y)));
+                    float mx = MathF.Max(al.X, MathF.Max(al.Y, al.Z));
+                    var c = Vector3.Lerp(tint, mx > 1e-4f ? al / mx : Vector3.One, from) * m;
+                    return new Vector4(c, 1);
+                });
+                break;
+            }
+            case "st":
+            {
+                var t = In(0);
+                Each(o, (x, y) =>
+                {
+                    float L(int dx, int dy) => t.FetR(x + dx, y + dy);
+                    float gx = 2 * (L(1, -1) + 2 * L(1, 0) + L(1, 1) - L(-1, -1) - 2 * L(-1, 0) - L(-1, 1));
+                    float gy = 2 * (L(-1, 1) + 2 * L(0, 1) + L(1, 1) - L(-1, -1) - 2 * L(0, -1) - L(1, -1));
+                    return new Vector4(gx * gx, gy * gy, gx * gy, 1);
+                });
+                break;
+            }
+            case "aniso":
+            {
+                var t = In(0);
+                int mode = u.I("mode");
+                float angle = u.F("angle"), coh = u.F("coh");
+                bool along = u.B("along");
+                Each(o, (x, y) =>
+                {
+                    float th = angle, str = 1;
+                    if (mode == 0)
+                    {
+                        var j = t.Bil(Ux(x), Uy(y));
+                        float tr = j.X + j.Y;
+                        if (tr > 1e-6f)
+                        {
+                            th += 0.5f * MathF.Atan2(2 * j.Z, j.X - j.Y);
+                            float d = MathF.Sqrt((j.X - j.Y) * (j.X - j.Y) + 4 * j.Z * j.Z);
+                            str = 1 + (d / tr - 1) * coh;
+                        }
+                        else
+                            str = 1 - coh;
+                    }
+                    if (along)
+                        th += MathF.PI / 2;
+                    // the image's (cos, sin) as the flowmap's x right, y up; one of the two signs (the highlight is the same)
+                    float fx = MathF.Cos(th), fy = -MathF.Sin(th);
+                    if (fx < 0 || (fx == 0 && fy < 0))
+                        (fx, fy) = (-fx, -fy);
+                    return new Vector4(fx * 0.5f + 0.5f, fy * 0.5f + 0.5f, 0, Math.Clamp(str, 0, 1));
+                });
+                break;
+            }
+            case "transmit":
+            {
+                var (alb, ht, la) = (In(0), In(1), In(2));
+                int tintMode = u.I("tint"), thick = u.I("thick");
+                var colour = Lin(Xyz(u.V("colour")));
+                float sat = u.F("sat"), contrast = u.F("contrast"), bias = u.F("bias");
+                bool invert = u.B("invert");
+                Each(o, (x, y) =>
+                {
+                    Vector3 tint = colour;
+                    if (tintMode == 0)
+                    {
+                        var l = Lin(Xyz(alb.Fet(x, y)));
+                        float ly = LumLin(l);
+                        l = Vector3.Max(Vector3.Zero, Vector3.Lerp(new Vector3(ly), l, sat));
+                        float mx = MathF.Max(l.X, MathF.Max(l.Y, l.Z));
+                        tint = mx > 1e-4f ? l / mx : Vector3.One;
+                    }
+                    float th = thick == 0 ? ht.Fet(x, y).X : thick == 1 ? la.Fet(x, y).X : 0.5f;
+                    float thin = invert ? th : 1 - th;
+                    return new Vector4(tint, Math.Clamp((thin - 0.5f) * contrast + 0.5f + bias, 0, 1));
                 });
                 break;
             }

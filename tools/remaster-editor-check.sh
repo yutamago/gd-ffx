@@ -28,8 +28,11 @@
 #     a profile saved (into godot/remaster/check/profiles, gitignored, removed),
 #     loaded, an exception pinned and cleared, Apply to queue (cancelled once,
 #     then whole), undo/redo, the profile changed and the textures made again,
-#     an R2-era entry migrated, a pack's profile over the starter one; with
-#     FFX_EDITOR_SHOT=1 also OUT_DIR/materials-*.png and profile-*.png);
+#     an R2-era entry migrated, a pack's profile over the starter one; phase 4:
+#     every map added with + map, the seam tool on a synthetic texture with
+#     seams, saved with the material's flags, a profile with the maps; with
+#     FFX_EDITOR_SHOT=1 also OUT_DIR/materials-*.png, profile-*.png, maps-*.png
+#     and seam-*.png);
 #  4. the R1a example's hand-written overrides opened in the editor, shown as
 #     edits, and saved back with the same meaning (--remaster-editor-roundtrip);
 #     R5: the alignment check on its additions and replacement, and a misplaced
@@ -81,13 +84,13 @@ rm -rf "$out/docs"
 grep -E '^ffx selftest: (PASS|FAIL)' "$out/map14.log" | tail -1 | cut -c1-200 || echo "ffx selftest: no result (exit $map14, see $out/map14.log)"
 [[ $map14 -eq 0 ]] || exit 1
 args=(--path . -- --remaster-editor-test --remaster-maps="$out/maps" --remaster-textures="$tex" --remaster-profiles="res://remaster/check/profiles" --remaster-looks="$out/looks"
-    --remaster-captures="$out/captures")
+    --remaster-captures="$out/captures" --editor-test-timeout=900)
 if [[ -n "${FFX_EDITOR_SHOT:-}" ]]; then
-    env -u WAYLAND_DISPLAY -u DISPLAY timeout 400 "$repo/tools/capped.sh" xvfb-run -a -s "-screen 0 1600x900x24" \
+    env -u WAYLAND_DISPLAY -u DISPLAY timeout 1000 "$repo/tools/capped.sh" xvfb-run -a -s "-screen 0 1600x900x24" \
         "$godot" --editor --display-driver x11 --rendering-driver opengl3 --audio-driver Dummy \
         "${args[@]}" --editor-shot="$out/editor.png" >"$out/editor.log" 2>&1
 else
-    timeout 400 "$repo/tools/capped.sh" "$godot" --headless --editor "${args[@]}" >"$out/editor.log" 2>&1
+    timeout 1000 "$repo/tools/capped.sh" "$godot" --headless --editor "${args[@]}" >"$out/editor.log" 2>&1
 fi
 editor=$?
 grep -E '^ffx editortest: (PASS|FAIL)' "$out/editor.log" | tail -1 || echo "ffx editortest: no result (exit $editor, see $out/editor.log)"

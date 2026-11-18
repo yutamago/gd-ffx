@@ -5,7 +5,7 @@
 [resource]
 script = ExtResource("1")
 Title = "Rock"
-Note = "Rough natural rock: cliffs, boulders, cave walls. Coarse relief, shape from the painted light, deep occlusion. Tuned on lchb00_rockwall_06 and _01, bjyt04_rockwall_01, znkd06_stone_01 and Macalania's crystal rock (mcfr00)."
+Note = "Rough natural rock: cliffs, boulders, cave walls. Coarse relief, shape from the painted light, deep occlusion. Tuned on lchb00_rockwall_06 and _01, bjyt04_rockwall_01, znkd06_stone_01 and Macalania's crystal rock (mcfr00). The bent normal is on (the occlusion's directions: the sky's light kept out of the cracks)."
 Version = 3
 Delight = 0.7
 DelightRadius = 12.0
@@ -38,3 +38,4 @@ NormalContrast = 1.2
 RoughnessBias = 0.16
 RoughnessOverlay = 0.3
 OcclusionDepth = 20.0
+BentNormalOn = true

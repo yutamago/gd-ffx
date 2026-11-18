@@ -145,14 +145,14 @@ vec4 run(ivec2 P, vec2 uv) {
         ["resid2"] = @"vec4 run(ivec2 P, vec2 uv) { float d = fet(t0, P).r - bil(t1, uv).r; return vec4(d * d, 0.0, 0.0, 1.0); }",
         ["alb_ab"] = @"uniform float u_eps;
 vec4 run(ivec2 P, vec2 uv) { float m = bil(t0, uv).r; float v = max(0.0, bil(t1, uv).r); float a = v / (v + u_eps); return vec4(a, m - a * m, 0.0, 1.0); }",
-        ["ao"] = @"uniform float u_radius; uniform float u_depth; uniform float u_nshare; uniform int u_dirs; uniform int u_first; uniform int u_count;
+        ["ao"] = @"uniform float u_radius; uniform float u_depth; uniform float u_nshare; uniform int u_dirs; uniform int u_first; uniform int u_count; uniform bool u_bent;
 vec4 run(ivec2 P, vec2 uv) {
 	float h0 = bil(t0, uv).r;
 	ivec2 ns = textureSize(t1, 0);
 	vec3 n = (ns.x == 1 && ns.y == 1) ? vec3(0.5, 0.5, 1.0) : fet(t1, P).rgb;
 	float nx = n.r * 2.0 - 1.0; float ny = -(n.g * 2.0 - 1.0); float nz = n.b * 2.0 - 1.0;
 	float r1 = rnd(P, 1u); float r2 = rnd(P, 2u);
-	float acc = 0.0;
+	float acc = 0.0; vec3 b = vec3(0.0);
 	for (int i = u_first; i < u_first + u_count; i++) {
 		float th = 6.2831853 * (float(i) + r1) / float(u_dirs);
 		vec2 d = vec2(cos(th), sin(th));
@@ -166,8 +166,13 @@ vec4 run(ivec2 P, vec2 uv) {
 		float sl = max(0.0, -(nx * d.x + ny * d.y) / max(0.05, nz));
 		float on = sl / sqrt(1.0 + sl * sl);
 		acc += oh + (on - oh) * u_nshare;
+		if (u_bent) {
+			float a = atan(best); float hz = (1.0 - oh * oh) * 0.5;
+			b += vec3(hz * d.x, hz * d.y, (1.5707963 - a) * 0.5 + sin(2.0 * a) * 0.25);
+		}
 	}
-	return vec4(u_count > 0 ? acc / float(u_count) : 0.0, 0.0, 0.0, 1.0);
+	float inv = u_count > 0 ? 1.0 / float(u_count) : 0.0;
+	return vec4(acc * inv, b.x * inv, b.y * inv, u_bent ? b.z * inv : 1.0);
 }",
         ["alb_o1"] = @"uniform float u_shading; uniform float u_ek; uniform float u_occ; uniform float u_cav;
 vec4 run(ivec2 P, vec2 uv) {
@@ -281,10 +286,10 @@ vec4 run(ivec2 P, vec2 uv) {
 }",
         ["ao_sum"] = @"uniform float u_counts[8]; uniform int u_done;
 vec4 run(ivec2 P, vec2 uv) {
-	float p[8] = float[8](fet(t0, P).r, fet(t1, P).r, fet(t2, P).r, fet(t3, P).r, fet(t4, P).r, fet(t5, P).r, fet(t6, P).r, fet(t7, P).r);
-	float s = 0.0; float n = 0.0;
+	vec4 p[8] = vec4[8](fet(t0, P), fet(t1, P), fet(t2, P), fet(t3, P), fet(t4, P), fet(t5, P), fet(t6, P), fet(t7, P));
+	vec4 s = vec4(0.0); float n = 0.0;
 	for (int c = 0; c < 8; c++) { if (c < u_done) { s += p[c] * u_counts[c]; n += u_counts[c]; } }
-	return vec4(n > 0.0 ? s / n : 0.0, 0.0, 0.0, 1.0);
+	return n > 0.0 ? s / n : vec4(0.0);
 }",
         ["ao_out"] = @"uniform float u_strength; uniform float u_power; uniform float u_bias;
 vec4 run(ivec2 P, vec2 uv) {
@@ -333,6 +338,125 @@ vec4 run(ivec2 P, vec2 uv) {
 vec4 run(ivec2 P, vec2 uv) { vec4 c = fet(t0, P); float m = ramp(max(c.r, max(c.g, c.b)), u_threshold, u_softness); return vec4(c.rgb * m, 1.0); }",
         ["mask_view"] = @"uniform vec4 u_smp; uniform float u_mh; uniform float u_ms; uniform float u_ml; uniform float u_lo; uniform float u_hi;
 vec4 run(ivec2 P, vec2 uv) { float m = u_smp.a > 0.0 ? cmask(bil(t0, uv).rgb, u_smp.rgb, u_mh, u_ms, u_ml, u_lo, u_hi) : 0.0; return vec4(m, m, m, 1.0); }",
+        ["bent_out"] = @"uniform float u_strength; uniform float u_from_normals;
+vec3 snorm(vec3 v) { return dot(v, v) > 1e-12 ? normalize(v) : vec3(0.0, 0.0, 1.0); }
+vec4 run(ivec2 P, vec2 uv) {
+	vec3 b = fet(t0, P).gba;
+	float l = length(b);
+	b = l > 1e-6 ? b / l : vec3(0.0, 0.0, 1.0);
+	ivec2 ns = textureSize(t1, 0);
+	vec3 n = (ns.x == 1 && ns.y == 1) ? vec3(0.5, 0.5, 1.0) : fet(t1, P).rgb;
+	vec3 nn = vec3(n.r * 2.0 - 1.0, -(n.g * 2.0 - 1.0), n.b * 2.0 - 1.0);
+	b = snorm(b + u_from_normals * (nn - vec3(0.0, 0.0, 1.0)));
+	b = snorm(mix(vec3(0.0, 0.0, 1.0), b, u_strength));
+	return vec4(b.x * 0.5 + 0.5, -b.y * 0.5 + 0.5, b.z * 0.5 + 0.5, 1.0);
+}",
+        ["seam"] = @"uniform int u_dir; uniform float u_o; uniform float u_k; uniform float u_s; uniform bool u_normal;
+vec4 renorm(vec4 c) { vec3 v = c.rgb * 2.0 - 1.0; v = dot(v, v) > 1e-12 ? normalize(v) : vec3(0.0, 0.0, 1.0); return vec4(v * 0.5 + 0.5, c.a); }
+vec4 run(ivec2 P, vec2 uv) {
+	int n = u_dir == 0 ? int(size.x) : int(size.y);
+	int i = u_dir == 0 ? P.x : P.y;
+	ivec2 Q = u_dir == 0 ? ivec2((i + n / 2) % n, P.y) : ivec2(P.x, (i + n / 2) % n);
+	float dist = min(float(i) + 0.5, float(n - i) - 0.5);
+	float ramp = clamp(2.0 * (dist - 1.0) / max(1.0, u_o - 1.0) - 1.0, -1.0, 1.0);
+	vec4 a = fet(t0, P);
+	if (ramp >= 1.0) return a;
+	vec4 b = fet(t0, Q);
+	float wa = sstep(-u_s, u_s, (fet(t1, P).r - fet(t1, Q).r) * u_k + ramp * (u_s + u_k));
+	vec4 c = mix(b, a, wa);
+	return u_normal ? renorm(c) : c;
+}",
+        ["scatter"] = @"uniform int u_grid; uniform float u_scale; uniform float u_rot; uniform float u_rrot; uniform float u_jitter; uniform int u_seed; uniform float u_soft; uniform float u_k; uniform bool u_normal;
+vec4 renorm(vec4 c) { vec3 v = c.rgb * 2.0 - 1.0; v = dot(v, v) > 1e-12 ? normalize(v) : vec3(0.0, 0.0, 1.0); return vec4(v * 0.5 + 0.5, c.a); }
+vec4 run(ivec2 P, vec2 uv) {
+	int n = u_grid; float cell = 1.0 / float(n); float sz = u_scale * cell;
+	uint salt = uint(u_seed) * 8u;
+	float lo = sz * 0.75 < 0.5 ? sz * 0.75 : 0.5; float span = 1.0 - 2.0 * lo;
+	int jq = int(floor(uv.y * float(n)));
+	vec4 acc = vec4(0.0); float wsum = 0.0;
+	for (int dj = -2; dj <= 2; dj++) {
+		int j = jq + dj;
+		float off = ((j + 4 * n) & 1) == 1 ? 0.5 * cell : 0.0;
+		int iq = int(floor((uv.x - off) * float(n)));
+		for (int di = -2; di <= 2; di++) {
+			int i = iq + di;
+			ivec2 w = ivec2((i + 4 * n) % n, (j + 4 * n) % n);
+			float cx = (float(i) + 0.5) * cell + off + (rnd(w, salt + 1u) - 0.5) * u_jitter * cell;
+			float cy = (float(j) + 0.5) * cell + (rnd(w, salt + 2u) - 0.5) * u_jitter * cell;
+			float th = u_rot + u_rrot * (2.0 * rnd(w, salt + 3u) - 1.0);
+			float cs = cos(th); float sn = sin(th);
+			float dx = uv.x - cx; float dy = uv.y - cy;
+			float lx = (cs * dx + sn * dy) / sz; float ly = (-sn * dx + cs * dy) / sz;
+			float rr = 2.0 * sqrt(lx * lx + ly * ly);
+			if (rr >= 1.5) continue;
+			vec2 su = vec2(lo + span * rnd(w, salt + 4u) + lx * sz, lo + span * rnd(w, salt + 5u) + ly * sz);
+			float m = 1.0 - sstep(1.0 - u_soft, 1.0, rr);
+			float wt = (m + 1e-4 * (1.5 - rr)) * exp(u_k * (bil(t1, su).r - 1.0));
+			vec4 c = bil(t0, su);
+			if (u_normal) {
+				float nx = c.r * 2.0 - 1.0; float ny = -(c.g * 2.0 - 1.0);
+				c = vec4((cs * nx - sn * ny) * 0.5 + 0.5, -(sn * nx + cs * ny) * 0.5 + 0.5, c.b, c.a);
+			}
+			acc += wt * c; wsum += wt;
+		}
+	}
+	if (wsum < 1e-20) return fet(t0, P);
+	vec4 r = acc / wsum;
+	return u_normal ? renorm(r) : r;
+}",
+        ["xmask"] = @"uniform int u_src; uniform vec4 u_smp; uniform float u_threshold; uniform float u_softness; uniform bool u_invert; uniform float u_value;
+uniform bool u_rgb; uniform vec4 u_tint; uniform float u_from_albedo;
+uniform float u_mh; uniform float u_ms; uniform float u_ml; uniform float u_lo; uniform float u_hi;
+float tilt(vec4 n) { vec2 v = n.rg * 2.0 - 1.0; return min(1.0, 2.0 * length(v)); }
+vec4 run(ivec2 P, vec2 uv) {
+	float m = 1.0;
+	if (u_src == 1) { m = ramp(lum(bil(t0, uv).rgb), u_threshold, u_softness); }
+	else if (u_src == 2) { m = cmask(bil(t0, uv).rgb, u_smp.rgb, u_mh, u_ms, u_ml, u_lo, u_hi); }
+	else if (u_src == 3) { m = ramp(bil(t1, uv).r, u_threshold, u_softness); }
+	else if (u_src == 4) { m = ramp(tilt(fet(t2, P)), u_threshold, u_softness); }
+	if (u_src != 0 && u_invert) m = 1.0 - m;
+	m *= u_value;
+	if (!u_rgb) return vec4(m, 1.0, 0.0, 1.0);
+	vec3 al = lin(fet(t3, P).rgb); float mx = max(al.r, max(al.g, al.b));
+	vec3 c = mix(lin(u_tint.rgb), mx > 1e-4 ? al / mx : vec3(1.0), u_from_albedo) * m;
+	return vec4(c, 1.0);
+}",
+        ["st"] = @"float L(ivec2 P, int dx, int dy) { return fet(t0, P + ivec2(dx, dy)).r; }
+vec4 run(ivec2 P, vec2 uv) {
+	float gx = 2.0 * (L(P, 1, -1) + 2.0 * L(P, 1, 0) + L(P, 1, 1) - L(P, -1, -1) - 2.0 * L(P, -1, 0) - L(P, -1, 1));
+	float gy = 2.0 * (L(P, -1, 1) + 2.0 * L(P, 0, 1) + L(P, 1, 1) - L(P, -1, -1) - 2.0 * L(P, 0, -1) - L(P, 1, -1));
+	return vec4(gx * gx, gy * gy, gx * gy, 1.0);
+}",
+        ["aniso"] = @"uniform int u_mode; uniform float u_angle; uniform bool u_along; uniform float u_coh;
+vec4 run(ivec2 P, vec2 uv) {
+	float th = u_angle; float str = 1.0;
+	if (u_mode == 0) {
+		vec4 j = bil(t0, uv);
+		float tr = j.r + j.g;
+		if (tr > 1e-6) {
+			th += 0.5 * atan(2.0 * j.b, j.r - j.g);
+			float d = sqrt((j.r - j.g) * (j.r - j.g) + 4.0 * j.b * j.b);
+			str = 1.0 + (d / tr - 1.0) * u_coh;
+		} else { str = 1.0 - u_coh; }
+	}
+	if (u_along) th += 1.5707963;
+	float fx = cos(th); float fy = -sin(th);
+	if (fx < 0.0 || (fx == 0.0 && fy < 0.0)) { fx = -fx; fy = -fy; }
+	return vec4(fx * 0.5 + 0.5, fy * 0.5 + 0.5, 0.0, clamp(str, 0.0, 1.0));
+}",
+        ["transmit"] = @"uniform int u_tint; uniform vec4 u_colour; uniform float u_sat; uniform int u_thick; uniform bool u_invert; uniform float u_contrast; uniform float u_bias;
+vec4 run(ivec2 P, vec2 uv) {
+	vec3 t = lin(u_colour.rgb);
+	if (u_tint == 0) {
+		vec3 l = lin(fet(t0, P).rgb); float y = lumlin(l);
+		l = max(vec3(0.0), mix(vec3(y), l, u_sat));
+		float mx = max(l.r, max(l.g, l.b));
+		t = mx > 1e-4 ? l / mx : vec3(1.0);
+	}
+	float th = u_thick == 0 ? fet(t1, P).r : u_thick == 1 ? fet(t2, P).r : 0.5;
+	float thin = u_invert ? th : 1.0 - th;
+	return vec4(t, clamp((thin - 0.5) * u_contrast + 0.5 + u_bias, 0.0, 1.0));
+}",
     };
 
     private const string Footer = @"

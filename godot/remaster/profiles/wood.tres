@@ -5,7 +5,7 @@
 [resource]
 script = ExtResource("1")
 Title = "Wood"
-Note = "Planks, beams, panels, bark: grain in the fine bands, medium roughness with detail. Tuned on Besaid's bolted planks (bsil00) and plank01 (bsvr00), Macalania's bark (mcfr00), lchb00_woodwall_01a, lchb00_woodboard_01."
+Note = "Planks, beams, panels, bark: grain in the fine bands, medium roughness with detail. Tuned on Besaid's bolted planks (bsil00) and plank01 (bsvr00), Macalania's bark (mcfr00), lchb00_woodwall_01a, lchb00_woodboard_01. The clearcoat is tuned but off: + map, Clearcoat for polished or varnished wood."
 Version = 3
 Delight = 0.55
 HeightContrast = 1.1
@@ -25,3 +25,5 @@ HeightBand6 = 0.6
 NormalShape = 0.1
 RoughnessDetail = 0.4
 RoughnessOverlay = 0.6
+ClearcoatAmount = 0.6
+ClearcoatRoughness = 0.25
