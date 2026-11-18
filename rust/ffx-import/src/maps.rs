@@ -58,6 +58,9 @@ pub struct Event {
     pub place_index: Option<u16>,
     /// The event script's archive path.
     pub script: String,
+    /// Its map index's `MAP1` file (`mapout.vpa`: the walk mesh, the 2D
+    /// scenes' cameras; [`crate::gamedata`]), when the archive has it.
+    pub map_file: Option<String>,
 }
 
 /// One level: a field map's level folder (with its events) or a battle stage.
@@ -285,6 +288,10 @@ impl Importer {
                 table.skipped.push(skip("no_level"));
                 continue;
             };
+            let map_file = names
+                .name(first + 2 * slot + 1)
+                .map(|n| archive_path(&n))
+                .filter(|p| self.has(p));
             let event = Event {
                 name: name.clone(),
                 map,
@@ -292,6 +299,7 @@ impl Importer {
                 entrances,
                 place_index: (place != 0).then_some(place),
                 script,
+                map_file,
             };
             if let Some(&i) = by_folder.get(&folder) {
                 table.levels[i].events.push(event);
@@ -650,6 +658,7 @@ mod tests {
             entrances: 1,
             place_index: place,
             script: String::new(),
+            map_file: None,
         };
         let lv = |key: &str, code: &str, events| Level {
             kind: "field",

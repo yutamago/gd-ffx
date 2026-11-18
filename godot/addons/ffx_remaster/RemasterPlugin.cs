@@ -177,8 +177,6 @@ public partial class RemasterPlugin : EditorPlugin
     {
         if (!Session.IsOpen)
             return "the archive is not open";
-        if (entry.Model3D == null && entry.Kind != "battle")
-            return $"{entry.Key} has no 3D model (2D layers only): nothing to edit in 3D yet";
         var path = MapEditRoot.EditScenePath(entry.Key);
         if (!ResourceLoader.Exists(path))
         {
@@ -191,8 +189,9 @@ public partial class RemasterPlugin : EditorPlugin
                 return $"cannot write {path}";
             EditorInterface.Singleton.GetResourceFilesystem().UpdateFile(path);
         }
-        // the classic import asked for now (the scene waits for it)
-        Session.Classic?.Path("map", entry.Level);
+        // the classic import asked for now (the scene waits for it; a 2D-layer map has none)
+        if (entry.Model3D != null)
+            Session.Classic?.Path("map", entry.Level);
         EditorInterface.Singleton.OpenSceneFromPath(path);
         return null;
     }

@@ -22,6 +22,13 @@ public partial class StateView3D : Node3D
     private Camera3D _camera = null!;
     private long _lookOf = -1;
     private string _lookCached = "";
+
+    /// <summary>The map captured for the editor this run (<see cref="Remaster.MapCapture"/>), the map being timed and how long it has shown.</summary>
+    private string _captured = "", _captureLevel = "";
+    private double _captureShown;
+
+    /// <summary>The parts <see cref="UpdateObjects"/> placed this frame, while a capture is due (else null).</summary>
+    private List<Remaster.MapCapture.Placed>? _capturePlaced;
     private (bool On, float None, float Full, float Gain, float Spread) _glow = (false, -1, -1, -1, -1);
     private WorldEnvironment _env = null!;
     /// <summary>Forward+'s post effect (the game's colours and glow; null under Compatibility).</summary>
@@ -243,7 +250,12 @@ public partial class StateView3D : Node3D
         _layers.Tick(view.Current, view.Current?.World.Map ?? -1, _camera.Far, cam);
         Perf.End(Perf.Section.View3D, t0);
         t0 = Perf.Start();
+        bool capture = CaptureDue(view, delta);
+        _capturePlaced = capture ? new() : null;
         UpdateObjects(view);
+        if (capture)
+            WriteCapture(view);
+        _capturePlaced = null;
         _overrides?.Update();
         LookAtObject();
         Perf.End(Perf.Section.Objects, t0);
@@ -390,14 +402,14 @@ public partial class StateView3D : Node3D
     public (int Meshes, int Moved) Morphed { get; private set; }
 
     /// <summary>How a mesh morphs (docs/importer.md, "Morphing meshes").</summary>
-    private enum MorphKind { Position, Weight, UvOffset }
+    internal enum MorphKind { Position, Weight, UvOffset }
 
     /// <summary>
     /// A morphing mesh: the instance whose weight the game sets by its <c>m_objID</c>
     /// (<c>MorphManager_setWeights</c>), its kind, the morph targets of a position morph (1:
     /// in1 - in0, weight w; 2: weights 1 - w, w) and the values last set.
     /// </summary>
-    private sealed class Morph
+    internal sealed class Morph
     {
         public required MeshInstance3D Mesh;
         public required uint ObjId;
@@ -482,7 +494,7 @@ public partial class StateView3D : Node3D
         return ((uint)id, instance);
     }
 
-    private static Morph? MorphOf(MeshInstance3D mi, Mesh mesh)
+    internal static Morph? MorphOf(MeshInstance3D mi, Mesh mesh)
     {
         var x = MeshExtras.Of(mesh);
         if ((x.AnimCt ?? 0) <= 0 || x.ObjId is not { } objId)
@@ -538,24 +550,30 @@ public partial class StateView3D : Node3D
             if (v == m.Last || !GodotObject.IsInstanceValid(m.Mesh))
                 continue;
             m.Last = v;
-            switch (m.Kind)
-            {
-                case MorphKind.Position when m.Targets == 1:
-                    m.Mesh.SetBlendShapeValue(0, v.X);
-                    break;
-                case MorphKind.Position:
-                    m.Mesh.SetBlendShapeValue(0, 1f - v.X);
-                    m.Mesh.SetBlendShapeValue(1, v.X);
-                    break;
-                case MorphKind.Weight:
-                    m.Mesh.SetInstanceShaderParameter(MorphParam, v.X);
-                    break;
-                case MorphKind.UvOffset:
-                    m.Mesh.SetInstanceShaderParameter(UvOffsetParam, v);
-                    break;
-            }
+            ApplyMorph(m, v);
         }
         Morphed = (_morphs.Count, moved);
+    }
+
+    /// <summary>Sets a morphing mesh to the game's value <paramref name="v"/> (the editor's too: the captured values).</summary>
+    internal static void ApplyMorph(Morph m, Vector2 v)
+    {
+        switch (m.Kind)
+        {
+            case MorphKind.Position when m.Targets == 1:
+                m.Mesh.SetBlendShapeValue(0, v.X);
+                break;
+            case MorphKind.Position:
+                m.Mesh.SetBlendShapeValue(0, 1f - v.X);
+                m.Mesh.SetBlendShapeValue(1, v.X);
+                break;
+            case MorphKind.Weight:
+                m.Mesh.SetInstanceShaderParameter(MorphParam, v.X);
+                break;
+            case MorphKind.UvOffset:
+                m.Mesh.SetInstanceShaderParameter(UvOffsetParam, v);
+                break;
+        }
     }
 
     /// <summary>
@@ -606,12 +624,63 @@ public partial class StateView3D : Node3D
                 }
                 // the map's overrides on top: an offset over the game's placement, a hidden part held hidden
                 var drawn = m.Drawn;
+                if (_capturePlaced != null && Remaster.PartIds.Of(node) is { } partId)
+                    _capturePlaced.Add(new Remaster.MapCapture.Placed(partId, o.Id, k, GlobalTransform.AffineInverse() * t, drawn));
                 _overrides?.Place(node, ref t, ref drawn);
                 if (t.Basis.Determinant() != 0)
                     node.GlobalTransform = t;
                 node.Visible = drawn;
                 ObjectsPlaced++;
             }
+    }
+
+    /// <summary>
+    /// Whether the shown map is to be captured for the editor now (<see cref="Remaster.MapCapture"/>):
+    /// once a run, 2 s after the map came (the scripts have placed its objects by then); a check
+    /// writes only into <c>--remaster-captures=DIR</c>, never the player's folder.
+    /// </summary>
+    private bool CaptureDue(GameStateView view, double delta)
+    {
+        if (_mapLevel != _captureLevel)
+        {
+            _captureLevel = _mapLevel;
+            _captureShown = 0;
+        }
+        _captureShown += delta;
+        return _captureShown >= 2.0 && _captured != _mapLevel && _mapLevel.StartsWith("/map/")
+            && view.Current is { } s && s.World.Level == _mapLevel
+            && Remaster.MapCapture.Writes;
+    }
+
+    /// <summary>The shown map as the game has it now, written for the editor (<see cref="Remaster.MapCapture"/>).</summary>
+    private void WriteCapture(GameStateView view)
+    {
+        _captured = _mapLevel;
+        var s = view.Current!;
+        var inv = GlobalTransform.AffineInverse();
+        var c = new Remaster.MapCapture
+        {
+            Level = _mapLevel,
+            Map = s.World.Map,
+            Entrance = s.World.Entrance,
+            Event = s.World.Event,
+            Story = s.World.Story,
+            CameraValid = s.Camera.Valid,
+            Camera = inv * GameStateView.CameraTransform(s.Camera.World),
+            FovY = s.Camera.FovY,
+            Aspect = s.Camera.Aspect,
+            Far = s.Camera.Far,
+            Parts = _capturePlaced ?? new(),
+        };
+        foreach (var o in s.Objects)
+            if (o.Dobj)
+                c.Morphs[o.Id] = new Vector2(o.Morph, o.MorphV);
+        foreach (var a in s.Actors)
+            c.Characters.Add(new Remaster.MapCapture.Character(a.Slot, a.Model, GameStateView.FieldPoint(a.Position), a.Yaw, a.Hidden,
+                a.Player, GameStateView.FieldTransform(a.World)));
+        if (c.Write())
+            GD.Print($"ffx: {Remaster.PartIds.LevelKey(_mapLevel)} captured for the editor: {c.Parts.Count} placed part(s), "
+                + $"{c.Morphs.Count} morph value(s), {c.Characters.Count} character(s) ({Remaster.MapCapture.PathOf(_mapLevel)})");
     }
 
     /// <summary>

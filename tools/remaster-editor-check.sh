@@ -25,7 +25,17 @@
 #     skipped, the next texture with the settings kept, saved; with
 #     FFX_EDITOR_SHOT=1 also OUT_DIR/materials-*.png);
 #  4. the R1a example's hand-written overrides opened in the editor, shown as
-#     edits, and saved back with the same meaning (--remaster-editor-roundtrip).
+#     edits, and saved back with the same meaning (--remaster-editor-roundtrip);
+#     R5: the alignment check on its additions and replacement, and a misplaced
+#     test box flagged.
+#  R5 (before 1): the game's --selftest-alignment on developer save 7 (the game
+#  data against the running game, the alignment check) leaves its capture of
+#  Besaid beach in OUT_DIR/captures, which every editor run reads: the editor
+#  check then shows the game's data on the beach (the walk mesh, triggers, the
+#  exit named, entrances, cameras, the birds where the game had them), checks the
+#  alignment with a misplaced box, and opens the 2D-layer map ptkl14 (its walk
+#  mesh, triggers, entrances, fixed camera against the game's: the map check on
+#  developer save 14 captures it).
 #
 #   FFX_GAME_DIR=<game> tools/remaster-editor-check.sh [OUT_DIR]
 #
@@ -42,7 +52,22 @@ tex="res://remaster/check/textures"
 rm -rf "$repo/godot/remaster/check"
 trap 'rm -rf "$repo/godot/remaster/check"' EXIT
 cd "$repo/godot"
-args=(--path . -- --remaster-editor-test --remaster-maps="$out/maps" --remaster-textures="$tex" --remaster-looks="$out/looks")
+# R5: the game's data in the running game; its capture for the editor runs below
+timeout 300 "$repo/tools/capped.sh" "$godot" --headless --path . -- --selftest-alignment --remaster-captures="$out/captures" \
+    --devsave=7 --documents="$out/docs" --selftest-timeout=150 >"$out/alignment.log" 2>&1
+align=$?
+rm -rf "$out/docs"
+grep -E '^ffx selftest: (PASS|FAIL)' "$out/alignment.log" | tail -1 || echo "ffx selftest: no result (exit $align, see $out/alignment.log)"
+[[ $align -eq 0 ]] || exit 1
+# and the game's camera on the 2D-layer map ptkl14 (developer save 14), for its fixed camera
+timeout 300 "$repo/tools/capped.sh" "$godot" --headless --path . -- --selftest-map --remaster-captures="$out/captures" \
+    --devsave=14 --documents="$out/docs" --selftest-timeout=90 >"$out/map14.log" 2>&1
+map14=$?
+rm -rf "$out/docs"
+grep -E '^ffx selftest: (PASS|FAIL)' "$out/map14.log" | tail -1 | cut -c1-200 || echo "ffx selftest: no result (exit $map14, see $out/map14.log)"
+[[ $map14 -eq 0 ]] || exit 1
+args=(--path . -- --remaster-editor-test --remaster-maps="$out/maps" --remaster-textures="$tex" --remaster-looks="$out/looks"
+    --remaster-captures="$out/captures")
 if [[ -n "${FFX_EDITOR_SHOT:-}" ]]; then
     env -u WAYLAND_DISPLAY -u DISPLAY timeout 400 "$repo/tools/capped.sh" xvfb-run -a -s "-screen 0 1600x900x24" \
         "$godot" --editor --display-driver x11 --rendering-driver opengl3 --audio-driver Dummy \
@@ -73,7 +98,7 @@ grep -E '^ffx selftest: (PASS|FAIL)' "$out/materials.log" | tail -1 || echo "ffx
 mkdir -p "$out/roundtrip/bsil00"
 cp "$repo/godot/remaster/examples/bsil00/overrides.tres" "$repo/godot/remaster/examples/bsil00/additions.tscn" "$out/roundtrip/bsil00/"
 timeout 400 "$repo/tools/capped.sh" "$godot" --headless --editor --path . -- --remaster-editor-test --remaster-editor-roundtrip \
-    --remaster-maps="$out/roundtrip" >"$out/roundtrip.log" 2>&1
+    --remaster-maps="$out/roundtrip" --remaster-captures="$out/captures" >"$out/roundtrip.log" 2>&1
 rt=$?
 grep -E '^ffx editortest: (PASS|FAIL)' "$out/roundtrip.log" | tail -1 || echo "ffx editortest: no result (exit $rt, see $out/roundtrip.log)"
 [[ $rt -eq 0 ]] || exit 1

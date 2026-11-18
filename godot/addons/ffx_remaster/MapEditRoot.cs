@@ -24,8 +24,14 @@ public sealed class PartInfo
     /// <summary>The part it hangs under in the import (null: the model).</summary>
     public PartInfo? Parent { get; init; }
 
-    /// <summary>Its transform relative to <see cref="Parent"/> in the import (the classic placement).</summary>
-    public Transform3D BaseLocal { get; init; }
+    /// <summary>
+    /// Its transform relative to <see cref="Parent"/> as the game places it: the import's (the
+    /// file's), or where the game's scripts had it in the map's capture (<see cref="GamePlaced"/>).
+    /// </summary>
+    public Transform3D BaseLocal { get; set; }
+
+    /// <summary>Placed where the game had it (the map's capture, <see cref="GameDataEdit.PlaceFromCapture"/>), not at its file place.</summary>
+    public bool GamePlaced { get; set; }
 
     /// <summary>The surfaces it has (an instance: its segments).</summary>
     public int Surfaces { get; init; }
@@ -99,8 +105,14 @@ public partial class MapEditRoot : Node3D
     /// <summary>The import's root (scaled by 10).</summary>
     public Node3D? Map { get; private set; }
 
-    /// <summary>The map's remastered lighting as nodes (R3; null until built).</summary>
+    /// <summary>The map's remastered lighting as nodes (R3; null until built, and on a 2D-layer map).</summary>
     public LightingEdit? Lighting { get; private set; }
+
+    /// <summary>The game's data on the map as read-only nodes (R5; null until built).</summary>
+    public GameDataEdit? GameData { get; private set; }
+
+    /// <summary>A map of 2D layers only: no classic 3D map (<see cref="Map"/> null), the game's data only.</summary>
+    public bool Is2D { get; private set; }
 
     /// <summary>Where added nodes without an anchor go.</summary>
     public Node3D? AdditionsGroup { get; private set; }
@@ -122,6 +134,12 @@ public partial class MapEditRoot : Node3D
     private readonly List<(MeshInstance3D Mesh, int Surface, Material? Material)> _previewMaterials = new();
     private readonly List<Node> _unowned = new();
 
+    /// <summary>Each added node's place in its anchor's frame as the file had it (a save keeps it while the scene still shows it).</summary>
+    private readonly Dictionary<Node, Transform3D> _loadedPlace = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>The place <paramref name="added"/> had in the additions file when the map opened (null: added since).</summary>
+    public Transform3D? LoadedPlace(Node added) => _loadedPlace.TryGetValue(added, out var t) ? t : null;
+
     public static string EditScenePath(string key) => $"{EditDir}/{key}.tscn";
 
     public override void _Ready()
@@ -134,7 +152,7 @@ public partial class MapEditRoot : Node3D
             RemoveChild(stale);
             stale.QueueFree();
         }
-        foreach (var name in new[] { "Additions", "Lighting", "LightingPreview", "RemasterLighting" })
+        foreach (var name in new[] { "Additions", "Lighting", "LightingPreview", "RemasterLighting", "GameData" })
             if (GetNodeOrNull(name) is { } staleAdd && staleAdd.HasMeta(EditorNode))
             {
                 RemoveChild(staleAdd);
@@ -193,6 +211,11 @@ public partial class MapEditRoot : Node3D
         }
         var classic = session.Classic!;
         session.Poll();
+        if (session.Catalogue?.Find(Level) is { Model3D: null, Kind: "field" })
+        {
+            Build2D(session);
+            return;
+        }
         if (classic.Path("map", Level) is not { } path)
         {
             Status = classic.Failed("map", Level) ? $"{Level} did not import (see the log)" : $"importing {Level}...";
@@ -217,12 +240,32 @@ public partial class MapEditRoot : Node3D
         AddChild(AdditionsGroup);
         AdditionsGroup.Owner = this;
         Map = map;
+        // the parts the game's scripts move, where the game had them (R5), before the overrides
+        var capture = MapCapture.Read(Level);
+        var (placed, morphed) = capture != null ? GameDataEdit.PlaceFromCapture(this, capture) : (0, 0);
         ApplyProject();
         Lighting = LightingEdit.Build(this);
+        GameData = GameDataEdit.Build(this, session.Game, session.Catalogue, capture, placed, morphed);
         Built = true;
         Status = $"{Key}: {Parts.Count} parts ({Time.GetTicksMsec() - t0} ms)";
         GD.Print($"ffx remaster: opened {Level} for editing: {Parts.Count} parts, {CountAdded()} added node(s), "
             + $"{Foreign.Count} entr(ies) for IDs not on the map, {UnknownAnchors} anchor(s) not on it ({Time.GetTicksMsec() - t0} ms)");
+        RemasterPlugin.Instance?.MapBuilt(this);
+    }
+
+    /// <summary>A map of 2D layers only: no 3D map to edit; the game's data (walk mesh, triggers, cameras) and the additions group.</summary>
+    private void Build2D(EditorClassic session)
+    {
+        var t0 = Time.GetTicksMsec();
+        Is2D = true;
+        AdditionsGroup = new Node3D { Name = "Additions" };
+        AdditionsGroup.SetMeta(EditorNode, true);
+        AddChild(AdditionsGroup);
+        AdditionsGroup.Owner = this;
+        GameData = GameDataEdit.Build(this, session.Game, session.Catalogue);
+        Built = true;
+        Status = $"{Key}: 2D layers only (the game's data shown; nothing 3D to edit)";
+        GD.Print($"ffx remaster: opened {Level} (2D layers only): {GameData.Describe()} ({Time.GetTicksMsec() - t0} ms)");
         RemasterPlugin.Instance?.MapBuilt(this);
     }
 
@@ -382,6 +425,7 @@ public partial class MapEditRoot : Node3D
             }
             (anchor?.Node ?? AdditionsGroup!).AddChild(added);
             added.GlobalTransform = Frame(anchor) * saved;
+            _loadedPlace[added] = saved;
             Own(added);
         }
         root.Free();

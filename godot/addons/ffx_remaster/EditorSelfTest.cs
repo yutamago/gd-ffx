@@ -34,7 +34,13 @@ public sealed class EditorSelfTest
     public static readonly Vector3 MoveBy = new(0, 20, 0);
     public static readonly Vector3 BoxAbove = new(0, 30, 0);
 
-    private enum Phase { Archive, Open, Edit, Save, Reopen, Status, Uses, Textures, Batch, Imported, Lighting, LightingReopen, Materials, MaterialsImported, Shot, Done }
+    private enum Phase { Archive, Open, Edit, Save, Reopen, Status, Uses, Textures, Batch, Imported, Lighting, LightingReopen, Materials, MaterialsImported, GameData, Shot, Map2D, Shot2D, Done }
+
+    /// <summary>R5's 2D-layer map: Kilika's inn (developer save 14).</summary>
+    public const string Key2D = "ptkl14";
+
+    /// <summary>The bird the capture places (the game flies it; the file has it at the origin).</summary>
+    public const string Bird = "#FBXASC0498_0Shape/*";
 
     /// <summary>The game's key light as the check's stand-in look says it travels (Besaid beach's, as the game shows it).</summary>
     public static readonly Vector3 LookKey = new Vector3(0.04f, -0.54f, -0.84f).Normalized();
@@ -178,6 +184,9 @@ public sealed class EditorSelfTest
                 {
                     if (RoundTrip(root) is { } rt)
                         return rt;
+                    // R5: the alignment check on the example's additions and replacement, and a misplaced test box
+                    if (AlignmentStep(root, "R1a's example") is { } al)
+                        return al;
                     Next(Phase.Done);
                     return null;
                 }
@@ -290,11 +299,42 @@ public sealed class EditorSelfTest
                     return _phaseT > 120 ? "the import did not finish" : null;
                 if (!TextureStore.AllImported(out var missing))
                     return _phaseT > 120 ? $"not imported: {missing}" : null;
-                Next(GameSettings.Arg("editor-shot") is { Length: > 0 } && DisplayServer.GetName() != "headless" ? Phase.Shot : Phase.Done);
+                Next(Phase.GameData);
+                return null;
+            }
+            case Phase.GameData:
+            {
+                if (_frames < 3)
+                    return null;
+                var root = _plugin.Current!;
+                if (GameData(root) is { } gd)
+                    return gd;
+                if (AlignmentStep(root, "the check's edits") is { } al)
+                    return al;
+                Next(Shots ? Phase.Shot : Phase.Map2D);
                 return null;
             }
             case Phase.Shot:
                 return Shot();
+            case Phase.Map2D:
+            {
+                if (_frames == 1)
+                {
+                    var e = s.Catalogue!.Find(Key2D);
+                    if (e == null)
+                        return $"no {Key2D} in the catalogue";
+                    dock.Select(e);
+                    return dock.OpenSelected();
+                }
+                if (_plugin.Current is not { Built: true } root || root.Key != Key2D)
+                    return _phaseT > 60 ? $"{Key2D} did not open ({_plugin.Current?.Status ?? "no edit scene"})" : null;
+                if (Map2D(root) is { } m2)
+                    return m2;
+                Next(Shots ? Phase.Shot2D : Phase.Done);
+                return null;
+            }
+            case Phase.Shot2D:
+                return Shot2D();
             case Phase.Done:
                 Finish(true, string.Join("; ", _seen));
                 return null;
@@ -979,10 +1019,203 @@ public sealed class EditorSelfTest
         }
         if (_frames < 40)
             return null;
-        // then the dock in front (the catalogue, the map's status, its parts with their edits)
-        var dockPath = path0.GetBaseDir().PathJoin(path0.GetFile().GetBaseName() + "-dock.png");
-        EditorInterface.Singleton.GetBaseControl().GetViewport().GetTexture().GetImage().SavePng(dockPath);
-        _seen.Add($"pictures {path0}, its -window.png and -dock.png");
+        if (_frames == 40)
+        {
+            // then the dock in front (the catalogue, the map's status, its parts with their edits)
+            var dockPath = path0.GetBaseDir().PathJoin(path0.GetFile().GetBaseName() + "-dock.png");
+            EditorInterface.Singleton.GetBaseControl().GetViewport().GetTexture().GetImage().SavePng(dockPath);
+            // R5: the game's data from above the beach, the exit off it selected (the inspector's game-data section)
+            if (root.GameData is { Data.Main: { } walk } gd)
+            {
+                var mid = walk.Vertices.Aggregate(Vector3.Zero, (a, x) => a + x) / walk.Vertices.Length;
+                cam.GlobalTransform = new Transform3D(Basis.LookingAt(-new Vector3(0, 700, 450).Normalized(), Vector3.Up), mid + new Vector3(0, 700, 450));
+                if (gd.Triggers.GetChildren().OfType<Node3D>().FirstOrDefault(n => n.HasMeta(GameDataEdit.TargetMap)) is { } exit)
+                    RemasterPlugin.Select(exit);
+            }
+            return null;
+        }
+        if (_frames < 60)
+            return null;
+        vp.GetTexture().GetImage().SavePng(path0.GetBaseDir().PathJoin("editor-gamedata.png"));
+        EditorInterface.Singleton.GetBaseControl().GetViewport().GetTexture().GetImage()
+            .SavePng(path0.GetBaseDir().PathJoin("editor-gamedata-window.png"));
+        _seen.Add($"pictures {path0}, its -window.png and -dock.png, editor-gamedata.png and -window.png");
+        Next(Phase.Map2D);
+        return null;
+    }
+
+    private static bool Shots => GameSettings.Arg("editor-shot") is { Length: > 0 } && DisplayServer.GetName() != "headless";
+
+    // ---- R5: the game's data -------------------------------------------------------------------
+
+    private static int Count(Node3D group) => group.GetChildCount();
+
+    /// <summary>Besaid beach's game data: the walk mesh, triggers (the exit to the crossroads named), entrances, actors, cameras, the capture's birds.</summary>
+    private string? GameData(MapEditRoot root)
+    {
+        if (root.GameData is not { Data: { } data } gd)
+            return "no game data on the map";
+        var walk = data.Main;
+        if (walk == null || walk.Count < 500)
+            return $"the walk mesh has {walk?.Count ?? 0} triangles (Besaid beach: 839)";
+        if (gd.WalkMeshes.GetChildCount() < 1 || gd.WalkMeshes.GetChild(0) is not MeshInstance3D { Mesh: { } wm } || wm.GetFaces().Length / 3 != walk.Count)
+            return "the walk mesh is not drawn whole";
+        int triggers = Count(gd.Triggers), entrances = Count(gd.Entrances), actors = Count(gd.Actors);
+        if (triggers < 20 || entrances < 3 || actors < 10)
+            return $"{triggers} triggers, {entrances} entrances, {actors} actor starts (too few)";
+        // the exit off the beach: a line trigger named by where it leads
+        var exit = gd.Triggers.GetChildren().OfType<Node3D>().FirstOrDefault(n => n.HasMeta(GameDataEdit.TargetMap)
+            && n.GetMeta(GameDataEdit.TargetMap).AsInt32() == 0x14);
+        if (exit == null)
+            return "no trigger leading to map 0x14";
+        var to = s_Target(exit);
+        if (!to.Contains("bsil02"))
+            return $"the exit says '{to}', not the crossroads (bsil02)";
+        // every game-data node locked, tagged, not saved
+        foreach (var n in gd.Group.FindChildren("*", "", true, false))
+            if (!n.HasMeta(MapEditRoot.EditorNode))
+                return $"{gd.Group.GetPathTo(n)} is not the editor's";
+        if (root.Added().Any(a => gd.Group.IsAncestorOf(a.Node) || a.Node == gd.Group))
+            return "game data counted as added nodes";
+        // the inspector's section for a game-data node
+        if (!new PartInspector(_plugin)._CanHandle(exit))
+            return "the inspector does not show a trigger's info";
+        // the capture: the birds where the game had them, the game's camera
+        var cap = MapCapture.Read(Level);
+        var note = "no capture";
+        if (cap != null)
+        {
+            var bird = cap.Parts.FirstOrDefault(p => p.Id == Full(Bird));
+            if (bird == null || !root.Parts.TryGetValue(Full(Bird), out var info))
+                return $"the capture has no {Bird}";
+            if (!info.GamePlaced || info.Node.GlobalTransform.Origin.DistanceTo(bird.World.Origin) > 0.05f)
+                return $"{Bird} at {info.Node.GlobalTransform.Origin}, the game had it at {bird.World.Origin}";
+            if (root.MarksOf(info) != PartMarks.None)
+                return $"{Bird} placed where the game had it shows as an edit ({root.MarksOf(info)})";
+            if (gd.Cameras.GetNodeOrNull<Camera3D>("Game") is not { } game || Mathf.Abs(game.Fov - Mathf.RadToDeg(cap.FovY)) > 0.01f)
+                return "no game camera from the capture";
+            if (gd.Characters.GetChildCount() < 1)
+                return "no characters from the capture";
+            note = $"the capture: {gd.Placed} parts where the game had them ({Bird} at {bird.World.Origin.Round()}), {gd.Morphed} morph(s), "
+                + $"the game's camera, {gd.Characters.GetChildCount()} character(s)";
+        }
+        else if (GameSettings.Arg("remaster-captures") is { Length: > 0 })
+            return $"no capture in {MapCapture.Dir} (the game's --selftest-alignment writes it)";
+        _seen.Add($"game data: walk mesh {walk.Count} triangles, {triggers} triggers (the exit '{to}'), {entrances} entrances, {actors} actor starts, "
+            + $"{Count(gd.Cameras)} camera(s); {note}");
+        return null;
+    }
+
+    private static string s_Target(Node3D n) => n.GetNodeOrNull<Label3D>("Label")?.Text ?? "";
+
+    /// <summary>
+    /// The alignment check on the open map's remade geometry as it is, then with a test box
+    /// added 8 units over a walkable triangle (as the dock adds one: one undo step): the box
+    /// flagged as blocking, every flagged triangle marked; undone after.
+    /// </summary>
+    private string? AlignmentStep(MapEditRoot root, string what)
+    {
+        if (root.GameData is not { Data.Main: { } walk } gd)
+            return "no walk mesh for the alignment check";
+        var r0 = gd.Check();
+        if (r0 == null)
+            return "the alignment check did not run";
+        // a walkable triangle away from the map's edges: the one nearest the walk mesh's middle
+        var mid = walk.Vertices.Aggregate(Vector3.Zero, (a, v) => a + v) / walk.Vertices.Length;
+        int tri = Enumerable.Range(0, walk.Count).Where(t => WalkMesh.Walkable(walk.Kind(t)))
+            .OrderBy(t => walk.Centre(t).DistanceSquaredTo(mid)).First();
+        var at = walk.Centre(tri) + Vector3.Up * 10f;
+        var box = new MeshInstance3D { Name = "MisplacedBox", Mesh = new BoxMesh { Size = new Vector3(20, 4, 20) } };
+        var v = Undo.GetHistoryUndoRedo(Undo.GetObjectHistoryId(root)).GetVersion();
+        _plugin.AddNode(root, box, null, new Transform3D(Basis.Identity, at));
+        var r1 = gd.Check();
+        if (r1 == null)
+            return "the alignment check did not run with the box";
+        var flagged = r1.Issues.Where(i => i.Source == "added MisplacedBox").ToList();
+        if (flagged.Count == 0 || flagged.Any(i => i.Kind != AlignmentKind.Blocked) || !flagged.Any(i => i.Triangle == tri))
+            return $"the misplaced box is not flagged as blocking triangle {tri}: {r1.Summary()}";
+        if (gd.AlignmentMarks.GetNodeOrNull<MeshInstance3D>("Flagged") is not { Mesh: { } marks } || marks.GetFaces().Length / 3 != r1.Issues.Count)
+            return "the flagged triangles are not marked";
+        // undone: the box gone, the check as before
+        var history = Undo.GetHistoryUndoRedo(Undo.GetObjectHistoryId(root));
+        if (history.GetVersion() != v + 1)
+            return "adding the box was not one undo step";
+        history.Undo();
+        if (box.IsInsideTree())
+            return "undo left the box";
+        var r2 = gd.Check()!;
+        if (r2.Issues.Count != r0.Issues.Count)
+            return $"after undo {r2.Issues.Count} issue(s), before the box {r0.Issues.Count}";
+        _seen.Add($"alignment on {what}: {r0.Summary()}; a box 8 units over triangle {tri}: {flagged.Count} triangle(s) blocked, marked; undone");
+        return null;
+    }
+
+    /// <summary>The 2D-layer map: no 3D map, the walk mesh, triggers, entrances, the scene's fixed camera.</summary>
+    private string? Map2D(MapEditRoot root)
+    {
+        if (!root.Is2D || root.Map != null)
+            return $"{Key2D} opened as a 3D map";
+        if (root.GameData is not { Data: { } data } gd || data.Main is not { } walk)
+            return $"{Key2D}: no game data";
+        int triggers = Count(gd.Triggers), entrances = Count(gd.Entrances);
+        if (walk.Count < 30 || entrances < 2 || triggers < 1)
+            return $"{Key2D}: walk mesh {walk.Count} triangles, {entrances} entrances, {triggers} triggers (too few)";
+        if (gd.Cameras.GetNodeOrNull<Camera3D>("Scene0") is not { } cam)
+            return $"{Key2D}: no fixed camera of scene 0";
+        // the camera looks at the room: the walk mesh's middle in front of it
+        var mid = walk.Vertices.Aggregate(Vector3.Zero, (a, x) => a + x) / walk.Vertices.Length;
+        var toMid = (mid - cam.GlobalPosition).Normalized();
+        var angle = Mathf.RadToDeg((-cam.GlobalBasis.Z).AngleTo(toMid));
+        if (angle > cam.Fov)
+            return $"{Key2D}: the scene camera looks {angle:F0}° away from the room (its field of view {cam.Fov:F0}°)";
+        // the file's camera where the game has its own (the capture of developer save 14, when there is one)
+        var vs = "";
+        if (gd.Cameras.GetNodeOrNull<Camera3D>("Game") is { } game)
+        {
+            float off = game.GlobalPosition.DistanceTo(cam.GlobalPosition);
+            float turn = Mathf.RadToDeg((-game.GlobalBasis.Z).AngleTo(-cam.GlobalBasis.Z));
+            if (off > 0.5f || turn > 0.5f || Mathf.Abs(game.Fov - cam.Fov) > 0.1f)
+                return $"{Key2D}: the scene camera is {off:F2} units and {turn:F2}° from the game's (fov {cam.Fov:F2}° against {game.Fov:F2}°)";
+            vs = $"; the game's camera {off:F2} units and {turn:F2}° from it";
+        }
+        else if (GameSettings.Arg("remaster-captures") is { Length: > 0 })
+            return $"{Key2D}: no capture with the game's camera in {MapCapture.Dir}";
+        if (_plugin.SaveMap(root) is { Ok: true })
+            return $"{Key2D}: a 2D-layer map saved edits (it has none to save)";
+        _seen.Add($"{Key2D} (2D layers only): walk mesh {walk.Count} triangles, {triggers} trigger(s), {entrances} entrances, "
+            + $"the scene camera (fov {cam.Fov:F1}°, the room {angle:F0}° off its axis{vs})");
+        return null;
+    }
+
+    /// <summary>Pictures of the 2D map's game data: from above, and through its fixed camera.</summary>
+    private string? Shot2D()
+    {
+        var root = _plugin.Current!;
+        var vp = EditorInterface.Singleton.GetEditorViewport3D(0);
+        var cam = vp.GetCamera3D();
+        var gd = root.GameData!;
+        var walk = gd.Data!.Main!;
+        var mid = walk.Vertices.Aggregate(Vector3.Zero, (a, x) => a + x) / walk.Vertices.Length;
+        if (_frames == 1)
+        {
+            var scene = gd.Cameras.GetNode<Camera3D>("Scene0");
+            cam.GlobalTransform = scene.GlobalTransform;
+            return null;
+        }
+        if (_frames < 20)
+            return null;
+        var path0 = GameSettings.Arg("editor-shot")!;
+        var dir = path0.GetBaseDir();
+        if (_frames == 20)
+        {
+            vp.GetTexture().GetImage().SavePng(dir.PathJoin($"editor-{Key2D}-camera.png"));
+            cam.GlobalTransform = new Transform3D(Basis.LookingAt(-new Vector3(0, 90, 60).Normalized(), Vector3.Up), mid + new Vector3(0, 90, 60));
+            return null;
+        }
+        if (_frames < 40)
+            return null;
+        vp.GetTexture().GetImage().SavePng(dir.PathJoin($"editor-{Key2D}.png"));
+        _seen.Add($"pictures editor-{Key2D}-camera.png, editor-{Key2D}.png");
         Next(Phase.Done);
         return null;
     }
