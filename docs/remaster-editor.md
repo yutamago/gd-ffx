@@ -1422,7 +1422,8 @@ FFX_GAME_DIR=<game> godot --headless --path . -- --selftest-sky --devsave=22    
   pictures, rebuilt (`FILE.png`), classic (`FILE-classic.png`), rebuilt again
   (`FILE-again.png`); the mean absolute difference of the rebuilt picture from
   the classic one stays under `--rebuild-max-diff` (2.5/255). Measured (Xvfb,
-  Compatibility): `ptkl14` 0.01, `slik04` 0.00, `kami01` 0.05; without the
+  Compatibility): `ptkl14` 0.01, `slik04` 0.00, `kami01` 0.05; on the GPU (the
+  Windows export, Vulkan, Forward+, Intel Arc Pro 140T) `ptkl14` 0.00; without the
   hold the moving characters and the ship's sway gave 1.75 against 1.50
   (`ptkl14`) and 19.2 against 14.1 (`slik04`) run to run.
 - `--selftest-ui-art` (`UiArtTest`): Besaid's save sphere opens the save screen

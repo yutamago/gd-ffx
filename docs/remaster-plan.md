@@ -784,6 +784,7 @@ docs/remake.md, "Rebuilt 2D rooms"; docs/architecture.md, "The 2D layers" and
 | | |
 |---|---|
 | rebuilt against classic, the picture from the game's camera, the views held at one moment (mean absolute difference, 0..255) | `ptkl14` 0.01 (5 layers), `slik04` 0.00 (25 layers, 3 scenes; it has a 3D model too), `kami01` 0.05 (22 layers, 2 scenes); rebuilt against itself 0.00 |
+| the same on the GPU (the Windows export, Vulkan, Forward+, Intel Arc Pro 140T) | `ptkl14` 0.00 (the check passes there too) |
 | the same without the hold (the game moving on between pictures) | `ptkl14` 1.75 against 1.50 rebuilt-to-rebuilt; `slik04` 19.2 against 14.1 (the ship's sway) |
 | the game's camera against the scene camera the planes were made from | 0.000 units, 0.000°, field of view 0.000° (`ptkl14`) |
 | R3's sky rule, ground kept classic as sky (level and within 30 units of the walk mesh) | `lchb00` before 11,028 units² of 74,501 (14.8 %; `lchb00_brickground_07`, 4 sky meshes), after 0 (3 sky meshes); `lchb02` (save 22) 0 and `lchb08` (save 29) 0 before and after (4 and 12 sky meshes, unchanged); `bsil00` 0, its 5 sky meshes kept |
