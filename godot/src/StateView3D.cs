@@ -148,6 +148,15 @@ public partial class StateView3D : Node3D
         AddChild(_layers);
         AddChild(new EffectView { Name = "EffectView" });
         AddChild(new EffectDrawView { Name = "EffectDrawView" });
+        AddChild(new Remaster.EffectRemakeView { Name = "EffectRemakeView" });
+        // R7: replaced music, sound effects, voice; replaced movies over the picture (under the overlay's views)
+        AddChild(new Remaster.AudioReplacementView { Name = "AudioReplacementView" });
+        if (GetParent()?.GetNodeOrNull<CanvasLayer>("Overlay") is { } overlay)
+        {
+            var movies = new Remaster.MovieView { Name = "MovieView" };
+            overlay.AddChild(movies);
+            overlay.MoveChild(movies, 0);
+        }
         var light = new DirectionalLight3D { RotationDegrees = new Vector3(-55, 30, 0), LightEnergy = 0.8f };
         AddChild(light);
         // the remastered render path's lighting (R3; off while the map draws classic)
@@ -372,6 +381,13 @@ public partial class StateView3D : Node3D
             && GameHost.Instance?.Captured != true && _mapLevel.Length > 0)
         {
             Remaster.RenderPaths.Toggle(_mapLevel);
+            GetViewport().SetInputAsHandled();
+        }
+        // R7: remade effects, replaced audio and movies on or off (everything classic)
+        else if (e is InputEventKey { Pressed: true, Echo: false } r && r.PhysicalKeycode == Remaster.Replacements.Key
+            && GameHost.Instance?.Captured != true)
+        {
+            Remaster.Replacements.Toggle();
             GetViewport().SetInputAsHandled();
         }
     }
@@ -716,8 +732,20 @@ public partial class StateView3D : Node3D
     /// <summary>A model the camera looks at (a check's close-up; null: <c>--look-at-actor</c>'s).</summary>
     public static string? LookAtModel { get; set; }
 
+    /// <summary>A point the camera looks at from 30 units on the game camera's side (a check's close-up of an effect, R7; null: none).</summary>
+    public static Vector3? LookAtPoint { get; set; }
+
     private void LookAtActor()
     {
+        if (LookAtPoint is { } at)
+        {
+            var away = _camera.GlobalPosition - at;
+            away.Y = 0;
+            away = away.LengthSquared() > 1e-6f ? away.Normalized() : Vector3.Back;
+            _camera.GlobalTransform = Transform3D.Identity.Translated(at + away * 30f + new Vector3(0, 8f, 0));
+            _camera.LookAt(at);
+            return;
+        }
         if ((LookAtModel ?? GameSettings.Arg("look-at-actor")) is not { Length: > 0 } name)
             return;
         foreach (var n in _actors.Values)

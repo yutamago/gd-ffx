@@ -308,6 +308,8 @@ public partial class GameHost : Node
         Remake.ContentResolver.WaitPending(10000);
         EffectDrawView.WaitPending(10000);
         MapLayers.WaitPending(10000);
+        // R7: the effects still being recorded for the editor written as they are
+        Remaster.EffectRecorder.FlushAll();
         // Godot objects C# let go of (materials, textures, meshes) are released by their
         // wrappers' finalizers: run them while the servers are still up. With little garbage a
         // frame there may have been no full collection since they were dropped, and finalized
@@ -427,7 +429,7 @@ public partial class GameHost : Node
         switch (e)
         {
             // gd-ffx's own keys stay Godot's (the views take them); F1 to F4 are the game's boosters
-            case InputEventKey k when k.PhysicalKeycode is FpsKey or OptionsKey or FullscreenKey or DebugKey or RemasterKey:
+            case InputEventKey k when k.PhysicalKeycode is FpsKey or OptionsKey or FullscreenKey or DebugKey or RemasterKey or Remaster.Replacements.Key:
                 break;
             // a screen of gd-ffx's own has the input: the game gets none
             case InputEventKey or InputEventMouse when Captured:

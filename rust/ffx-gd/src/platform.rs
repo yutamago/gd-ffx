@@ -308,6 +308,7 @@ impl AudioQueue {
     /// Appends one mixed block (interleaved stereo); dropped while the
     /// output does not run. Keeps at most [`AUDIO_MAX_QUEUE`] frames.
     pub fn push(&self, block: &[f32]) {
+        mix_level::note(block);
         self.push_at(block, Instant::now());
     }
 
@@ -1415,5 +1416,49 @@ mod tests {
         assert_eq!(n, 0);
         assert!(out.iter().all(|&s| s == 0.0));
         assert_eq!(q.underruns(), 0);
+    }
+}
+
+/// The game's mix level (R7: a replaced sound's classic is silent in it):
+/// the RMS of each block pushed, the last [`mix_level::KEPT`] kept.
+pub mod mix_level {
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
+
+    /// Blocks kept: half a second (1,600 frames a block at 48 kHz).
+    pub const KEPT: usize = 15;
+
+    fn blocks() -> &'static Mutex<VecDeque<f32>> {
+        static B: std::sync::OnceLock<Mutex<VecDeque<f32>>> = std::sync::OnceLock::new();
+        B.get_or_init(|| Mutex::new(VecDeque::with_capacity(KEPT)))
+    }
+
+    /// A block of the mix (interleaved stereo).
+    pub fn note(block: &[f32]) {
+        if block.is_empty() {
+            return;
+        }
+        let sum: f64 = block.iter().map(|&x| f64::from(x) * f64::from(x)).sum();
+        #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)] // a level
+        let rms = (sum / block.len() as f64).sqrt() as f32;
+        if let Ok(mut b) = blocks().lock() {
+            if b.len() >= KEPT {
+                b.pop_front();
+            }
+            b.push_back(rms);
+        }
+    }
+
+    /// The RMS over the blocks kept (0 before any).
+    #[must_use]
+    pub fn level() -> f32 {
+        let Ok(b) = blocks().lock() else { return 0.0 };
+        if b.is_empty() {
+            return 0.0;
+        }
+        let sq: f32 = b.iter().map(|x| x * x).sum();
+        #[allow(clippy::cast_precision_loss)] // at most KEPT
+        let n = b.len() as f32;
+        (sq / n).sqrt()
     }
 }

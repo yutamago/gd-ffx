@@ -908,6 +908,7 @@ dependencies = [
  "ffx-phyre",
  "ffx-scene",
  "ffx-script",
+ "ffx-sound",
  "ffx-text",
  "ffx-vbf",
  "flate2",

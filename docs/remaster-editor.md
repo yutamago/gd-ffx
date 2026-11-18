@@ -773,6 +773,82 @@ The automatic rig (`RigBuilder`):
   Elements without an attachment carry what the game binds to them on the
   remade bone mapped to them.
 
+## Effects, audio and movies
+
+R7a (docs/remaster-plan.md, "R7a in detail"). The **Media** dock has three tabs;
+every change writes its file at once and is one step of the editor's undo
+history (the file's text before and after).
+
+### Effects
+
+The game identifies its effects by who makes their draws (docs/remake.md,
+"Effects"): a map's field program (`bsil00-fp15`: Besaid beach's save sphere
+glow, entry 15 of the map's effect table) or a spell overlay (`magic-004c`).
+Each effect the game draws is recorded once a run, like R5's captures, into
+`user://remaster/effects/` (`--remaster-effects=DIR`; a check writes only
+there): `<id>.fxrec`, its draw list over its first 120 updates (4 s; at most
+400,000 vertices), positions relative to its place, with the textures' names
+and the look each draw has, and `index.json` (what it is, the map, frames,
+textures, place, when). The recordings hold the game's geometry: they stay on
+the player's machine, never in git.
+
+- **The list**: the recorded effects (id, what, frames) and the remade ones
+  the game has not recorded yet, with the remake's file.
+- **Open**: the edit scene `res://remaster/edit/effect-<id>.tscn` (not in git)
+  replays the recording under `Classic`, drawn as the game draws it (the
+  effect shaders of `EffectDrawView`, the textures from the archive), and
+  instances the remake under `Remake`, beside it (**Side by side**) or at the
+  same place. **Pause**/**Play** and the slider scrub the classic replay (30
+  frames a second); the remake runs on its own (Godot previews particles in
+  the editor).
+- **Assign scene...**: a scene of yours (particles, meshes, lights; any
+  `Node3D`) becomes the effect's remake: the convention's file
+  `res://remake/effect/<id>.tscn` is written, a `RemadeEffect` root with your
+  scene instanced under it (its options: `HideClassic`, `Follow`, `Offset`,
+  `Linger`, `Note`; docs/remake.md, "Effects"). **Classic** removes it.
+
+### Audio
+
+The game's sounds by the ids it plays them by, read from the player's copy
+(`FfxGame.classic_sounds`, `ffx-import`'s `sounds`):
+
+- **Music**: the 92 ids the game maps to tracks, named (`10`:
+  `1_09_battle_theme`);
+- **Sound effects**: 6,774 sequence numbers (US banks), each with its sample
+  (`c355`: `50005`, Besaid beach's sea);
+- **Voice**: 8,665 voice lines named by their events (`voiceidmapper.txt`).
+
+Search by id (hex) or name. **Play classic** decodes the game's sample (its
+loop points too); **Play replacement** plays yours. **Assign file...** replaces
+the selected sound by an Ogg Vorbis, WAV or MP3 file (any path: keep it in your
+project or pack) with **Loop**, **from**/**to** (seconds; 0: the file's end) and
+a volume in dB, into `res://remaster/audio/audio.tres` (a `RemasterSoundSet`);
+**Classic** gives the id back to the game.
+
+### Movies
+
+The game's movies by name (`LCI`, with the languages it has: `LCI_jp`,
+`LCI_us`; the texture videos `*_480` are left out). **Assign video...**
+replaces a movie (every language's; an entry named `LCI_us` replaces one
+language only) by an Ogg Theora `.ogv` with its sound (**Sound**: the game's,
+the video's own, a file, none) into `res://remaster/movies/movies.tres` (a
+`RemasterMovieSet`; subtitles: the entry's `Subtitles`, a SubRip `.srt`, in the
+inspector). **Preview** plays the replacement in the dock. gd-ffx does not
+draw the game's own movie pictures yet, so there is no classic preview.
+
+### Files and layers
+
+| What | The project's | A pack's | Run time (checks) |
+|---|---|---|---|
+| remade effects | `res://remake/effect/<id>.tscn` (or a `remake.json` entry, kind `effect`) | the same paths in the pack, or `res://mods/<pack>/remake.json` | `RemakeRegistry.Register`, `--effect-scene=FILE --effect-id=ID` |
+| sounds | `res://remaster/audio/audio.tres` | `res://mods/<pack>/remaster/audio/audio.tres` | `--audio-file=FILE` |
+| movies | `res://remaster/movies/movies.tres` | `res://mods/<pack>/remaster/movies/movies.tres` | `--movies-file=FILE` |
+
+A later layer wins per id (`Classic` on an entry pins the id to the game's).
+In the game, **F8** turns every replacement off and on for the run (remade
+effects, sounds and movies; `--no-replacements` starts with them off), as F7
+does the render path.
+
 ## Your work and git
 
 Replacements and generated maps are your own work products, but the ones
@@ -791,6 +867,11 @@ A character's rig (`<id>.rig.tres`) holds names, element numbers and numbers
 rests, the cloth vertices' numbers and their rest directions): your work, fine
 in a pack. The classic import with its motions (`chr-motions`) stays in the
 classic cache on the player's machine.
+
+Remade effects, sounds and movies are your own files; the editor's sets hold
+ids and paths. What is made from the game stays on the player's machine: the
+effect recordings (`user://remaster/effects/`) and the classic sounds the dock
+decodes (in memory only).
 
 The game's data in the editor is read from the player's archive each time a
 map opens and never stored; the captures (`user://remaster/captures/`) stay on
@@ -1027,6 +1108,63 @@ The pictures show the player's game: keep them out of git.
    --character-expect=DIR/expect.json --devsave=7`: docs/remake.md,
    "Retargeting").
 
+### The media check
+
+6. R7a: the game's `--selftest-effects --remaster-effects=DIR/effects
+   --devsave=7` (below: "The effect, audio and movie checks") records Besaid
+   beach's effects; `tools/make-test-movie.sh DIR/media/test.ogv 40` makes the
+   original test video (Godot's movie writer under Xvfb). The editor
+   (`--editor -- --remaster-editor-media --remaster-effects=DIR/effects
+   --remaster-effect-scenes=DIR/media/effect --remaster-audio=DIR/media/audio/audio.tres
+   --remaster-movies=DIR/media/movies/movies.tres --media-video=DIR/media/test.ogv`)
+   lists the 15 recorded effects, opens `bsil00-fp15` (120 frames, 8 draws, 2
+   textures from the archive), scrubs it to frame 60, assigns the example
+   remake (`res://remake/examples/save_sphere_sparkle.tscn`; shown beside the
+   replay with its particles), undoes it (classic), redoes it, opens it again
+   with the remake; reads the game's sounds (92 named tracks, 10:
+   `1_09_battle_theme`, 103 s decoded with its loop; 6,774 sound effects,
+   `c355` 21.7 s; 8,665 voice lines), assigns generated stand-ins to music 10
+   (loop 1 to 3 s) and the sea `c355`, undoes the sea's alone, redoes it, reads
+   them back; lists the 57 movies (`LCI` in `LCI_jp` and `LCI_us`), assigns the
+   test video to `LCI` with a subtitle file, undoes, redoes, reads it back and
+   previews it. Then the game with what it saved: `--selftest-effects
+   --effect-scene=DIR/media/effect/bsil00-fp15.tscn`, `--selftest-audio
+   --audio-file=DIR/media/audio/audio.tres` (the battle music),
+   `--selftest-movie --devsave=22 --movies-file=DIR/media/movies/movies.tres`.
+
+### The effect, audio and movie checks
+
+```bash
+cd godot
+FFX_GAME_DIR=<game> godot --headless --path . -- --selftest-effects --devsave=7 --remaster-effects=/tmp/fx
+FFX_GAME_DIR=<game> godot --headless --path . -- --selftest-audio --devsave=7
+../tools/make-test-movie.sh /tmp/test.ogv 40
+FFX_GAME_DIR=<game> godot --headless --path . -- --selftest-movie --devsave=22 --movie-video=/tmp/test.ogv
+```
+
+- `--selftest-effects`: the example registered for `bsil00-fp15`; on Besaid
+  beach every effect draw has an owner (30 of 30, 15 field programs), the remake
+  plays where the classic effect is (its draws' centre, every frame) while it
+  plays, its 8 classic draws are left out and the others still drawn; F8
+  brings the classic effect back and stops the remake, F8 again remakes it;
+  the recording is written and reads back (120 frames, 8 draws, 2 textures).
+  With `--shot=FILE.png` under a renderer: `FILE.png` and `FILE-classic.png`,
+  the camera at the save sphere.
+- `--selftest-audio`: generated stand-ins replace the sea effect `c355` on the
+  beach (the game's silenced, the game's fade-in followed; its second layer
+  `c356` and the other effects stay the game's) and every music id; in the
+  deck battle (field 3, asked for by the check) the battle music 10 is
+  replaced, the game's music volume held at 0 and its mix at 0.007 RMS against
+  0.080 with F8 (the game's music back, the stand-in stopped), 0.007 again
+  with F8 again. `--audio-file=FILE`: the editor's file, its music checked in
+  the battle.
+- `--selftest-movie`: developer save 22 (Luca) opens `LCI_jp.webm` (the voice
+  language's); the test video replaces it with a subtitle: the replacement
+  plays over the picture, advancing as the game's movie does (frames 4 to 94
+  while it went 0.37 to 3.37 s), the subtitle shows, the game's movie sound is
+  silent (the mix 0.017 RMS against 0.075 with F8, which brings the game's
+  movie back). `--movies-file=FILE`: the editor's file.
+
 ## Exports
 
 The plugin is editor only: its C# is compiled only with `TOOLS` (the
@@ -1080,6 +1218,18 @@ export that holds either (`project.godot` still names the plugin's
   the classic one (Besaid's lagoon).
 - A headless editor save prints Godot's own "Parameter "t" is null" (no
   thumbnail without a renderer).
+- Effects (R7a): only the field programs and the spell overlays have ids; the
+  battle's shared effects (`bat_eff`), the op system's records and the fixed
+  keys stay classic. The recording is one run's first 120 updates of each
+  effect; the Media dock edits the project's layer only (a pack's remakes are
+  listed, not edited).
+- Audio (R7a): a replaced sound effect plays where the game plays it, without
+  its pan; the voice browser lists the US banks; the dock's loop fields apply
+  when a file is assigned (edit them in the inspector after).
+- Movies (R7a): no classic movie picture in gd-ffx yet, so no classic preview
+  and nothing drawn for a movie without a replacement; the replacement plays at
+  its own rate (not re-synchronised to the game's frame if it drifts); the
+  subtitle file is set in the inspector.
 
 ## The code
 
@@ -1114,6 +1264,11 @@ export that holds either (`project.godot` still names the plugin's
 | `CharacterStore.cs` | the project's character scenes and rigs, held while edited |
 | `RemasterPlugin.Characters.cs` | the character actions (open, assign, map, align, positions, cloth mode, status, save; one undo step each) |
 | `CharacterEditorTest.cs` | the character check |
+| `MediaDock.cs` | the Media dock (R7a): the Effects, Audio and Movies tabs |
+| `EffectEditRoot.cs` | an effect's edit scene: the recording replayed (scrub), the remake beside it |
+| `MediaStore.cs` | where R7a's files go (the project's or a check's), their text, the recorded effects |
+| `RemasterPlugin.Media.cs` | open an effect; assign or clear an effect's remake, a sound, a movie (one undo step each) |
+| `MediaEditorTest.cs` | the media check |
 
 Game side (R2): `RemasterTexture`, `RemasterTextureSet`, `PbrRecipe` (the
 resources), `RemasterTextures` (the layers, the merge, the images and
@@ -1146,6 +1301,16 @@ automatic rig), `CharacterScene` (scene and rig files), `CharacterCatalogue`
 `CharacterTest`; `StateView3D` drives remade characters and their
 attachments, `ClothView` gives the game's cloth points and the classic cloth
 vertices.
+
+Game side (R7a, `godot/src/Remaster/`): `EffectOwners` (the ids),
+`EffectRemakeView` (the remakes in the game, the classic draws left out),
+`EffectRecorder` (the recordings), `RemadeEffect` (`godot/src/Remake/`, the
+remake's root), `RemasterSound`, `RemasterSoundSet`, `RemasterMovie`,
+`RemasterMovieSet` (the resources), `AudioReplacements` (the layers),
+`AudioReplacementView` (the sounds in the game), `MovieView` (the movies),
+`Replacements` (F8), `EffectsTest`, `AudioTest`, `MovieTest`; in the extension
+`fxowner.rs` (who made each draw) and `media.rs` (the sound commands, the
+movies); `ffx-import`'s `sounds.rs` (the game's sounds by id, decoded).
 
 Game side (R5): `MapGameData` (the archive's walk meshes, scene cameras,
 entrances and workers in render space, from `FfxGame.classic_map_game_data`),

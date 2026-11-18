@@ -129,6 +129,8 @@ fn run_game(
     crate::esc::register(&mut table);
     // the Flash screens' movies and calls, the native opening's end
     crate::flash::register(&mut table);
+    // the sounds and movies the game plays, for replacements by id (R7)
+    crate::media::register(&mut table);
     let mut exec = match ffx_host::boot_opts(&boot.exe, table, &opts) {
         Ok(e) => e,
         Err(e) => return format!("boot: {e}"),
@@ -137,6 +139,8 @@ fn run_game(
     // the effects' draws (ffx_host::vfx), drawn by EffectDrawView; FFX_NO_VFX turns it off
     if std::env::var_os("FFX_NO_VFX").is_none() {
         exec.shared().vfx.set_enabled(true);
+        // who made each draw (R7: effects by id)
+        crate::fxowner::observe(exec.shared());
     }
     // the characters' simulated hair and cloth (ffx_host::cloth), drawn by ClothView;
     // FFX_NO_CLOTH turns it off
@@ -834,6 +838,57 @@ impl FfxGame {
             .collect()
     }
 
+    /// The game's sounds of kind `kind` (`music`, `sfx`, `voice`) by the ids
+    /// it plays them by (R7's Audio browser), one line each: id, name, bank,
+    /// sample, tab-separated; `language` (`us`, `jp`) for sound effects and
+    /// voice. Empty without the archive (`classic_open`).
+    #[func]
+    fn classic_sounds(&self, kind: GString, language: GString) -> PackedStringArray {
+        classic()
+            .sounds(&kind.to_string(), &language.to_string())
+            .iter()
+            .map(|s| {
+                GString::from(format!("{}\t{}\t{}\t{}", s.id, s.name, s.bank, s.sample).as_str())
+            })
+            .collect()
+    }
+
+    /// The archive's paths containing `needle` (lower case), sorted (the
+    /// editor's movie list: `ps3data/video/`); empty without the archive.
+    #[func]
+    fn classic_list(&self, needle: GString) -> PackedStringArray {
+        classic()
+            .list(&needle.to_string())
+            .iter()
+            .map(|p| GString::from(p.as_str()))
+            .collect()
+    }
+
+    /// Sample `sample` of the archive's bank `bank` decoded: `rate`,
+    /// `channels`, `pcm` (16-bit little-endian interleaved), `loop_begin`,
+    /// `loop_end` (frames; -1 none); `found` false when it is not there.
+    #[func]
+    fn classic_sound_pcm(&self, bank: GString, sample: i64) -> VarDictionary {
+        let Some(p) = u32::try_from(sample)
+            .ok()
+            .and_then(|s| classic().sound_pcm(&bank.to_string(), s))
+        else {
+            return vdict! { "found" => false };
+        };
+        let bytes: Vec<u8> = p.samples.iter().flat_map(|v| v.to_le_bytes()).collect();
+        let (lb, le) = p
+            .looped
+            .map_or((-1, -1), |(a, b)| (i64::from(a), i64::from(b)));
+        vdict! {
+            "found" => true,
+            "rate" => i64::from(p.rate),
+            "channels" => i64::from(p.channels),
+            "pcm" => &PackedByteArray::from(bytes.as_slice()),
+            "loop_begin" => lb,
+            "loop_end" => le,
+        }
+    }
+
     /// The textures `level`'s 3D model samples and the parts drawn with
     /// each, as JSON (`{"model", "textures": [{"id", "samplers", "parts"}]}`,
     /// parts relative to the model): the remaster's where-used index
@@ -926,6 +981,142 @@ impl FfxGame {
     #[func]
     fn effect_draws_address(&self) -> i64 {
         address_len(&self.fx_held).0
+    }
+
+    /// Who made each draw of the frame that drew update `update`
+    /// (`crate::fxowner`, R7): the draw count, an owner word per draw (kind
+    /// in the top byte: 1 a map's field-program entry, 2 a spell overlay; 0
+    /// none), then per field-program owner its word, place (x, y, z as
+    /// `f32` bits, render space) and whether it sticks to an object. Empty
+    /// when that update's owners are no longer kept.
+    #[func]
+    fn effect_draw_owners(&self, update: i64) -> PackedInt32Array {
+        u32::try_from(update)
+            .ok()
+            .and_then(crate::fxowner::owners)
+            .map_or_else(PackedInt32Array::new, |o| {
+                PackedInt32Array::from(crate::fxowner::encode(&o).as_slice())
+            })
+    }
+
+    /// The sound commands the game queued since the last call
+    /// (`crate::media`, R7): eight words each: kind (0 music, 1 sound
+    /// effect, 2 voice, 3 the settings' volumes), action (1 start, 2 stop,
+    /// 3 volume, 4 fade out, 5 pause, 6 stop all, 7 other), the command,
+    /// the id, three arguments, and 1 when the game's own sound was made
+    /// silent for a replacement.
+    #[func]
+    fn audio_events(&self) -> PackedInt32Array {
+        let mut v = Vec::new();
+        for e in crate::media::take_audio() {
+            v.extend([
+                i32::from(e.kind),
+                i32::from(e.action),
+                e.cmd.cast_signed(),
+                e.id.cast_signed(),
+                e.args[0].cast_signed(),
+                e.args[1].cast_signed(),
+                e.args[2].cast_signed(),
+                i32::from(e.replaced),
+            ]);
+        }
+        PackedInt32Array::from(v.as_slice())
+    }
+
+    /// The ids of sound kind `kind` (0 music, 1 sound effects, 2 voice)
+    /// Godot plays itself: the game's own are made silent in its mix.
+    #[func]
+    fn set_audio_replaced(&self, kind: i64, ids: PackedInt32Array) {
+        if let Ok(k) = u8::try_from(kind) {
+            crate::media::set_replaced(k, ids.as_slice().iter().map(|&i| i.cast_unsigned()));
+        }
+    }
+
+    /// Every id of sound kind `kind` seen so far with its start count, as
+    /// pairs.
+    #[func]
+    fn audio_seen(&self, kind: i64) -> PackedInt32Array {
+        let all = crate::media::seen();
+        let v: Vec<i32> = usize::try_from(kind)
+            .ok()
+            .and_then(|k| all.get(k))
+            .map(|l| {
+                l.iter()
+                    .flat_map(|&(id, n)| [id.cast_signed(), n.cast_signed()])
+                    .collect()
+            })
+            .unwrap_or_default();
+        PackedInt32Array::from(v.as_slice())
+    }
+
+    /// The movies the game opened (`opened`: true) or ended since the last
+    /// call: name, path, player, looping.
+    #[func]
+    fn movie_events(&self) -> Array<VarDictionary> {
+        crate::media::take_movies()
+            .into_iter()
+            .map(|m| {
+                vdict! {
+                    "opened" => m.action == 1,
+                    "name" => m.name.as_str(),
+                    "path" => m.path.as_str(),
+                    "player" => i64::from(m.player),
+                    "looping" => m.looping,
+                }
+            })
+            .collect()
+    }
+
+    /// Where the game's movie is: playing, frame (29.97 a second), paused,
+    /// ended, the player.
+    #[func]
+    fn movie_state(&self) -> VarDictionary {
+        let s = self
+            .run
+            .as_ref()
+            .and_then(Run::shared)
+            .map(|sh| crate::media::movie_state(&sh))
+            .unwrap_or_default();
+        vdict! {
+            "playing" => s.playing,
+            "frame" => i64::from(s.frame),
+            "paused" => s.paused,
+            "ended" => s.ended,
+            "player" => i64::from(s.player),
+        }
+    }
+
+    /// The game's own mix level now: the RMS of its last half second of
+    /// blocks (0 before any; R7's checks: a replaced sound is silent in it).
+    #[func]
+    fn audio_mix_level(&self) -> f64 {
+        f64::from(crate::platform::mix_level::level())
+    }
+
+    /// The game's FMOD volumes (master, music, voice, sound effects, 0..1)
+    /// and whether the music and voice are held silent for a replacement.
+    #[func]
+    fn audio_holds(&self) -> VarDictionary {
+        let (v, music, voice) = self
+            .run
+            .as_ref()
+            .and_then(Run::shared)
+            .map(|sh| crate::media::fmod_volumes(&sh))
+            .unwrap_or_default();
+        vdict! {
+            "master" => f64::from(v[0]),
+            "music" => f64::from(v[1]),
+            "voice" => f64::from(v[2]),
+            "sfx" => f64::from(v[3]),
+            "music_held" => music,
+            "voice_held" => voice,
+        }
+    }
+
+    /// Silences the game's movie sound while a replacement plays.
+    #[func]
+    fn set_movie_muted(&self, on: bool) {
+        crate::media::set_movie_muted(on);
     }
 
     /// The characters' cloth of the frame that drew update `update` (the
