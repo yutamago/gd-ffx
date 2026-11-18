@@ -667,7 +667,8 @@ better per texture. The lit columns of the sheets, and the editor check's
 renderer), are the pictures looked at.
 
 Not in phase 3: the other maps (phase 4), regions with their own profile
-(phase 6), choosing a profile per texture automatically (R4).
+(phase 6), choosing a profile per texture automatically (R4: done, the wizard's
+classifier; docs/remaster-plan.md, "R4 in detail").
 
 ## Decisions
 
