@@ -533,9 +533,12 @@ an Intel Arc 140T (2026-11-18), at random moments after the switch (with SSAO
 or without, soft shadows or not, the lighting file or the defaults); the
 classic view never did. Under Vulkan, on the same GPU, four of four runs
 passed with no error. No GPU reset showed in Windows' logs (the device was
-lost inside the process only). So gd-ffx's renderer on Windows is Vulkan
-(`rendering/rendering_device/driver.windows`; Godot falls back to D3D12 where
-Vulkan is missing; `--rendering-driver d3d12` picks D3D12). The cause is not
+lost inside the process only). gd-ffx renders with Vulkan on Windows:
+Godot 4.7's default for `rendering/rendering_device/driver.windows` (the
+project sets nothing, so the editor's saves keep `project.godot` unchanged;
+Godot falls back to D3D12 where Vulkan is missing; `--rendering-driver d3d12`
+picks D3D12). Only `tools/compare-shot-win.sh` used D3D12 by default; it uses
+Vulkan now. The cause is not
 known: the D3D12 debug layer (Windows' optional "Graphics Tools") was not
 installed. Check D3D12 again after a Godot or driver upgrade
 (`tools/compare-shot-win.sh - OUT 7 d3d12` with

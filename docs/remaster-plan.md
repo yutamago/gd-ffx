@@ -209,8 +209,8 @@ docs/remaster-editor.md, "Lighting" to "The colour check"):
   materials: +0.003, x0.87, 2.1°); Compatibility +0.040, x0.93, 3.5°; the
   GPU (D3D12, Intel Arc 140T) +0.006, x0.89, 2.0° (PBR: +0.000, x0.87,
   2.1°), classic scoring 8.9 as on main. The remastered view lost the D3D12
-  device in six of seven runs, Vulkan none of four: Windows renders with
-  Vulkan (docs/remaster-editor.md, "D3D12 and Vulkan").
+  device in six of seven runs, Vulkan none of four; Windows renders with
+  Vulkan, Godot's default (docs/remaster-editor.md, "D3D12 and Vulkan").
 - **The game's lighting as editable objects**: `MapLighting`
   (`lighting.tres` beside the overrides; text, stable, layered per file):
   the key light, the ambient, the fog as the game's look gives them (or
@@ -246,7 +246,7 @@ docs/remaster-editor.md, "Lighting" to "The colour check"):
 Open after R3:
 
 - D3D12: the remastered view loses the device on the Intel Arc 140T (cause
-  unknown; Windows renders with Vulkan): check again after a Godot or driver
+  unknown; Windows renders with Vulkan, Godot's default): check again after a Godot or driver
   upgrade, and on other GPUs;
 - LightmapGI (lightmap UVs for the maps: an importer step);
 - the shore: the game's painted layers blend in gamma; they stay classic by
