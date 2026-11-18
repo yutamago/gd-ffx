@@ -47,7 +47,8 @@ public sealed partial class EditorSelfTest
 
         // ---- the atlas: the beach texture whose UV islands propose the most regions ----
         var cands = new List<(string Id, int Regions, int Parts, int Islands)>();
-        foreach (var id in TextureActions.OnMap(root).Keys)
+        // the game's own pixels (not R2's replaced test image, nor the textures R2's check made materials of)
+        foreach (var id in TextureActions.OnMap(root).Keys.Where(x => x != _replaced && x != _material && x != _materialOther && TextureStore.Find(x) is not { Replacement.Length: > 0 }))
         {
             if (TextureActions.Source(id) is not { } img)
                 continue;
