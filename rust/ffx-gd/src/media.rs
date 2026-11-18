@@ -335,7 +335,7 @@ fn push_command(e: &mut Exec, args: &Args) -> Ret {
                     s.music.unwrap_or(u32::MAX),
                     [a, 0, 0],
                     false,
-                ))
+                ));
             }
             // iMusicVolumeDirect(id, v, 1), iMusicVolumeTranslate(id, frames, v)
             0x23 => {
@@ -391,7 +391,7 @@ fn push_command(e: &mut Exec, args: &Args) -> Ret {
             0x36 | 0x38 => event = Some(ev(SFX, STOP, a, [0; 3], s.replaced[1].contains(&a))),
             0x37 | 0x39 => event = Some(ev(SFX, STOP_ALL, u32::MAX, [0; 3], false)),
             0x30..=0x41 => {
-                event = Some(ev(SFX, OTHER, a, [b, c, w(4)], s.replaced[1].contains(&a)))
+                event = Some(ev(SFX, OTHER, a, [b, c, w(4)], s.replaced[1].contains(&a)));
             }
             // voice: the line read, then started
             0x10 => {

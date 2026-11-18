@@ -807,6 +807,21 @@ weavers 127 and 128 (0.355 x 360 = 127.8), Tidus's feet on the floor in
 every picture. The sweep's 2D saves (14, 34, 35,
 50, 52, 56, 71, 80, 83, 108) pass with no errors.
 
+**Rebuilt in 3D (R7b).** A remade scene registered for a 2D-layer level whose
+root is a `Remaster.RebuiltRoom` (docs/remake.md, "Rebuilt 2D rooms") is built,
+once the level's layers are loaded, from them (`MapLayers.Model`), the map's game
+data, the camera's far plane and `Camera.map_pan`: each layer a plane at view
+distance 10 z from its 2D scene's fixed camera with its picture projected from
+it, the floor the walk mesh. The main camera (`GameProjection`: the 4/3
+perspective, the squeeze and pan) draws it; a point at layer pixel (x, y) and
+depth 10 z of the scene camera, unprojected with `ndc y + 1.5 map_pan`, lands on
+the screen where the layer pass puts that pixel, and at the same depth, so the
+picture is the classic one (mean absolute difference 0.00 to 0.05/255 on
+`ptkl14`, `slik04`, `kami01`, the views held at one moment). While it draws,
+`MapLayers.Hidden` keeps the layers off and the rebuilt proxies follow the
+layers' shown flags (`MapLayers.IsShown`); F7, or the render path classic,
+draws the layers instead.
+
 Not done yet: the layers' texture animation (`textureanimation.ags`, the
 `_<frame>` textures), `PhyreScene_changeLayerOffset`/`Scale` (scripts moving
 or scaling a layer), the order against the 3D world by `+0xd4` (`Layers.before_world`, now in
@@ -1335,6 +1350,20 @@ a character into a PNG (docs/importer.md). Nothing is stored.
 | `speed_2`, `speed_4`, `invincible`, `enemy_0`, `enemy_1`, `autobattle` | `BoosterView` (badges) | the boosters' icons (from `Snapshot.boosters`, "Cursors, boosters, ..." above) |
 | `autobattle_disable`, `freecamera`, `time_stop` | `BoosterView` (badges) | never shown by the original (below) |
 | `escmenu.swf`, `pausemenu.swf` | `PauseView` | "Cursors, boosters, the ESC menu and the options" above |
+
+**Replaced art and fonts (R7b).** A screen asks for each piece of art by its
+id in the movie (`Remaster.UiArt`: a `SymbolClass` name, `#<character>`,
+`@<label or frame>`); a remaster layer (`res://remaster/ui/ui.tres`, packs',
+`--ui-art-file=`) may give it an image, drawn where and as large as the classic
+piece. Asked by id: the save screen's cursor (`saveload_jp_fla.arrow_21`),
+portraits (`saveload_jp_fla.face_565@_1` .. `_8`) and thumbnails (`m<n>`), the
+booster badges' icons (`#1` of each booster movie), the opening's logo
+(`#0@34`). The text font is `MessageView.UiFont` (a `FontVariation` over the
+system's UI font, `SystemUiFont`) and the message boxes' `MessageFont` (over
+`UiFont`); a layer's font of role `ui` or `message` is put under them, the
+system's fonts behind it for the glyphs it lacks. F8 (`Replacements`) draws
+the classic art and the system font. `FfxGame.flash_symbols` lists a movie's
+characters (kind, class, frames, labels) for the editor's UI Art dock.
 
 **The start-up opening** (`openingscreen.swf`, 1920 x 1080, 263 frames at
 29.97 a second: 8.8 s). `PhyreScene_beginRenderOpeningScreen` opens it

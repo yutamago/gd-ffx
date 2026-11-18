@@ -24,7 +24,7 @@ public partial class MessageView : Control
     /// The system's UI font with fallbacks for Japanese, Korean and Chinese (the
     /// game's text in those languages); Godot's default font has no CJK glyphs.
     /// </summary>
-    public static readonly SystemFont UiFont = new()
+    public static readonly SystemFont SystemUiFont = new()
     {
         FontNames =
         [
@@ -33,6 +33,16 @@ public partial class MessageView : Control
         ],
         AllowSystemFallback = true,
     };
+
+    /// <summary>
+    /// The native screens' text font: the system's (<see cref="SystemUiFont"/>) or the one a remaster
+    /// project or pack gives the role <c>ui</c> (R7b, <see cref="Remaster.UiArt"/>), swapped under it
+    /// so every label and drawn string follows.
+    /// </summary>
+    public static readonly FontVariation UiFont = new() { BaseFont = SystemUiFont };
+
+    /// <summary>The message boxes' font: <see cref="UiFont"/>, or the role <c>message</c>'s.</summary>
+    public static readonly FontVariation MessageFont = new() { BaseFont = UiFont };
 
     /// <summary>The texts shown now (for tests).</summary>
     public List<string> Shown { get; } = new();
@@ -50,7 +60,8 @@ public partial class MessageView : Control
         MouseFilter = MouseFilterEnum.Ignore;
         // the system font found and loaded now, with the scene, not at the first message (a
         // 20 to 45 ms frame)
-        UiFont.GetStringSize("Ag", HorizontalAlignment.Left, -1, FontSize);
+        SystemUiFont.GetStringSize("Ag", HorizontalAlignment.Left, -1, FontSize);
+        Remaster.UiArt.ApplyFonts();
     }
 
     /// <summary>The ffx-text code of the API's language number (<c>TOGetFFXLang</c>).</summary>
@@ -92,6 +103,8 @@ public partial class MessageView : Control
     public override void _Process(double delta)
     {
         var t0 = Perf.Start();
+        // the fonts follow F8 and the editor's edits (nothing done when nothing changed)
+        Remaster.UiArt.ApplyFonts();
         Tick(delta);
         Perf.End(Perf.Section.Messages, t0);
     }
@@ -147,10 +160,10 @@ public partial class MessageView : Control
                 ContentMarginLeft = 18, ContentMarginRight = 18, ContentMarginTop = 10, ContentMarginBottom = 10,
             });
             var label = new Label();
-            label.AddThemeFontOverride("font", UiFont);
+            label.AddThemeFontOverride("font", MessageFont);
             label.AddThemeFontSizeOverride("font_size", FontSize);
             label.AddThemeColorOverride("font_shadow_color", new Color(0, 0, 0, 0.8f));
-            var options = new MenuList(FontSize, UiFont) { Visible = false };
+            var options = new MenuList(FontSize, MessageFont) { Visible = false };
             var box = new VBoxContainer { MouseFilter = MouseFilterEnum.Ignore };
             box.AddChild(label);
             box.AddChild(options);

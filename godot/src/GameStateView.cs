@@ -54,9 +54,18 @@ public sealed class GameStateView
 
     private long _update = -1;
 
+    /// <summary>
+    /// For the picture checks: the views keep drawing the snapshot pair and moment they have (the
+    /// game runs on underneath), so pictures taken a few frames apart show the same moment (the S.S.
+    /// Liki's sway, the characters' steps).
+    /// </summary>
+    public static bool Frozen { get; set; }
+
     /// <summary>Takes the newest snapshots from the game (decodes only when they changed).</summary>
     public void Refresh(FfxGame game)
     {
+        if (Frozen && Current != null)
+            return;
         var update = game.SnapshotUpdate;
         if (update < 0)
             return;

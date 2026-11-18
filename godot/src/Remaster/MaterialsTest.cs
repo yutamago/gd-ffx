@@ -268,6 +268,9 @@ public sealed class MaterialsTest : ITest
     /// <summary>The textures given materials from their classic pixels (<see cref="MakeMaterials"/>).</summary>
     private readonly List<string> _made = new();
 
+    /// <summary>The texture given a deliberately broken material (null: the map has too few).</summary>
+    private string? _broken;
+
     /// <summary>
     /// Physically based materials for the map's biggest colour textures (by the area of the
     /// meshes drawn with them), made from their classic pixels by the generators, as a remaster
@@ -285,7 +288,22 @@ public sealed class MaterialsTest : ITest
             area[id] = area.GetValueOrDefault(id) + b.Size.X * b.Size.Z + b.Size.X * b.Size.Y + b.Size.Y * b.Size.Z;
         }
         var t0 = Time.GetTicksMsec();
-        foreach (var id in area.OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key, System.StringComparer.Ordinal).Select(kv => kv.Key).Take(6))
+        var order = area.OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key, System.StringComparer.Ordinal).Select(kv => kv.Key).ToList();
+        // a deliberately broken material (its maps' files not there): drawn from the classic colour
+        // texture alone with a log line, not as plain metal
+        if (order.Count > 6)
+        {
+            _broken = order[6];
+            var file = $"{RemasterTextures.ShortName(_broken)}.broken.material.tres";
+            // as Godot leaves a material whose texture files are gone (with missing dependencies
+            // ignored) or were not imported yet: the maps' fields empty, the multipliers set
+            var text = "[gd_resource type=\"ORMMaterial3D\" format=3]\n\n"
+                + "[resource]\nmetallic = 1.0\nroughness = 1.0\nnormal_enabled = true\n";
+            using (var f = FileAccess.Open($"{_dir}/{file}", FileAccess.ModeFlags.Write))
+                f.StoreString(text);
+            _set.Textures.Add(new RemasterTexture { Id = _broken, Material = file, Source = "a broken material for the fallback (MaterialsTest)" });
+        }
+        foreach (var id in order.Take(6))
         {
             if (RemasterTextures.ClassicImage(id) is not { } img)
                 return $"{id}: no classic pixels";
@@ -316,6 +334,22 @@ public sealed class MaterialsTest : ITest
         if (found.Count != _made.Count)
             return $"{_made.Count - found.Count} made material(s) not drawn: {string.Join(", ", _made.Except(found))}";
         _seen.Add($"remastered with them: {found.Count} texture(s) drawn with their made materials");
+        if (_broken != null)
+        {
+            int fallback = 0, metal = 0;
+            foreach (var (_, _, m, id) in Surfaces(view.MapNode!))
+                if (id == _broken && m is ShaderMaterial sm && PartIds.GetString(sm, RemasterLook.LitTextureMeta) != null)
+                {
+                    using var mv = sm.GetShaderParameter(Variants.Name("metallic"));
+                    if (sm.Shader.Code.Contains("#define HAS_ORM") || mv.VariantType != Variant.Type.Nil && mv.AsSingle() > 0.5f)
+                        metal++;
+                    else
+                        fallback++;
+                }
+            if (fallback == 0 || metal > 0 || RemasterLook.Fallbacks == 0)
+                return $"the broken material of {RemasterTextures.ShortName(_broken)}: {fallback} surface(s) fell back, {metal} drawn as metal, {RemasterLook.Fallbacks} fallback(s) logged";
+            _seen.Add($"a broken material (its maps missing): {fallback} surface(s) of {RemasterTextures.ShortName(_broken)} drawn from the classic colour texture, none as metal, logged");
+        }
         return null;
     }
 

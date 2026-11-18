@@ -49,7 +49,7 @@ not: Godot is the renderer and the editor.
 | R5 | The game's data in the editor: walkmesh and collision, triggers, entrances and events, script-moved objects, map cameras; checks that remade geometry lines up | R1 |
 | R6 | Characters: higher-detail models, retargeting to the game's bones, skin/hair/eye shaders, cloth (the game's simulation or Godot's), faces | R1 |
 | R7a | Effects as Godot particles by effect id, audio replacement by id, movies | R1-R3 |
-| R7b | The rest: 2D rooms rebuilt in 3D, UI art | R1-R3, R5 |
+| R7b | The rest: 2D rooms rebuilt in 3D, UI art (done: R7 complete) | R1-R3, R5 |
 | R8 | Quality: before/after renders of every map, a status dashboard, regression pictures in the sweep, performance budgets (Steam Deck), the GPU checks | all |
 
 ## R1 in detail
@@ -363,7 +363,8 @@ llvmpipe, Compatibility):
   areas were labelled after the rules were frozen (41 %). The shipped prototypes
   are fitted to every label, so their number is leave one area out (55 %).
 - **"Keep classic"** for sky parts (with scrolling UVs, or facing no ground: the
-  sky rule `MapLook.FindSky` takes some of Luca's big ground textures too), the
+  sky rule `MapLook.FindSky` took some of Luca's big ground textures too, fixed in
+  R7b), the
   water's shaders, additive and soft-alpha blended textures, mostly cut-out
   textures that are not green, and tiny ones (under 32 px). Blended alone is not
   a reason: Besaid's sand is a blended terrain.
@@ -386,7 +387,7 @@ llvmpipe, Compatibility):
 - **The review renders in a viewport of its own**, after Godot imported the made
   maps: a material whose maps did not load drew as plain metal (its metallic
   multiplier alone), which first made the review's picture far darker than the
-  game's.
+  game's (since R7b such a material is drawn from its albedo, logged).
 - **The state is the project's** (`res://remaster/wizard/state.json`, IDs,
   profiles, scores, the staged entries; gitignored in gd-ffx's checkout); the
   pictures and thumbnails are the player's game (`user://remaster/wizard/`).
@@ -403,8 +404,8 @@ Open after R4:
   beyond the exposure;
 - the review's pictures need a renderer; the headless batch stages without them;
 - a discarded pass's files stay in the texture folders (no clean-up action yet);
-- MapLook's sky rule takes Luca's large ground textures as sky (they keep the
-  classic look on the remastered path): a finding for R3's rule.
+- ~~MapLook's sky rule takes Luca's large ground textures as sky~~ (R7b: on
+  `lchb00`; the rule requires a group to go round the axis).
 
 ## R5 in detail
 
@@ -494,7 +495,7 @@ Open after R5:
   sound and water bits shown, thresholds in the dock;
 - several captures per map (moments of an event), captures of maps only
   battles show;
-- the 2D layers drawn in the editor (R7).
+- ~~the 2D layers drawn in the editor (R7)~~ (R7b: in the rebuilt room).
 
 ## R6 in detail
 
@@ -724,7 +725,142 @@ Open after R7a:
 - several recordings per effect (moments, variants), effects in the where-used
   index;
 - ffx-rust's docs could take the facts found here (a field program's ppp
-  objects hang from its part; Besaid's save sphere glow is entry 15).
+  objects hang from its part; Besaid's save sphere glow is entry 15);
+- ~~the display flag `0x100` and the documented spell test in `fxowner.rs`~~ (R7b).
+
+## R7b in detail
+
+R7b, 2D rooms rebuilt in 3D and UI art, is done; with R7a, R7 is complete
+(2026-11-18; docs/remaster-editor.md, "2D rooms rebuilt in 3D", "UI art";
+docs/remake.md, "Rebuilt 2D rooms"; docs/architecture.md, "The 2D layers" and
+"The Flash screens"):
+
+- **Rebuild in 3D** (the Remaster dock, on a 2D-layer map): a remade map scene
+  (`res://remake/map/<map>.tscn`, G6's path) whose root is a `RebuiltRoom`: a
+  `RoomProxy` for each layer of each 2D scene and for the floor, a `Model` group,
+  and the editor's guides (the scene camera, R5's to 0.01 units; the walk mesh,
+  triggers, entrances), opened. The file holds references only; the layers'
+  pictures, the planes and the walk mesh come from the player's archive when it
+  opens (the editor, the game) and are kept out of it on save.
+- **The proxies**: each layer a plane over its pixel rectangle at view distance
+  10 z from its scene camera, its picture projected from the camera
+  (`ClassicMaterials.ProjectedLayerShader`, the layer shader's colour, blend,
+  depth and cut), so from the game's camera the rebuilt room is the classic
+  room; any mesh takes a layer's projection (a proxy's own mesh, or `ffx_layer`
+  on the user's), the floor is the walk mesh with the farthest layer.
+- **In the game**: the rebuilt room drawn with the game's camera and 2D window
+  (the squeeze and pan of `GameProjection`), the characters on the walk mesh as
+  on any map, the proxies following the game's 2D scene and layer flags; F7 to
+  the classic layers and back. The camera stays the game's fixed one: the game
+  has no other view of these rooms.
+- **Alignment**: R5's check on the rebuilt scene (the floor on the walk mesh: 0
+  issues on `ptkl14`; sunk 5 units: 50 of 50 floating); the picture from the
+  game's camera against the classic layers.
+- **UI art by id**: a screen asks for each piece of a Flash movie's art by its id
+  (`SymbolClass` name, `#<character>`, `@<label>`); a layer
+  (`res://remaster/ui/ui.tres`, packs', `--ui-art-file=`) gives it an image, drawn
+  at the classic piece's size; fonts by role (`ui`, `message`) under the screens'
+  `FontVariation`s, the system's behind them. The save screen (cursor, portraits,
+  thumbnails), the booster badges and the opening's logo ask by id. F8 classic.
+- **The UI Art dock**: the 19 movies, a movie's art ids (classes, labels,
+  bitmaps, the timeline) with thumbnails drawn from the player's copy in memory,
+  assign an image (every language's movie or one), classic, the UI font, a
+  preview (the piece, and the save screen's row); one undo step each.
+- **Follow-ups**: `fxowner.rs` counts display flag `0x100` with the sticking bits
+  as placed by the display record's matrix, and tests the spell's draws as
+  ffx-rust documents (the object, or its birth record's program list: object
+  `+8`, then `+0`); R3's sky rule requires a group to go round the axis (6 of 8
+  sectors), which Luca's promenade does not; a material whose maps did not load
+  is drawn from its albedo (else the classic colour texture) with a log line, not
+  as metal.
+- **Checks**: `--selftest-rebuild --devsave=14` (also 12, 52; pictures with
+  `--shot`, the GPU through `tools/compare-shot-win.sh`), `--selftest-ui-art
+  --devsave=7`, `--selftest-sky --devsave=22` (29, 7; `--sky-level=`), the
+  materials check's broken material, `tools/remaster-editor-check.sh`'s step 8
+  (the editor, then the game with its files).
+
+**Measured** (2026-11-18, Xvfb, Compatibility, the development machine):
+
+| | |
+|---|---|
+| rebuilt against classic, the picture from the game's camera, the views held at one moment (mean absolute difference, 0..255) | `ptkl14` 0.01 (5 layers), `slik04` 0.00 (25 layers, 3 scenes; it has a 3D model too), `kami01` 0.05 (22 layers, 2 scenes); rebuilt against itself 0.00 |
+| the same on the GPU (the Windows export, Vulkan, Forward+, Intel Arc Pro 140T) | `ptkl14` 0.00 (the check passes there too) |
+| the same without the hold (the game moving on between pictures) | `ptkl14` 1.75 against 1.50 rebuilt-to-rebuilt; `slik04` 19.2 against 14.1 (the ship's sway) |
+| the game's camera against the scene camera the planes were made from | 0.000 units, 0.000°, field of view 0.000° (`ptkl14`) |
+| R3's sky rule, ground kept classic as sky (level and within 30 units of the walk mesh) | `lchb00` before 11,028 units² of 74,501 (14.8 %; `lchb00_brickground_07`, 4 sky meshes), after 0 (3 sky meshes); `lchb02` (save 22) 0 and `lchb08` (save 29) 0 before and after (4 and 12 sky meshes, unchanged); `bsil00` 0, its 5 sky meshes kept |
+| Besaid's field programs' display flags | when the beach starts all 15 entries 0x0 (the save sphere's entry 15 too: at the origin, its draws at the sphere); once the player uses the save sphere (the save, UX and classifier checks), entry 15 and the sphere's entry 16 (a `bat_eff` texture) have 0x1 (stuck to a character); none with `0x100` over the quick sweep's 10 saves and the checks |
+
+### Decisions (R7b)
+
+- **References, not geometry.** A rebuilt room's file names layers by 2D scene and
+  layer id and the floor by its scene; the planes, the walk mesh, the pictures and
+  the materials are made from the player's archive each time the scene opens, as
+  R5's game-data nodes are, and stripped on save (`NotificationEditorPreSave`). A
+  mesh the user gives a proxy, or tags with `ffx_layer`, is the user's and saved.
+- **Planes at 10 z, projected.** The layer pass draws a layer at view distance 10 z
+  of the main camera; a plane there, facing the scene camera, is where the layer's
+  pixels are and as deep. The picture is projected from the scene camera onto
+  whatever mesh carries it, so moving or reshaping a proxy keeps its look from the
+  game's camera (perspective-correct, the same UVs: 0.00 to 0.05/255).
+- **The floor draws without depth, first.** From the game's camera the layers
+  cover it (the picture unchanged); from elsewhere it shows the room's floor; the
+  characters stand on it because the game walks them on the walk mesh it is made
+  of.
+- **The scene camera from the map file, `map_pan` from the game.** The file's
+  camera is R5's (the game's to 0.01 units); the map's own term of the 2D window
+  (`+0xf9c0`), which the main camera has and the layer pass not, is read in the
+  game when the room is built (0 on the maps measured) and taken as 0 in the
+  editor.
+- **F7 between the rebuilt room and the classic layers.** A rebuilt room is drawn
+  unless the render path is classic, as a remade map is drawn whatever the path;
+  F7 on it sets `classic`, then `map` (each map's own path) again.
+- **The game's camera only.** The 2D rooms have a fixed camera in the game; a
+  rebuilt room is drawn from it and no other view is offered in the game (the
+  editor's views are free).
+- **Making the scene is not an undo step**: like Godot's new scene; an existing
+  scene is opened, never overwritten.
+- **UI art by the ids the screens ask for.** The native screens draw pieces of the
+  game's movies; each piece's id is its `SymbolClass` name or character id with a
+  frame or label: stable, the movie's own. A replacement is an image drawn in the
+  classic piece's place and size (layout stays the screen's); a movie entry
+  without its language (`saveload`) covers every language's file, as R7a's movies
+  do. Fonts are replaced by role under `FontVariation`s, the system's fonts behind
+  them for the glyphs a font lacks (the game's Japanese text).
+- **Sky round the axis, not by normals.** Luca's promenade passed the reach tests;
+  the meshes' normals do not tell sky from ground (Luca's dome has all of them
+  up), so a sky group must have vertices in 6 of the 8 sectors round the vertical
+  axis (Besaid's cloud quarters, one texture, all 8).
+- **0x100 counted, the workaround kept.** No field-program entry seen has
+  `0x100`; Besaid's save sphere glow (entry 15) starts with flags 0x0 at the
+  table's origin while its draws are at the sphere, and gets the sticking bit 1
+  only once the sphere is used: before that its program places its draws itself,
+  so `EffectRemakeView`'s rule (the table place only when it is not the origin
+  and near the draws) stays; stuck or matrix-placed entries take their draws'
+  centre.
+- **The spell test as documented.** The object, or its birth record's program list
+  (object `+8`, then `+0`); before, the birth record itself was tested. ffx-rust's
+  census found the two documented tests never disagree (4,680 entries); no spell
+  was cast in gd-ffx's checks to compare the old shortcut.
+- **A broken material is drawn from its albedo.** An ORM material without its ORM
+  map (metallic 1 times nothing: plain metal), or a normal or height map switched
+  on without its texture (what Godot leaves of a material whose files are gone or
+  not imported yet; once they are imported the material is made again): logged once, drawn from its
+  albedo, else the classic colour texture.
+- **No ffx-rust change**: the layers' depths and rectangles are in the 2D import,
+  the cameras in R5's game data, the art ids in the movies (`flash_symbols`, gd-ffx's
+  extension).
+
+Open after R7b:
+
+- modelling the rooms (the user's art): the planes are the starting point;
+- the layers' texture animation and the scripts' layer moves
+  (`changeLayerOffset`/`Scale`) in a rebuilt room (as in the classic one);
+- the remaster render path for a rebuilt room's own lights (its proxies are
+  unshaded, the classic picture);
+- UI art for the autosave chocobo and the opening's chocobo and notice, per-screen
+  fonts, the Flash movies' own bitmap text;
+- a spell cast in a check, to see the documented test on gd-ffx's side;
+- a field-program entry with `0x100` (none seen; `rcbgFPmRestart`'s maps).
 
 ## Beyond the milestones
 

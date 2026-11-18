@@ -63,7 +63,7 @@ public static class MapTextures
                     Walk(c, c is Node3D c3 ? t * c3.Transform : t);
         }
         Walk(map, map is Node3D m3 ? m3.Transform : Transform3D.Identity);
-        var sky = MapLook.FindSky(meshes.Select(m => (m.Mesh, m.Box)).ToList());
+        var sky = MapLook.FindSky(meshes);
         var uses = new Dictionary<string, TextureUseInfo>();
         var counts = new Dictionary<string, (int Blend, int Alpha, int Add, int Scroll, int Morph)>();
         Aabb? box = null;

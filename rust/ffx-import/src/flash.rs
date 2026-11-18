@@ -585,6 +585,40 @@ pub struct Movie {
     pub classes: HashMap<u16, String>,
 }
 
+/// What kind of character a [`Symbol`] is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SymbolKind {
+    Shape,
+    Morph,
+    Sprite,
+    Bitmap,
+}
+
+impl SymbolKind {
+    /// Its name in lists (`shape`, `morph`, `sprite`, `bitmap`).
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Shape => "shape",
+            Self::Morph => "morph",
+            Self::Sprite => "sprite",
+            Self::Bitmap => "bitmap",
+        }
+    }
+}
+
+/// One character of a movie ([`Movie::symbols`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Symbol {
+    pub id: u16,
+    pub kind: SymbolKind,
+    /// Its `SymbolClass` name, empty for none.
+    pub class: String,
+    pub frames: u32,
+    /// A sprite's frame labels and their frames (1-based).
+    pub labels: Vec<(String, u32)>,
+}
+
 /// Why a movie could not be read.
 #[derive(Debug)]
 pub struct Error(pub String);
@@ -925,6 +959,39 @@ impl Movie {
             let child = own.saturating_sub(i.placed) + 1;
             self.bounds_into(i.id, child, i.ratio, &m.then(&i.matrix), b, nesting + 1);
         }
+    }
+
+    /// Every character the movie defines, by id: its kind, its `SymbolClass`
+    /// name (empty for none), its frames and its frame labels (sorted by
+    /// frame), for listing a movie's art (the remaster's UI art browser).
+    #[must_use]
+    pub fn symbols(&self) -> Vec<Symbol> {
+        let mut v: Vec<Symbol> = self
+            .chars
+            .iter()
+            .map(|(&id, c)| {
+                let (kind, labels) = match c {
+                    Character::Shape(_) => (SymbolKind::Shape, Vec::new()),
+                    Character::Morph(_) => (SymbolKind::Morph, Vec::new()),
+                    Character::Bitmap(_) => (SymbolKind::Bitmap, Vec::new()),
+                    Character::Sprite(s) => {
+                        let mut l: Vec<(String, u32)> =
+                            s.labels.iter().map(|(k, &f)| (k.clone(), f)).collect();
+                        l.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+                        (SymbolKind::Sprite, l)
+                    }
+                };
+                Symbol {
+                    id,
+                    kind,
+                    class: self.classes.get(&id).cloned().unwrap_or_default(),
+                    frames: self.frames(id),
+                    labels,
+                }
+            })
+            .collect();
+        v.sort_unstable_by_key(|s| s.id);
+        v
     }
 
     /// The bitmaps' ids, in order.
@@ -1459,6 +1526,56 @@ pub fn png(img: &Image) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn symbols_list_kinds_classes_and_labels() {
+        let mut labels = HashMap::new();
+        labels.insert("_2".to_string(), 2);
+        labels.insert("_1".to_string(), 1);
+        let mut chars = HashMap::new();
+        chars.insert(
+            7,
+            Character::Bitmap(Image {
+                width: 1,
+                height: 1,
+                rgba: vec![0, 0, 0, 255],
+            }),
+        );
+        chars.insert(
+            3,
+            Character::Sprite(SpriteDef {
+                frames: vec![Vec::new(), Vec::new()],
+                labels,
+            }),
+        );
+        let mut classes = HashMap::new();
+        classes.insert(3, "face".to_string());
+        let m = Movie {
+            width: 10.0,
+            height: 10.0,
+            fps: 30.0,
+            chars,
+            root: SpriteDef {
+                frames: vec![Vec::new()],
+                labels: HashMap::new(),
+            },
+            classes,
+        };
+        let s = m.symbols();
+        assert_eq!(s.len(), 2);
+        assert_eq!(
+            (s[0].id, s[0].kind, s[0].class.as_str(), s[0].frames),
+            (3, SymbolKind::Sprite, "face", 2)
+        );
+        assert_eq!(
+            s[0].labels,
+            vec![("_1".to_string(), 1), ("_2".to_string(), 2)]
+        );
+        assert_eq!(
+            (s[1].id, s[1].kind.name(), s[1].class.as_str()),
+            (7, "bitmap", "")
+        );
+    }
 
     #[test]
     fn matrices_compose_and_invert() {

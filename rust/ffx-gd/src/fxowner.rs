@@ -16,10 +16,18 @@
 //!   first word (`pppCreatePObject`, ffx-vfx's part.rs). The owner is the
 //!   entry: stable, the table is the map file's.
 //! - **A spell overlay** (`magic_<id>.dll`): the object, or its birth
-//!   record (`+8`), lies inside the overlay's image (`g_MagicFile_Handle`
-//!   `0x00c64cac` up to its `SizeOfImage`; effects-draw.md, "Which draws are
-//!   the spell's"). The owner is the spell (`g_MagicFile_MagicId`,
-//!   `0x00c64ca0`).
+//!   record's program list (object `+8`, then `+0`), lies inside the
+//!   overlay's image (`g_MagicFile_Handle` `0x00c64cac` up to its
+//!   `SizeOfImage`; effects-draw.md, "Which draws are the spell's": the two
+//!   tests never disagreed there). The owner is the spell
+//!   (`g_MagicFile_MagicId`, `0x00c64ca0`).
+//!
+//! A field-program entry is placed by its table position unless its display
+//! record (`g_FpDisp`) sets any of the low four bits (stuck to a character,
+//! map or object) or `0x100` (`rcbgFPmRestart`, `rcbgFPmStartList`): then
+//! the display record's matrix (`+0xc`) places it (effects-draw.md, "Which
+//! field program"); such an entry counts as stuck here (its draws tell its
+//! place).
 //!
 //! Other draws (the battle's shared effects, the op system's records, fixed
 //! keys) have no owner yet (0).
@@ -42,9 +50,13 @@ const FP_DATA: u32 = 0x00d2_c258;
 const FP_RUN: u32 = 0x00d2_c260;
 const FP_RUN_SIZE: u32 = 0x80;
 /// `g_FpDisp`: one 0x4c-byte display record per entry (`+0` flags: 0x10
-/// hidden, the low four bits the sticking to a character or object).
+/// hidden, the low four bits the sticking to a character or object, 0x100
+/// placed by the record's matrix at `+0xc`).
 const FP_DISP: u32 = 0x00d3_0260;
 const FP_DISP_SIZE: u32 = 0x4c;
+/// The display flags that put an entry at the display record's matrix
+/// instead of its table position: the sticking bits and `0x100`.
+pub const PLACED_BY_MATRIX: u32 = 0x10f;
 /// A part's object list head.
 const PART_OBJECTS: u32 = 0x30;
 /// `g_MagicFile_MagicId`, `g_MagicFile_Handle`.
@@ -73,8 +85,10 @@ pub struct Owners {
     /// One owner word per draw, in the frame's order (0: none).
     pub draws: Vec<u32>,
     /// Each field-program owner's place in render space (the entry's
-    /// position, `(-x, -y, z)`), and whether the entry sticks to a
-    /// character or object (its draws then tell its place better).
+    /// position, `(-x, -y, z)`), and its display flags (`g_FpDisp + 0`):
+    /// with any of [`PLACED_BY_MATRIX`] the entry is stuck to a character or
+    /// object or placed by the display record's matrix (its draws then tell
+    /// its place better).
     pub places: Places,
 }
 
@@ -107,8 +121,8 @@ impl Mem {
     }
 }
 
-/// Each field-program owner's place and stuck flag ([`Owners::places`]).
-type Places = Vec<(u32, [f32; 3], bool)>;
+/// Each field-program owner's place and display flags ([`Owners::places`]).
+type Places = Vec<(u32, [f32; 3], u32)>;
 
 /// The objects of each running field-program entry: object address ->
 /// entry index; and each entry's place.
@@ -139,8 +153,8 @@ fn field_objects(m: &Mem) -> (HashMap<u32, u32>, Places) {
                 -m.f32(entry + 4).unwrap_or(0.0),
                 m.f32(entry + 8).unwrap_or(0.0),
             ];
-            let stuck = m.u32(FP_DISP + FP_DISP_SIZE * i).unwrap_or(0) & 0xf != 0;
-            places.push((owner(KIND_FIELD, i), p, stuck));
+            let flags = m.u32(FP_DISP + FP_DISP_SIZE * i).unwrap_or(0);
+            places.push((owner(KIND_FIELD, i), p, flags));
         }
     }
     (objects, places)
@@ -179,7 +193,9 @@ fn resolve(m: &Mem, frame: &ffx_host::vfx::Frame) -> Owners {
             }
             if let Some((lo, end, id)) = magic {
                 let inside = |a: u32| a >= lo && a < end;
-                if inside(hi) || m.u32(hi.wrapping_add(8)).is_some_and(inside) {
+                // the object, or its birth record's program list (`+8`, `+0`)
+                let list = m.u32(hi.wrapping_add(8)).and_then(|birth| m.u32(birth));
+                if inside(hi) || list.is_some_and(inside) {
                     return owner(KIND_MAGIC, id);
                 }
             }
@@ -237,16 +253,16 @@ pub fn observe(shared: &Arc<Shared>) {
 }
 
 /// [`Owners`] as one array of words: the draw count, the owner of each draw,
-/// then per place its owner, x, y, z (`f32` bits) and the stuck flag.
+/// then per place its owner, x, y, z (`f32` bits) and the display flags.
 #[must_use]
 pub fn encode(o: &Owners) -> Vec<i32> {
     let mut v = Vec::with_capacity(1 + o.draws.len() + 5 * o.places.len());
     v.push(i32::try_from(o.draws.len()).unwrap_or(i32::MAX));
     v.extend(o.draws.iter().map(|&w| w.cast_signed()));
-    for &(w, p, stuck) in &o.places {
+    for &(w, p, flags) in &o.places {
         v.push(w.cast_signed());
         v.extend(p.iter().map(|f| f.to_bits().cast_signed()));
-        v.push(i32::from(stuck));
+        v.push(flags.cast_signed());
     }
     v
 }
@@ -262,13 +278,19 @@ mod tests {
         let o = Owners {
             update: 5,
             draws: vec![0, owner(KIND_FIELD, 3)],
-            places: vec![(owner(KIND_FIELD, 3), [1.0, -2.0, 3.5], true)],
+            places: vec![(owner(KIND_FIELD, 3), [1.0, -2.0, 3.5], 0x100)],
         };
         let v = encode(&o);
         assert_eq!(v[0], 2);
         assert_eq!(v[2], 0x0100_0003);
         assert_eq!(v[3], 0x0100_0003);
         assert_eq!(f32::from_bits(v[5].cast_unsigned()), -2.0);
-        assert_eq!(v[7], 1);
+        assert_eq!(v[7], 0x100);
+        assert_ne!(0x100 & PLACED_BY_MATRIX, 0);
+        assert_eq!(
+            0x10 & PLACED_BY_MATRIX,
+            0,
+            "hidden is not placed by the matrix"
+        );
     }
 }

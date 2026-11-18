@@ -19,18 +19,31 @@ public static class EffectOwners
 {
     public const uint KindField = 1, KindMagic = 2;
 
-    /// <summary>One frame's owners: one word per draw, and the field programs' places (render space) and stuck flags.</summary>
+    /// <summary>
+    /// The display flags (<c>g_FpDisp + 0</c>) that put a field-program entry at the display
+    /// record's matrix (<c>+0xc</c>) instead of its table position: the sticking bits (1, 2, 4,
+    /// 8) and <c>0x100</c> (ffx-rust's docs/formats/effects-draw.md, "Which field program").
+    /// </summary>
+    public const uint PlacedByMatrix = 0x10f;
+
+    /// <summary>
+    /// One frame's owners: one word per draw, and the field programs' places (render space),
+    /// whether each is stuck or placed by its display record's matrix (<see cref="PlacedByMatrix"/>:
+    /// its table position is not where it draws) and its display flags.
+    /// </summary>
     public sealed class Frame
     {
         public uint[] Draws = [];
         public int Count;
         public readonly Dictionary<uint, (Vector3 Place, bool Stuck)> Places = new();
+        public readonly Dictionary<uint, uint> Flags = new();
     }
 
     /// <summary>Decodes the extension's array into <paramref name="into"/>; false when it is empty.</summary>
     public static bool Decode(int[] v, Frame into)
     {
         into.Places.Clear();
+        into.Flags.Clear();
         into.Count = 0;
         if (v.Length == 0)
             return false;
@@ -45,7 +58,9 @@ public static class EffectOwners
         for (int at = 1 + n; at + 4 < v.Length; at += 5)
         {
             static float F(int bits) => System.BitConverter.Int32BitsToSingle(bits);
-            into.Places[(uint)v[at]] = (new Vector3(F(v[at + 1]), F(v[at + 2]), F(v[at + 3])), v[at + 4] != 0);
+            uint flags = (uint)v[at + 4];
+            into.Places[(uint)v[at]] = (new Vector3(F(v[at + 1]), F(v[at + 2]), F(v[at + 3])), (flags & PlacedByMatrix) != 0);
+            into.Flags[(uint)v[at]] = flags;
         }
         return true;
     }
