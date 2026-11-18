@@ -67,6 +67,7 @@ public sealed class CharacterTest : ITest
     private Quaternion? _hoodLast;
     private float _hoodStep, _hoodTurn, _hoodTurnSum, _tailRest, _tailStep;
     private Transform3D? _tailLast;
+    private readonly List<float> _tailAngles = new();
     private Vector3? _hipsFirst;
     private float _hipsMoved;
     private Skeleton3D? _springSkel;
@@ -399,7 +400,9 @@ public sealed class CharacterTest : ITest
             return;
         var rel = _springSkel.GetBoneGlobalPose(head).AffineInverse() * _springSkel.GetBoneGlobalPose(tail);
         var rest = _springSkel.GetBoneGlobalRest(head).AffineInverse() * _springSkel.GetBoneGlobalRest(tail);
-        _tailRest = Math.Max(_tailRest, Mathf.RadToDeg(rest.Basis.GetRotationQuaternion().AngleTo(rel.Basis.GetRotationQuaternion())));
+        float fromRest = Mathf.RadToDeg(rest.Basis.GetRotationQuaternion().AngleTo(rel.Basis.GetRotationQuaternion()));
+        _tailRest = Math.Max(_tailRest, fromRest);
+        _tailAngles.Add(fromRest);
         if (_tailLast is { } last)
         {
             float step = Mathf.RadToDeg(last.Basis.GetRotationQuaternion().AngleTo(rel.Basis.GetRotationQuaternion()));
@@ -548,6 +551,11 @@ public sealed class CharacterTest : ITest
         _seen.Add($"the hood turned by the game's cloth in {_clothFrames} frame(s) (from its skinned pose up to {_hoodTurn:F1}°, mean {_hoodTurnSum / Math.Max(1, _clothFrames):F1}°), "
             + $"moving {_hoodMoved:F1}° in all, at most {_hoodStep:F2}° a frame; the ponytail on Godot's spring bones moving {_tailMoved:F1}° in all "
             + $"(at most {_tailStep:F2}° a frame, {_tailRest:F1}° from its rest at most; {_springFrames} updates)");
+        if (_tailAngles.Count > 0)
+        {
+            var sorted = _tailAngles.OrderBy(x => x).ToList();
+            _seen.Add($"the ponytail from its rest: median {sorted[sorted.Count / 2]:F1}°, 95 % under {sorted[(int)(sorted.Count * 0.95)]:F1}°, mean {sorted.Average():F1}°");
+        }
         _seen.Add($"the face table driven in {_faceFrames} frame(s) ({_faceMismatch} off): the jaw {_jawMin:F2}..{_jawMax:F2}°, mouth_open {_outMin:F2}..{_outMax:F2}");
         if (_maxAngle > AngleTolerance)
             return $"a remade bone points {_maxAngle:F2}° away from the game's (tolerance {AngleTolerance}°): {_worstBone}";
@@ -561,8 +569,11 @@ public sealed class CharacterTest : ITest
             return $"the game's cloth turned the hood {_hoodTurn:F1}° from its skinned pose (the cloth points do not follow the chain)";
         if (_springFrames == 0 || _tailMoved < 0.5f)
             return $"the ponytail did not move on Godot's spring bones ({_springFrames} updates, {_tailMoved:F2}°)";
-        if (_tailRest > 90f)
-            return $"the ponytail swung {_tailRest:F1}° from its rest (the spring bones are unstable)";
+        // stable: swinging with the walk (a flipping simulation is half a turn off most of the time);
+        // a turn about of the character swings it further for a moment
+        var tail = _tailAngles.OrderBy(x => x).ToList();
+        if (tail.Count > 0 && tail[(int)(tail.Count * 0.95)] > 60f)
+            return $"the ponytail hung more than 60° from its rest in over 5 % of the frames (the spring bones are unstable)";
         if (_faceFrames == 0 || _faceMismatch > 0)
             return $"the face table was not driven ({_faceFrames} frames, {_faceMismatch} off)";
         return null;

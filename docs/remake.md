@@ -463,8 +463,9 @@ at most, mean 0.013°); with every mapped bone on the game's joint, each joint
 within 0.05 units (0.0000); the remade hips walking (48 units); the hood
 turned by the game's cloth (Tidus's segment model 0, piece 0; up to 59° from
 its skinned pose, mean 30°, moving every frame), the ponytail moved by Godot's
-spring bones (read after Godot's modifiers ran) and not swinging past 90° from
-its rest; the face table driven every frame (the blend shape set to the row's
+spring bones (read after Godot's modifiers ran) and stable: 95 % of the frames
+under 60° from its rest (measured: median 27°, 95 % under 34°, swinging 25° to
+33° with the walk, about 50° as Tidus turns about, 71° once); the face table driven every frame (the blend shape set to the row's
 output; on the beach Tidus does not talk, so the jaw stays shut) and a jaw
 opened 5° by hand opening `mouth_open` to 0.71; the material presets loaded.
 With `--battle=3,0,0` it runs in the deck battle instead of walking: the
