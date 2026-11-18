@@ -46,7 +46,14 @@ public static class RemasterTextures
     /// <summary>Bumped on every change (a register, an invalidate): views compare it to refresh.</summary>
     public static int Version { get; private set; }
 
-    public static bool Disabled => GameSettings.Flag("no-overrides") || GameSettings.Flag("no-textures");
+    public static bool Disabled => Suspended || GameSettings.Flag("no-overrides") || GameSettings.Flag("no-textures");
+
+    /// <summary>
+    /// No replacement bound while set (R8's renders: the "before" picture is the classic map, the
+    /// project's textures left out); set it, <see cref="Invalidate"/>, load or <see cref="Refresh"/>,
+    /// then clear it and invalidate again.
+    /// </summary>
+    public static bool Suspended { get; set; }
 
     /// <summary>The project's index (<see cref="BaseDir"/>; the editor's store may point it elsewhere for its check).</summary>
     public static string ProjectIndex { get; set; } = $"{BaseDir}/{FileName}";

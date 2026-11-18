@@ -61,6 +61,16 @@ public sealed class GameStateView
     /// </summary>
     public static bool Frozen { get; set; }
 
+    /// <summary>
+    /// The sweep's regression pictures (R8, <c>--hold-shot</c>): held at the current snapshot itself
+    /// (no interpolation towards it), so two runs held at the same update draw the same moment.
+    /// </summary>
+    public void HoldAtCurrent()
+    {
+        Frozen = true;
+        Alpha = 1f;
+    }
+
     /// <summary>Takes the newest snapshots from the game (decodes only when they changed).</summary>
     public void Refresh(FfxGame game)
     {

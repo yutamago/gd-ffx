@@ -61,6 +61,10 @@ public partial class DebugView : Control
         // --no-overlay: start hidden (screenshots for comparison)
         if (GameSettings.Flag("no-overlay"))
             Visible = false;
+        // --overrides-layer=LEVEL=FILE: an overrides file as the last layer of a map for this run (R8: the
+        // sweep's regression pictures shown a deliberate change, R1a's example on /map/bsil/bsil00/)
+        if (GameSettings.Arg("overrides-layer") is { } layer && layer.IndexOf('=') is var eq and > 0)
+            Remaster.RemasterOverrides.Register(layer[..eq], layer[(eq + 1)..], "command-line");
         var timeout = GameSettings.Number("selftest-timeout", 300);
         if (GameSettings.Flag("selftest"))
             _test = new SelfTest(timeout);
@@ -725,8 +729,32 @@ public sealed class MapTest(double timeout, string? shot) : ITest
         }
         if (shot != null && DisplayServer.GetName() != "headless")
         {
-            view.GetTree().Root.GetViewport().GetTexture().GetImage().SavePng(shot);
-            GD.Print($"ffx selftest: picture {shot}");
+            // R8, the sweep's regression pictures: held at one game update (--hold-update=U, the
+            // baseline's; else 150 updates, 5 s, after this point) so moving characters, the sea
+            // and effects show the same moment in every run
+            if ((GameSettings.Flag("hold-shot") || GameSettings.Arg("hold-update") != null) && Hold(game, v, c) is { } wait)
+                return wait ? null : Done(false, $"the hold: {_holdNote}");
+            if (!_fullShot)
+            {
+                view.GetTree().Root.GetViewport().GetTexture().GetImage().SavePng(shot);
+                GD.Print($"ffx selftest: picture {shot}{(_holdNote.Length > 0 ? $" ({_holdNote})" : "")}");
+                _fullShot = true;
+                // held: then the map without its characters (NAME-map.png), a few frames later
+                if (_heldSince >= 0)
+                {
+                    StateView3D.HideCharacters = true;
+                    _heldSince = _total;
+                    return null;
+                }
+            }
+            else
+            {
+                var map = shot[..^4] + "-map.png";
+                view.GetTree().Root.GetViewport().GetTexture().GetImage().SavePng(map);
+                GD.Print($"ffx selftest: picture {map} (the map without its characters, {_holdNote})");
+                StateView3D.HideCharacters = false;
+            }
+            GameStateView.Frozen = false;
         }
         return Done(true, $"{(c.World.Battle ? "battle" : "field")} {c.World.Level} (map {c.World.Map:x}): {view.Posed.Models} models "
             + $"({view.Posed.PosedBones} bones), {view.ObjectsPlaced} objects ({view.ObjectsUnmatched} without a mesh), {view.Morphed.Meshes} morphing ({view.Morphed.Moved} with a weight), {fx?.Shown.Draws ?? 0} effect draws "
@@ -744,6 +772,45 @@ public sealed class MapTest(double timeout, string? shot) : ITest
         var note = $"characters drawn {c.Actors.Count(GameStateView.Drawn)}/{c.Actors.Count}";
         return skipped.Count == 0 ? note
             : note + $" ({skipped.Count} culled or skipped by the game: {string.Join(" ", skipped.Select(a => $"{a.Model}#{a.Slot}(flags2 {a.Flags2:x})"))})";
+    }
+
+    private long _holdAt = -1;
+    private bool _slowed, _fullShot;
+    private double _heldSince = -1;
+    private string _holdNote = "";
+
+    /// <summary>
+    /// The picture's hold (<c>--hold-shot</c>, <c>--hold-update=U</c>): waits for game update U (the
+    /// baseline's, else 150 updates from now), then holds the views at that update's snapshot
+    /// (<see cref="GameStateView.HoldAtCurrent"/>) and lets half a second draw. True: wait; null:
+    /// take the picture; false: U never came. The last 30 updates before U run at a quarter of the
+    /// game's speed (ffx-host's clock), so the views see every update and hold at U itself.
+    /// </summary>
+    private bool? Hold(FfxGame game, GameStateView v, Snapshot c)
+    {
+        if (_heldSince >= 0)
+            return _total - _heldSince < 0.5 ? true : null;
+        if (_holdAt < 0)
+            _holdAt = long.TryParse(GameSettings.Arg("hold-update"), out var u) ? u : c.Update + 150;
+        if (c.Update < _holdAt)
+        {
+            if (c.Update >= _holdAt - 30 && !_slowed)
+            {
+                _slowed = true;
+                game.SetSpeed(0.25);
+            }
+            if (_total < timeout - 15)
+                return true;
+            _holdNote = $"update {_holdAt} not reached (at {c.Update})";
+            return false;
+        }
+        v.HoldAtCurrent();
+        if (_slowed)
+            game.SetSpeed(UserSettings.Current.Speed);
+        _heldSince = _total;
+        _holdNote = $"held at update {c.Update}" + (c.Update > _holdAt + 2 ? $", {c.Update - _holdAt} after the {_holdAt} asked for: another moment" : "");
+        GD.Print($"ffx selftest: hold: {_holdNote}");
+        return true;
     }
 
     private Key[] _heldKeys = [];

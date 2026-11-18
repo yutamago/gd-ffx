@@ -18,7 +18,10 @@ sounds and movies: `docs/remake.md` ("Effects"), `docs/remaster-editor.md`
 sound effects, voice and movies"); F8 turns them off and on. R7b's 2D rooms
 rebuilt in 3D and UI art by id: `docs/remake.md` ("Rebuilt 2D rooms"),
 `docs/remaster-editor.md` ("2D rooms rebuilt in 3D", "UI art"); F7 compares
-a rebuilt room with the classic layers, F8 the UI art.
+a rebuilt room with the classic layers, F8 the UI art. R8's quality tools:
+`docs/remaster-editor.md` ("Before/after renders", "The status dashboard"),
+`docs/running.md` ("Regression pictures", "Budgets", "The GPU checks"),
+`docs/building.md` ("Privacy and the quick gates").
 
 ## Rules
 
@@ -33,6 +36,11 @@ a rebuilt room with the classic layers, F8 the UI art.
   machine is "PC2" in docs.
 - Push only to github.com/yutamago/gd-ffx (public since 2026-11-16:
   everything pushed is published). Never `git push --all`, never force-push main.
+- Before every push: `tools/check-all.sh` (the privacy check, `dotnet build`
+  0 warnings, clippy, the no-game self-checks; with `FFX_GAME_DIR` the
+  start-up and Besaid). `tools/check-privacy.py` alone in a second: no home
+  folder, user name or e-mail address in tracked files (docs/building.md,
+  "Privacy and the quick gates").
 - Changes gd-ffx needs in ffx-rust: a branch in its own worktree, a PR on
   ffx-rust, reviewed, merged; keep its gates green (fmt, clippy
   `-D warnings` in both ffx-host feature sets, ffx-host tests,
@@ -56,6 +64,11 @@ tools/build-extension.sh [linux|windows] [build|clippy|test]
 FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/selftest.sh    # headless check (start-up opening natively, snapshots, Start)
 FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/sweep-devsaves.sh   # the map check on 10 saves covering every kind of map (`all`: all 110, for importer/shader/loading changes and releases)
 FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/bench.sh [besaid besaid-walk lchb battle battle-cloth]  # G5: frame times, views' CPU, GC, hitches (docs/running.md "Benchmark")
+FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/sweep-devsaves.sh --pictures   # R8: the sweep's regression pictures under Xvfb, held at one update, against ~/.cache/gd-ffx/sweep-baseline (`tools/sweep-devsaves.sh accept` takes the last run as the baseline)
+FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/budget.sh [windows|linux] [besaid ...]  # R8: budgets classic/remastered at the Deck preset and desktop (Windows export on the GPU; linux: llvmpipe, no verdict); the dashboard's table
+FFX_GAME_DIR=~/steam-games/FFX-X2-HD [FFX_REF_BESAID=REF.bmp] tools/gpu-checks.sh [OUT_DIR]   # R8: the GPU checks in one go on the Windows export (classic score, lighting colour, materialize, character, rebuild 14, effects), a summary table
+tools/check-all.sh                                         # R8: the quick gates before a push (privacy, dotnet 0 warnings, clippy, no-game self-checks; FFX_GAME_DIR: start-up, Besaid)
+python3 -I tools/check-privacy.py                          # R8: no home folder, user name or e-mail of anyone in the tracked files
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-besaid --check-autosave --devsave=7)  # G4: a real autosave read back by the save list
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-besaid --devsave=7)   # G2 check; G5: the walk's map change held, no stand-ins (--transition-shots=DIR under Xvfb); Tidus's cloth placed and moving
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-remake --devsave=7)  # G6: a remade c001 posed by the game
@@ -88,7 +101,9 @@ FFX_GAME_DIR=... tools/remaster-wizard-check.sh [OUT_DIR]   # R4: the wizard in 
 # any check: --check-flash (every Flash movie the game opened/showed has a native screen); --flash-log
 FFX_GAME_DIR=... tools/ux-shots.sh OUT_DIR                 # G5: offscreen pictures of the native screens (Xvfb)
 FFX_GAME_DIR=... FFX_SHOT_TEST="--selftest-overrides --selftest-timeout=90 [--no-overrides]" tools/compare-shot.sh - OUT_DIR  # R1: the overrides' after (before) picture
-FFX_GAME_DIR=... tools/remaster-editor-check.sh [OUT_DIR]   # R1/R2/R3/R2b/R5/R6/R7a/R7b/R4: the editor plugin headless on Besaid beach (open, move, hide, remove, replace, add, undo, save, reopen, status; where-used, a replaced texture, materials by a starter profile, render path remastered; lighting; the Materials tab: queue, steps, a drag, latency, import, skip, switch, save, undo; profiles, exceptions, Apply to queue (cancel, undo), a changed profile made again, an R2-era entry, a pack's profile; phases 4 to 6: the added maps, the seam tool, shortcuts, picks, In map, regions within one texture (UV islands, colour, by hand, two profiles, the composite's borders) and ComfyUI (upscale, AI maps) through a fake server; `--materials-only --materials-phase6` runs phase 6 alone; the game's data, the birds from the game's capture, the alignment check; the 2D-layer map ptkl14), then the game on save 7 with what it saved and with its textures, then R1a's example round trip, then R6's characters (the list, c001 with its motions, the stand-in assigned, auto-mapped, one bone by hand, save, undo/redo, reopen; the game with that rig), then R7a's Media dock (the recorded effects, a remake assigned, the sounds named and decoded, stand-ins, a movie replaced; undo/redo, reopen; the game with its files), then R7b (Rebuild in 3D on ptkl14: references only, alignment, built, saved; the UI Art dock: list, assign, undo/redo, preview; the game with them) (FFX_EDITOR_SHOT=1: under Xvfb, pictures); rm OUT_DIR after
+FFX_GAME_DIR=... tools/remaster-editor-check.sh [OUT_DIR]   # R1/R2/R3/R2b/R5/R6/R7a/R7b/R4: the editor plugin headless on Besaid beach (open, move, hide, remove, replace, add, undo, save, reopen, status; where-used, a replaced texture, materials by a starter profile, render path remastered; lighting; the Materials tab: queue, steps, a drag, latency, import, skip, switch, save, undo; profiles, exceptions, Apply to queue (cancel, undo), a changed profile made again, an R2-era entry, a pack's profile; phases 4 to 6: the added maps, the seam tool, shortcuts, picks, In map, regions within one texture (UV islands, colour, by hand, two profiles, the composite's borders) and ComfyUI (upscale, AI maps) through a fake server; `--materials-only --materials-phase6` runs phase 6 alone; the game's data, the birds from the game's capture, the alignment check; the 2D-layer map ptkl14), then the game on save 7 with what it saved and with its textures, then R1a's example round trip, then R6's characters (the list, c001 with its motions, the stand-in assigned, auto-mapped, one bone by hand, save, undo/redo, reopen; the game with that rig), then R7a's Media dock (the recorded effects, a remake assigned, the sounds named and decoded, stand-ins, a movie replaced; undo/redo, reopen; the game with its files), then R7b (Rebuild in 3D on ptkl14: references only, alignment, built, saved; the UI Art dock: list, assign, undo/redo, preview; the game with them), then R8 (the renders batch on bsil00, ptkl14, slik08 under Xvfb and again: kept; the status dashboard's counts, thumbnails, filters, a budgets fixture; the HTML report and its links) (FFX_EDITOR_SHOT=1: under Xvfb, pictures); rm OUT_DIR after
+(cd godot && FFX_GAME_DIR=... xvfb-run -a godot --editor --display-driver x11 --rendering-driver opengl3 --audio-driver Dummy --path . -- --remaster-renders --maps=a,b|changed|all [--renders-dir=DIR] [--renders-resume])  # R8: before/after renders of maps (offscreen, resumable; user://remaster/renders), the colour check per map
+FFX_GAME_DIR=... tools/remaster-report.sh OUT_DIR [-- EDITOR_ARGS]   # R8: the status dashboard as an HTML report with the renders' pictures (outside git), its links checked
 (cd rust && cargo run --release -p ffx-import -- gamedata bsil00)   # R5: a map's game data as JSON (walk meshes, scene cameras, entrances, workers): reading aid, keep out of git
 (cd godot && godot --headless --path . -- --selftest-saves --no-game)  # G4: the save list reader (no game)
 (cd godot && godot --headless --path . -- --selftest-mods --no-game)   # G6: mod packs, load order, registry, overrides layered over packs (no game)

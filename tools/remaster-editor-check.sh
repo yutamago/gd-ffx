@@ -53,6 +53,9 @@
 #     portrait assigned, undo/redo, the preview), then the game with what it saved: the rebuilt room on
 #     developer save 14 (--selftest-rebuild --rebuild-scene), the UI art on the save screen
 #     (--selftest-ui-art --ui-art-file, F8).
+#  9. R8: the before/after renders (--remaster-renders under Xvfb on bsil00, ptkl14 and slik08, then
+#     again: kept), the status dashboard (--remaster-editor-status: the counts against the files, a
+#     thumbnail, the pictures, filters, a budgets fixture), the HTML report and its links.
 #  7. R4: the remaster wizard (tools/remaster-wizard-check.sh OUT_DIR: Besaid beach's pass staged,
 #     reviewed, accepted, undone and redone in the editor under Xvfb; the game with it; a batch paused
 #     and resumed across editor sessions; the classifier's accuracy on its labelled set).
@@ -78,7 +81,8 @@ mkdir -p "$out/maps"
 out="$(cd "$out" && pwd)"
 tex="res://remaster/check/textures"
 rm -rf "$repo/godot/remaster/check"
-trap 'rm -rf "$repo/godot/remaster/check"' EXIT
+# FFX_EDITOR_KEEP_CHECK=1: the check's project folders kept at the end (to run a step again by hand; remove them after)
+[[ "${FFX_EDITOR_KEEP_CHECK:-0}" == 1 ]] || trap 'rm -rf "$repo/godot/remaster/check"' EXIT
 cd "$repo/godot"
 # R5: the game's data in the running game; its capture for the editor runs below
 timeout 300 "$repo/tools/capped.sh" "$godot" --headless --path . -- --selftest-alignment --remaster-captures="$out/captures" \
@@ -212,6 +216,43 @@ ug=$?
 rm -rf "$out/docs"
 grep -E '^ffx selftest: (PASS|FAIL)' "$out/ui-art-game.log" | tail -1 | cut -c1-300 || echo "ffx selftest: no result (exit $ug, see $out/ui-art-game.log)"
 [[ $ug -eq 0 ]] || exit 1
+# 9. R8: the before/after renders and the status dashboard, over what the steps above saved. The renders
+#    batch (--remaster-renders, the editor under Xvfb: a renderer is needed) on bsil00 (the check's edits,
+#    textures, materials and lighting), ptkl14 (step 8's rebuilt room) and slik08 (untouched) into
+#    OUT_DIR/renders, run again (every map kept: resumable); the dashboard (--remaster-editor-status,
+#    headless) against the files and a budgets table made by tools/compare/budget.py from synthetic
+#    records (no game data); then the HTML report (tools/remaster-report.sh) and its links.
+status_args=(--remaster-maps="$out/maps" --remaster-textures="$tex" --remaster-looks="$out/looks" --remaster-captures="$out/captures"
+    --remaster-effect-scenes="$out/media/effect" --remaster-audio="$out/media/audio/audio.tres" --remaster-movies="$out/media/movies/movies.tres"
+    --remaster-rooms=res://remaster/check/rooms --remaster-ui-art="$out/ui/ui.tres" --remaster-characters="$out/characters"
+    --renders-dir="$out/renders" --remaster-budgets="$out/budgets")
+for pass in 1 2; do
+    env -u WAYLAND_DISPLAY -u DISPLAY timeout 900 "$repo/tools/capped.sh" xvfb-run -a -s "-screen 0 1600x900x24" \
+        "$godot" --editor --display-driver x11 --rendering-driver opengl3 --audio-driver Dummy --path . -- \
+        --remaster-renders --maps=bsil00,ptkl14,slik08 "${status_args[@]}" >"$out/renders-$pass.log" 2>&1
+    rr=$?
+    grep -E '^ffx remaster: renders: [a-z0-9]+: ' "$out/renders-$pass.log" | cut -c1-260
+    grep -E '^ffx renders: (DONE|FAIL)' "$out/renders-$pass.log" | tail -1 || echo "ffx renders: no result (exit $rr, see $out/renders-$pass.log)"
+    [[ $rr -eq 0 ]] || exit 1
+done
+grep -q '^ffx renders: DONE 0 drawn, 3 kept' "$out/renders-2.log" || { echo "the second renders run drew maps again (see $out/renders-2.log)"; exit 1; }
+mkdir -p "$out/budgets" "$out/budget-records"
+python3 -I - "$out/budget-records" <<'PY'
+import json, sys
+base = {"key": "bsil00", "level": "/map/bsil/bsil00/", "gi": "None", "adapter": "check fixture (synthetic)", "width": 1280, "height": 800,
+        "gpu_ms": 0, "gpu_p99_ms": 0, "frame_p99_ms": 9.0, "texture_mib": 400.0, "video_mib": 900.0, "draw_calls": 600}
+recs = [dict(base, preset="deck", path="classic", frame_ms=5.0), dict(base, preset="desktop", path="remastered", width=1920, height=1080, frame_ms=21.0)]
+for i, r in enumerate(recs):
+    json.dump(r, open(f"{sys.argv[1]}/r{i}.json", "w"))
+PY
+python3 -I "$repo/tools/compare/budget.py" "$out/budgets/fixture.json" "$out"/budget-records/*.json >"$out/budget-fixture.txt" 2>&1
+[[ $? -eq 1 ]] || { echo "budget.py: the fixture's desktop run (21 ms) is not over budget (see $out/budget-fixture.txt)"; exit 1; }
+timeout 400 "$repo/tools/capped.sh" "$godot" --headless --editor --path . -- --remaster-editor-status "${status_args[@]}" \
+    --status-report="$out/report-editor" >"$out/status.log" 2>&1
+st=$?
+grep -E '^ffx editortest: (PASS|FAIL)' "$out/status.log" | tail -1 | cut -c1-900 || echo "ffx editortest: no result (exit $st, see $out/status.log)"
+[[ $st -eq 0 ]] || exit 1
+"$repo/tools/remaster-report.sh" "$out/report" -- "${status_args[@]}" || exit 1
 # 7. R4: the remaster wizard (tools/remaster-wizard-check.sh: the editor under Xvfb, the game with what
 #    it accepted, a batch paused and resumed across editor sessions, the classifier's accuracy)
 "$repo/tools/remaster-wizard-check.sh" "$out" || exit 1

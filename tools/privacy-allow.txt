@@ -1,0 +1,5 @@
+# tools/check-privacy.py's allow-list: GLOB TEXT per line, a match whose text is
+# TEXT (case-insensitive) in a file whose path matches GLOB is fine. For the
+# docs and tools that describe the rule; never a real path or address.
+# (Placeholders such as /home/<name>/ and generic folders such as /home/runner/
+# pass without an entry.)
