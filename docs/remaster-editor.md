@@ -410,7 +410,13 @@ dock's **Render**):
 
 - its parts draw under Godot's lit pipeline (`RemasterLook`, `MapLook`): the
   texture's PBR material, or its colour texture (the replacement or the
-  classic one) as a plain rough surface. The lit material keeps what the
+  classic one) as a plain rough surface; a material whose maps did not load
+  (a file gone or not imported yet: an ORM material without its ORM map, a
+  normal or height map switched on without its texture, a texture file it names
+  that is not there) is drawn from its albedo alone, else the classic colour
+  texture, with one log line (`ffx: materials: <id>: ... has maps that did not
+  load (orm, normal): drawn from ... only`), never as plain metal (R7b; the
+  materials check's broken material). The lit material keeps what the
   classic one does the game's way: blend, cull and depth modes, the alpha
   test, the UV set, the scrolling UVs (clouds), the morphs the game drives.
   The game's vertex colours hold baked light and tint (128 neutral): the
@@ -418,8 +424,10 @@ dock's **Render**):
   lights (all of it by default);
 - the sky keeps the classic look: sky domes (`m_DObjKind` 1) and, after
   ffx-remix's R-45 rule, the parts grouped by texture that reach 1,000 units
-  from the vertical axis, centred on it and rising above the ground (Besaid's
-  four scrolling cloud quarters), unless the map's lighting hides them for a
+  from the vertical axis, centred on it, rising above the ground and going round
+  it (their vertices in 6 of the 8 sectors about it: Besaid's four scrolling
+  cloud quarters; not Luca's harbour promenade, `lchb00_brickground_07`, which
+  reaches as far along one side), unless the map's lighting hides them for a
   sky of Godot's; water, 2D layers and characters keep their classic
   shaders, and so do the map's blended parts (the game's painted layers: wet
   sand, shallow water, shading) unless the lighting says `BlendedParts = Lit`;
@@ -880,6 +888,94 @@ In the game, **F8** turns every replacement off and on for the run (remade
 effects, sounds and movies; `--no-replacements` starts with them off), as F7
 does the render path.
 
+## 2D rooms rebuilt in 3D
+
+R7b (docs/remaster-plan.md, "R7b in detail"). A 2D-layer map (painted layers
+and a fixed camera: `ptkl14`, `slik04`, `kami01`, the 146 maps with a 2D model)
+opens read-only with its game data (R5). **Rebuild in 3D** (the Remaster
+dock's game-data row) makes it a remade map scene, the starting point for
+modelling the room:
+
+```
+ptkl14                   RebuiltRoom (Level /map/ptkl/ptkl14/)
+├── Layers
+│   ├── Scene0Layer0     RoomProxy (Layer, scene 0, layer 0): a plane at the layer's depth, its picture projected
+│   └── ...              one a layer of every 2D scene
+├── Floor                RoomProxy (Floor): the walk mesh, the scene's farthest layer projected on it
+├── Model                your geometry (render space, the game's units)
+└── Guides               the editor's (not saved): Scene0Camera, WalkMesh, Triggers, Entrances
+```
+
+- **The scene** is written to `res://remake/map/<map>.tscn` (G6's convention:
+  the game draws it for the level; a pack's or a `remake.json` entry works as
+  for any remade map) and opened. An existing one is opened, never
+  overwritten; making it is not an undo step (like Godot's own new scene),
+  editing it is Godot's.
+- **References only.** The file holds the proxies (kind, 2D scene, layer,
+  transform, a mesh of yours if you give one one) and your nodes. The layers'
+  pictures, the planes, the walk mesh and the materials are made from the
+  player's archive when the scene opens (in the editor and in the game) and
+  kept out of the file when it is saved (`NotificationEditorPreSave`).
+- **The camera** is the 2D scene's fixed camera from the map file (R5's: the
+  game's to 0.01 units on `ptkl14` and `slik04`), as `Guides/Scene0Camera`:
+  select it and tick **Preview** to see the room as the game shows it.
+- **The layers**: each a plane over its pixel rectangle at view distance 10 z
+  (the depth the layer pass draws it at, inside the far plane) facing the
+  camera, with the layer's picture projected from the scene camera
+  (`ClassicMaterials.ProjectedLayerShader`: the layer shader's colour, blend,
+  depth write and cut, the UVs from where a point falls on the layer camera's
+  512 x 448 screen). Move a plane, give a proxy your own mesh, or tag any mesh
+  of yours with the metadata `ffx_layer` = `"scene:layer"`: from the game's
+  camera it still shows the layer where it covers it; from elsewhere it shows
+  the shape. The planes carry `ffx_alignment_skip` (backdrops).
+- **The floor**: the walk mesh's walkable triangles with the farthest layer
+  projected (drawn first, no depth write: from the game's camera the layers
+  cover it).
+- **Alignment**: R5's check works on it as on any remade map scene (**Check
+  scene...** on the 2D map, or the game's `--selftest-rebuild`): the floor is
+  the walk mesh (0 issues on `ptkl14`); geometry you model is judged against
+  the walk mesh.
+
+The game draws the scene with its own camera and 2D window (the squeeze and
+the pan); the camera of these rooms is fixed and stays the game's (there is no
+other view to switch to). F7 compares it with the classic layers.
+
+## UI art
+
+R7b. The native screens draw art from the game's Flash movies (docs/
+architecture.md, "The Flash screens"). The **UI Art** dock:
+
+- **The movies**: the 19 in the archive (`saveload_jp.swf`, `box.swf`, ...),
+  the replaced pieces counted.
+- **A movie's art**, by the ids the screens ask for: the `SymbolClass` names
+  (`saveload_jp_fla.arrow_21`, the thumbnails `m0`..), each label of a sprite
+  (`saveload_jp_fla.face_565@_1`: Tidus's portrait), the bitmaps without a
+  class (`#1`: a booster's icon), the main timeline (`#0@34`: the opening's
+  logo), each with a thumbnail drawn from the player's movie (in memory, never
+  saved), and the image replacing it.
+- **Assign image...**: a PNG, WebP or JPEG drawn where the piece is drawn, at
+  its size, for every language's movie (`saveload` covers `_jp`, `_kr`, `_ch`;
+  untick **every language** for this file only); **Classic** gives it back.
+- **UI font...**: the screens' text font (role `ui`; the system's fonts stay
+  behind it for the glyphs it lacks), **System font** back. The role `message`
+  (the message boxes) is set in the file (`Fonts`); it follows `ui` otherwise.
+- **The preview**: the selected piece classic and replaced, and for the save
+  screen one of its rows as the screen lays it out (cursor, portraits,
+  thumbnail) with the replacements.
+
+Each change writes `res://remaster/ui/ui.tres` (a `RemasterUiArtSet`: `Art`
+entries of movie, art id, image, note; `Fonts` of role and file) and is one
+undo step. The images are yours (keep them in your project or pack). Drawn
+replaced today: the save and load screen (cursor, portraits, thumbnails), the
+booster badges' icons, the opening's logo; the other pieces (the autosave
+chocobo, the opening's chocobo) keep their art until their screens ask by id.
+
+| What | The project's | A pack's | Run time (checks) |
+|---|---|---|---|
+| UI art and fonts | `res://remaster/ui/ui.tres` | `res://mods/<pack>/remaster/ui/ui.tres` | `--ui-art-file=FILE` |
+
+F8 in the game turns them off and on with R7a's replacements.
+
 ## The remaster wizard
 
 R4 (docs/remaster-plan.md, "R4 in detail"). The **Wizard** dock makes a first
@@ -1281,6 +1377,67 @@ The pictures show the player's game: keep them out of git.
    the next (`--remaster-wizard --wizard-pause-after=1`, then `--wizard-resume`),
    and the classifier's accuracy (`--selftest-wizard-classifier`, below).
 
+### The rooms and UI art check
+
+8. R7b (`--editor -- --remaster-editor-rooms --remaster-rooms=res://remaster/check/rooms
+   --remaster-ui-art=DIR/ui/ui.tres`; the rooms in the project so the editor
+   opens them, gitignored, removed at the end): **Rebuild in 3D** on `ptkl14`
+   (opened with its game data): the scene written with references only (no mesh,
+   picture or material), R5's alignment check on it (50 of 50 walk-mesh
+   triangles covered by the floor, 0 floating, 0 blocked), opened and built (5
+   planes for 5 layers, each corner on its layer's pixel at 10 z from the scene
+   camera, the floor the walk mesh's 50 triangles, the scene camera the file's
+   and 0.000 units, 0.000° from the game's in the capture, the walk mesh, 2
+   triggers and 2 entrances as guides), a box of the user's tagged with the
+   farthest layer and projected, the scene saved (the proxies, the box and its
+   tag; no plane, picture or material) and still built; then the **UI Art**
+   dock: 19 movies, `saveload_jp.swf`'s 1,794 art ids (913 drawing something,
+   with thumbnails), a generated image assigned to the cursor for every
+   language's movie, undone, redone, a second to Tidus's portrait, the preview's
+   save row drawing both replaced; `DIR/ui/expect.txt` names them. Then the game
+   with what it saved: `--selftest-rebuild --rebuild-scene=res://remaster/check/rooms/ptkl14.tscn
+   --devsave=14` and `--selftest-ui-art --ui-art-file=DIR/ui/ui.tres
+   --ui-art-expect=DIR/ui/expect.txt --devsave=7` (below).
+
+### The rooms and UI art checks in the game
+
+```bash
+cd godot
+FFX_GAME_DIR=<game> godot --headless --path . -- --selftest-rebuild --devsave=14     # also 12 (slik04), 52 (kami01)
+FFX_GAME_DIR=<game> FFX_SHOT_TEST="--selftest-rebuild --selftest-timeout=200" ../tools/compare-shot.sh - OUT_DIR 14   # the pictures (Xvfb)
+FFX_GAME_DIR=<game> FFX_SHOT_TEST="--selftest-rebuild --selftest-timeout=200" ../tools/compare-shot-win.sh - OUT_DIR 14   # the GPU (Windows export)
+FFX_GAME_DIR=<game> godot --headless --path . -- --selftest-ui-art --devsave=7 [--ui-font=FILE.ttf] [--shot-dir=DIR]
+FFX_GAME_DIR=<game> godot --headless --path . -- --selftest-sky --devsave=22         # R3's sky rule: 29, 7; --sky-level=/map/lchb/lchb00/
+```
+
+- `--selftest-rebuild` (`RebuildTest`): on a 2D-layer map, once its classic
+  layers show, a rebuilt room is made from them as **Rebuild in 3D** makes it
+  (or the editor's, `--rebuild-scene=FILE`), registered for the level and the
+  map loaded again: the rebuilt scene drawn instead of the layers, a plane for
+  each layer and the floor, the proxies shown as the game shows its layers, the
+  game's camera on the scene camera (0.000 units, 0.000°, field of view 0.000°
+  off on `ptkl14`), the player and the shown characters on the walk mesh (4 of
+  4), the alignment check on the scene (0 issues; the floor sunk 5 units: 50
+  floating), F7 to the classic layers and back. With `--shot=FILE.png` under a
+  renderer the views held at one moment (`GameStateView.Frozen`) for three
+  pictures, rebuilt (`FILE.png`), classic (`FILE-classic.png`), rebuilt again
+  (`FILE-again.png`); the mean absolute difference of the rebuilt picture from
+  the classic one stays under `--rebuild-max-diff` (2.5/255). Measured (Xvfb,
+  Compatibility): `ptkl14` 0.01, `slik04` 0.00, `kami01` 0.05; without the
+  hold the moving characters and the ship's sway gave 1.75 against 1.50
+  (`ptkl14`) and 19.2 against 14.1 (`slik04`) run to run.
+- `--selftest-ui-art` (`UiArtTest`): Besaid's save sphere opens the save screen
+  (a file saved first when the list has none: its row has the portraits); a
+  layer of generated images (original) replaces the cursor and Tidus's portrait
+  for every language's movie (`--ui-font=FILE`: the `ui` font too); the screen
+  draws them at the classic pieces' sizes and the rest classic, F8 draws all of
+  it classic with the system font, F8 again the replacements; cancel closes it.
+  `--ui-art-file=FILE --ui-art-expect=FILE`: the editor's layer.
+- `--selftest-sky` (`SkyTest`): the map drawn remastered and the meshes R3's
+  sky rule keeps classic measured: their area and the ground among it (level
+  and within 30 units of the walk mesh). Fails when more than 1 % of the map's
+  ground is kept as sky, or Besaid loses its cloud quarters.
+
 ### The effect, audio and movie checks
 
 ```bash
@@ -1354,7 +1511,10 @@ export that holds either (`project.godot` still names the plugin's
   it edits the project's layer only.
 - No thumbnails in the browser.
 - 2D-layer maps (the painted rooms) open with the game's data only (their
-  layers are not drawn in the editor); remade maps' own scenes are not
+  layers are drawn in the room **Rebuild in 3D** makes, not in the map's edit
+  scene); a rebuilt room's layers are planes at their depths (modelling them is
+  yours); the layers' texture animation and the scripts' layer moves
+  (`changeLayerOffset`/`Scale`) are not followed; remade maps' own scenes are not
   opened (the editor always shows the classic import; overrides on a remade
   map's tagged nodes are made by hand; the alignment check takes one with
   **Check scene...**).
@@ -1408,6 +1568,10 @@ export that holds either (`project.godot` still names the plugin's
   a map the game has not shown here has no look (the lighting's defaults, a sky
   without the game's colours); a discarded pass's files stay in the texture
   folders.
+- UI art (R7b): the save screen, the booster badges and the opening's logo
+  draw replacements; the autosave chocobo, the opening's chocobo and notice keep
+  their art; the dock's preview mocks the save screen's row only; a font is
+  given by role (`ui`, `message`), not per screen.
 - Movies (R7a): no classic movie picture in gd-ffx yet, so no classic preview
   and nothing drawn for a movie without a replacement; the replacement plays at
   its own rate (not re-synchronised to the game's frame if it drifts); the
@@ -1461,6 +1625,9 @@ export that holds either (`project.godot` still names the plugin's
 | `WizardRender.cs` | the review's before/after pictures in a viewport of its own |
 | `RemasterPlugin.Wizard.cs` | the review's actions (decide, accept, discard; one undo step each), the headless batch |
 | `WizardEditorTest.cs` | the wizard's editor check |
+| `RemasterPlugin.Rooms.cs` | R7b: Rebuild in 3D, the rooms' pictures and game data (`RebuiltRoom.Provider`), UI art and fonts assigned or cleared (one undo step each) |
+| `UiArtDock.cs`, `UiArtPreview.cs` | the UI Art dock: the movies, their art ids with thumbnails, the preview |
+| `RoomsEditorTest.cs` | the rooms and UI art check |
 
 Game side (R2): `RemasterTexture`, `RemasterTextureSet`, `PbrRecipe` (the
 resources), `RemasterTextures` (the layers, the merge, the images and
@@ -1503,6 +1670,19 @@ remake's root), `RemasterSound`, `RemasterSoundSet`, `RemasterMovie`,
 `Replacements` (F8), `EffectsTest`, `AudioTest`, `MovieTest`; in the extension
 `fxowner.rs` (who made each draw) and `media.rs` (the sound commands, the
 movies); `ffx-import`'s `sounds.rs` (the game's sounds by id, decoded).
+
+Game side (R7b, `godot/src/Remaster/`): `RebuiltRoom` (a rebuilt 2D room's
+root: the build from the layers' import and the game data, the planes, the
+floor, the projected materials, the guides, the pre-save strip, the layers shown
+in the game), `RoomProxy` (a layer's or the floor's stand-in),
+`ClassicMaterials.ProjectedLayerShader` (the projected picture), `RebuildTest`;
+`StateView3D` draws a rebuilt room instead of the layers (F7), `MapLayers` gives
+its import and shown flags; `RemasterUiArt`, `RemasterUiFont`,
+`RemasterUiArtSet` (the resources), `UiArt` (the layers, the images, the
+fonts under `MessageView.UiFont` and `MessageFont`), `UiArtTest`; `SaveLoadView`,
+`BoosterView` and `OpeningView` ask for their art by id; `SkyTest` (R3's sky
+rule measured); in the extension `flash_symbols` (a movie's characters:
+`ffx-import`'s `Movie::symbols`).
 
 Game side (R4, `godot/src/Remaster/Wizard/`): `TextureFeatures` (a texture's colour
 and statistics), `MapTextures` (how a loaded map draws each texture), `TextureClassifier`

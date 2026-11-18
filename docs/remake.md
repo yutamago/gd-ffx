@@ -12,7 +12,7 @@ a remade character on a classic map, or the other way round.
 | `map` | the level the game's renderer loaded (`World.level`), or its last part | `/map/bsil/bsil00/` or `bsil00` | `res://remake/map/bsil00.tscn` |
 | `chr` | the model name (`Actor.model`) | `c001` (Tidus) | `res://remake/chr/c001.tscn` |
 | `effect` | a map's field program (`<level>-fp<entry>`) or a spell overlay (`magic-<id>`, four hex digits): who makes the classic draws (R7a, "Effects" below); or, for the battle's effect records, the record id as eight hex digits (`EffectInstance.id`, `MsGetEffID`: a per-character counter is part of it, so it is not one effect's id from run to run of different battles) | `bsil00-fp15`, `magic-004c`, `50001800` | `res://remake/effect/bsil00-fp15.tscn` |
-| `ui` | later | | |
+| `ui` | a Flash movie's art (R7b): the movie (its file name, or without its language) and the art id the screens ask for (a `SymbolClass` name, `#<character>`, `@<label or frame>`) | `saveload` + `saveload_jp_fla.arrow_21`, `saveload` + `saveload_jp_fla.face_565@_1` | `res://remaster/ui/ui.tres` (an image, not a scene: docs/remaster-editor.md, "UI art") |
 
 A map's level and its last part are the same id (`bsil00`). The overlay
 (F12) shows the level and each character's model name; `ffx-import devsaves`
@@ -232,6 +232,42 @@ sound, subtitles, volume), each a layer of its own over the packs'
 (`res://mods/<pack>/remaster/audio/audio.tres`, `.../movies/movies.tres`; a
 later layer wins per id, `Classic` pins an id to the game's). The files they
 name are yours (Ogg Vorbis, WAV, MP3; Ogg Theora); keep them in your pack.
+
+## Rebuilt 2D rooms (R7b)
+
+A map the game draws as painted layers (docs/architecture.md, "The 2D layers")
+is remade like any map: a scene for its level (`res://remake/map/ptkl14.tscn`,
+a `remake.json` entry, a pack's), in render space. The editor's **Rebuild in
+3D** (docs/remaster-editor.md) makes one whose root is a `RebuiltRoom`
+(`godot/src/Remaster/RebuiltRoom.cs`): a `RoomProxy` for each layer (by 2D
+scene and layer id) and for the floor, a `Model` group for the user's geometry,
+nothing of the game's in the file. When the game shows the level it builds the
+room from the layers it loaded anyway (their pictures from the player's
+archive), the map's game data (the scene cameras, the walk mesh: `MapGameData`),
+the camera's far plane and the map's own term of the 2D window (`map_pan`, 0 on
+the maps measured):
+
+- each layer a plane over its pixel rectangle at view distance 10 z from its 2D
+  scene's fixed camera, with its picture projected from that camera
+  (`ClassicMaterials.ProjectedLayerShader`: the layer shader's colour, blend,
+  depth write, cut and order), so from the game's camera the plane draws the
+  layer pixel for pixel and the characters go behind nearer layers as they do
+  classic; any mesh can take a layer's projection (a proxy's own mesh, or the
+  metadata `ffx_layer` = `"scene:layer"` on a mesh of the user's);
+- the floor the walk mesh's walkable triangles, the farthest layer projected,
+  drawn first without depth (the layers cover it from the game's camera); the
+  game walks the characters on the walk mesh as on any map, so they stand on it;
+- the proxies follow what the game shows: the 2D scene (`PhyreScene_change2DSceneNum`)
+  and the layers' shown flags (`PhyreScene_show2DLayer`), as `MapLayers` does.
+
+The rebuilt room is drawn instead of the classic layers unless the render path
+is classic; F7 on a rebuilt room switches between it and the classic layers
+(`classic`, then `map`). The camera of these rooms is the game's fixed camera
+and stays it: the game has no other view of them, so a rebuilt room is seen
+from where the painting was (a model that looks right from there; another view
+would show what the painting hid). The checks: `--selftest-rebuild` (developer
+saves 14, 12, 52; docs/remaster-editor.md, "The rooms and UI art checks in the
+game"), the editor check's step 8.
 
 ## Mod packs
 
