@@ -714,9 +714,19 @@ Taken while implementing phase 3 (2026-11-18):
 - **The game's checks make their materials by a starter profile** on the CPU
   graph (`MaterialBaker`), and R2's chain (`PbrBuilder.Make`) went with the
   dock's Generate and the batch: one way to make a material.
-- **The editor check mounts a real pack** (`ModLoader.Mount` of a `.pck` it
-  builds) to see a pack's profile win; mounting also invalidates the
-  profiles' listing (`ModLoader.Mount`).
+- **A pack's profile in the editor check is a registered layer**, not a
+  mounted `.pck`: Godot turns its packed data off in the editor, so
+  `load_resource_pack` fails there (tried). The folder a pack's profiles
+  come from is registered as the layer after the project's
+  (`MaterialProfiles.Register`, the same lookup as ModLoader's packs), and
+  `--selftest-mods` mounts real packs with profiles (the later pack's per
+  name, a starter one no pack has stays the project's). Mounting a pack also
+  invalidates the profiles' listing (`ModLoader.Mount`).
+- **The texture index is read fresh** (`RemasterTextures` loads it with
+  `CacheMode.Ignore`, was `Replace`): found by the check's undo of Apply to
+  queue. Replace updated the editor's live entries in place from the file,
+  and Godot's text leaves out fields at their defaults, so a profile emptied
+  by an undo kept its old name in memory.
 
 Taken while implementing phase 2 (2026-11-18):
 
@@ -816,8 +826,8 @@ Taken while implementing phase 1 (2026-11-18):
   preview's pixels change, import and skip a map, save, undo and redo, save
   a profile, switch texture with it, pin an exception and clear it, apply to
   the queue (a cancelled run, then whole), undo and redo, a profile changed
-  and made again, an R2-era entry migrated, a pack's profile over a starter
-  one; pictures under Xvfb (`FFX_EDITOR_SHOT=1`) (docs/remaster-editor.md,
+  and made again, an R2-era entry migrated, a pack's profile layer over a
+  starter one; pictures under Xvfb (`FFX_EDITOR_SHOT=1`) (docs/remaster-editor.md,
   "Checks").
 - **A game-side check** on the GPU (`--selftest-materialize`, the Windows
   export through `tools/compare-shot-win.sh`; `--no-game`: a synthetic

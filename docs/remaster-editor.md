@@ -788,8 +788,9 @@ FFX_EDITOR_SHOT=1 FFX_GAME_DIR=<game> tools/remaster-editor-check.sh [OUT_DIR]  
    step) and its textures marked in the queue and the dock ("Check rock
    changed: 3 textures"), made again (one undo step, the exception kept); an
    R2-era entry (a version 1 recipe, no profile) loaded into the tab
-   migrated, edited, saved again; a pack mounted with its own `rock`, which
-   then wins over the starter one. Under a renderer `materials-applied.png`,
+   migrated, edited, saved again; a pack's layer with its own `rock` (a
+   registered folder: Godot keeps packs out of the editor; `--selftest-mods`
+   mounts real ones), which then wins over the starter one, and taken away. Under a renderer `materials-applied.png`,
    `materials-changed.png`, `profile-<name>.png` (each starter profile on a
    Besaid texture, the studio) and `materials-profile-last.png`. With
    `--materials-only` the editor runs only the map's opening, the where-used
@@ -953,8 +954,6 @@ export that holds either (`project.godot` still names the plugin's
   `BlendedParts = Lit` choice) and in linear light they come out paler, so
   they stay classic by default, and the shore under them stays paler than
   the classic one (Besaid's lagoon).
-- A pack mounted while the editor runs (the editor check's) stays mounted
-  until the editor quits (Godot cannot unmount a pack).
 - A headless editor save prints Godot's own "Parameter "t" is null" (no
   thumbnail without a renderer).
 
