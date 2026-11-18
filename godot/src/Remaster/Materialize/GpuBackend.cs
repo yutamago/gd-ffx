@@ -52,6 +52,21 @@ public sealed partial class GpuBackend : Node, IMaterializeBackend
         AddChild(_container);
     }
 
+    /// <summary>
+    /// Passes of at least this many pixels made from now on measure their GPU time (the check's
+    /// bake profile: <see cref="GpuTimes"/>; 0: none). Godot keeps 256 timestamps a frame, two a
+    /// viewport: only the large passes fit.
+    /// </summary>
+    public static long MeasureGpu { get; set; }
+
+    /// <summary>
+    /// Each pass's measured render time (ms; <see cref="MeasureGpu"/> on when it was made): GPU
+    /// (timestamps, a few frames after the draw) and CPU, with its kernel and size.
+    /// </summary>
+    public List<(string Slot, string Kernel, int W, int H, bool Hdr, double Gpu, double Cpu)> GpuTimes() =>
+        _passes.Select(kv => (kv.Key, kv.Value.Kernel, kv.Value.Vp.Size.X, kv.Value.Vp.Size.Y, kv.Value.Vp.UseHdr2D,
+            RenderingServer.ViewportGetMeasuredRenderTimeGpu(kv.Value.Vp.GetViewportRid()), RenderingServer.ViewportGetMeasuredRenderTimeCpu(kv.Value.Vp.GetViewportRid()))).ToList();
+
     /// <summary>Passes found reading a pass that draws after them (a graph's bug; the checks fail on any).</summary>
     public int OrderErrors { get; private set; }
 
@@ -103,11 +118,17 @@ public sealed partial class GpuBackend : Node, IMaterializeBackend
             _order.Add(slot);
         if (!_passes.TryGetValue(slot, out var p))
         {
+            // the size last: a viewport with a size allocates its target at once, and again for each
+            // of these when it changes (3D buffers before Disable3D, an 8-bit target before UseHdr2D:
+            // R2b phase 5 found them most of a 4096 px bake's time)
             var vp = new SubViewport
             {
-                Name = slot.Replace('/', '_'), Size = new Vector2I(w, h), UseHdr2D = hdr, TransparentBg = true, Disable3D = true,
+                Name = slot.Replace('/', '_'), Disable3D = true, UseHdr2D = hdr, TransparentBg = true,
                 RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled, RenderTargetClearMode = SubViewport.ClearMode.Always,
             };
+            vp.Size = new Vector2I(w, h);
+            if (MeasureGpu > 0 && (long)w * h >= MeasureGpu)
+                RenderingServer.ViewportSetMeasureRenderTime(vp.GetViewportRid(), true);
             var mat = new ShaderMaterial();
             var rect = new ColorRect { Size = new Vector2(w, h), Material = mat, MouseFilter = Control.MouseFilterEnum.Ignore };
             vp.AddChild(rect);
@@ -116,8 +137,8 @@ public sealed partial class GpuBackend : Node, IMaterializeBackend
         }
         if (p.Vp.Size != new Vector2I(w, h) || p.Vp.UseHdr2D != hdr)
         {
-            p.Vp.Size = new Vector2I(w, h);
             p.Vp.UseHdr2D = hdr;
+            p.Vp.Size = new Vector2I(w, h);
             p.Rect.Size = new Vector2(w, h);
             p.Drawn = "";
         }
@@ -233,6 +254,13 @@ public sealed partial class GpuBackend : Node, IMaterializeBackend
 
     /// <summary>One pixel of a 1x1 image (the colour check's means).</summary>
     public Color Pixel(Tex t) => ((GpuTex)t).Texture.GetImage() is { } img && !img.IsEmpty() ? img.GetPixel(0, 0) : new Color(0, 0, 0, 0);
+
+    /// <summary>Every pass draws again at the next commit (the check's warm bake: the targets kept).</summary>
+    public void Invalidate()
+    {
+        foreach (var p in _passes.Values)
+            p.Drawn = "";
+    }
 
     /// <summary>Frees every pass (a new texture: another size).</summary>
     public void Clear()

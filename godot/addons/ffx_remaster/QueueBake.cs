@@ -74,6 +74,11 @@ public sealed class QueueBake
 
     public IReadOnlyList<Job> Jobs => _jobs;
 
+    /// <summary>A texture's cached upscaled source for its recipe (ComfyUI's; null: none), and the textures made from one.</summary>
+    public System.Func<string, RgbaImage, PbrRecipe, (string Import, RgbaImage Image)?>? Upscaled { get; init; }
+
+    public HashSet<string> ComfyUsed { get; } = new();
+
     public QueueBake(Node parent, IEnumerable<Job> jobs, bool gpu, System.Func<string, RgbaImage?> loadImport,
         System.Func<Job, BakedMaps, RemasterTexture> finish, string action)
     {
@@ -104,7 +109,8 @@ public sealed class QueueBake
             {
                 if (!_bake.Done)
                     return false;
-                (got, _) = _bake.Finish();
+                (got, _) = _bake.Finish(recipe: cur.Recipe);
+                BakeBackends.Return(_bake.Backend);
                 _bake = null;
             }
             else if (_task != null)
@@ -164,13 +170,19 @@ public sealed class QueueBake
         foreach (var f in MaterialPipeline.Files(job.Recipe))
             if (_loadImport(f) is { } ipx)
                 imports[f] = ipx;
+        if (Upscaled?.Invoke(job.Id, px, job.Recipe) is { } up)
+        {
+            imports[up.Import] = up.Image;
+            ComfyUsed.Add(job.Id);
+        }
         var inputs = new MaterialPipeline.Inputs(job.Id, px, job.Recipe, imports);
         _cur = job;
         _jobClock.Restart();
         if (_gpu)
         {
             var (w, h, scale) = MaterialPipeline.Size(inputs, MaterialPipeline.FullSide);
-            _bake = new GpuBake(_parent, inputs, w, h, scale);
+            // one set of passes for the run (the textures of a size draw into the same targets)
+            _bake = new GpuBake(_parent, inputs, w, h, scale, BakeBackends.Take(_parent));
         }
         else
         {

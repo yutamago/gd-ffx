@@ -21,7 +21,7 @@ namespace GdFfx.RemasterEditor;
 /// <c>--selftest-saved-overrides</c> and, with <c>--editor-shot=FILE.png</c> under a renderer, a
 /// picture of the editor's 3D view. Exits the editor: 0 on PASS, 1 on FAIL.
 /// </summary>
-public sealed class EditorSelfTest
+public sealed partial class EditorSelfTest
 {
     public const string Level = "/map/bsil/bsil00/";
     public const string Key = "bsil00";
@@ -1566,6 +1566,10 @@ public sealed class EditorSelfTest
         string? p4fail = null;
         foreach (var w in Phase4(tab, global, ids, shots, shotDir, f => p4fail = f)) yield return w;
         if (p4fail != null) { yield return p4fail; yield break; }
+        // R2b phase 5: shortcuts, colour picks, textures picked in the map, In map, ComfyUI through a fake server
+        string? p5fail = null;
+        foreach (var w in Phase5(tab, global, ids, root, shots, shotDir, f => p5fail = f)) yield return w;
+        if (p5fail != null) { yield return p5fail; yield break; }
         // the open map's textures
         int more = tab.AddOpenMap();
         if (tab.Queue.Count != onMap.Count)

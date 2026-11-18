@@ -248,7 +248,20 @@ void fragment() {
         return lit;
     }
 
-    private static Material Make(ShaderMaterial classic, string spec)
+    /// <summary>
+    /// The lit material for classic map material <paramref name="classic"/> drawn with
+    /// <paramref name="pbr"/> instead of its texture's saved material (the Materials tab's In map
+    /// view: the live, unsaved material); not cached. <paramref name="reuse"/>: a material made by
+    /// this before, filled again (its shader and parameters) and returned. Null: not a map material.
+    /// </summary>
+    public static Material? LitWith(Material? classic, BaseMaterial3D pbr, ShaderMaterial? reuse = null)
+    {
+        if (classic is not ShaderMaterial sm || PartIds.GetString(sm, ClassicMaterials.MapShaderMeta) is not { } spec)
+            return null;
+        return Make(sm, spec, pbr, reuse);
+    }
+
+    private static Material Make(ShaderMaterial classic, string spec, BaseMaterial3D? live = null, ShaderMaterial? reuse = null)
     {
         var bar = spec.IndexOf('|');
         var modes = spec[..bar].Split(',', System.StringSplitOptions.TrimEntries | System.StringSplitOptions.RemoveEmptyEntries)
@@ -256,7 +269,7 @@ void fragment() {
         var defines = spec[(bar + 1)..].Split(',', System.StringSplitOptions.RemoveEmptyEntries).ToList();
         defines.Remove("FOG"); // Godot's own fog (the rig's environment)
         var id = RemasterTextures.ColourId(classic);
-        var pbr = RemasterTextures.MaterialFor(id);
+        var pbr = live ?? RemasterTextures.MaterialFor(id);
         // a ShaderMaterial of one's own is used as it is (none of the game's ways kept)
         if (pbr is ShaderMaterial own)
         {
@@ -299,7 +312,11 @@ void fragment() {
         if (back != null) defines.Add("HAS_BACKLIGHT");
         if (detail != null && std!.DetailAlbedo != null) defines.Add("HAS_DETAIL");
         if (std is { SubsurfScatterSkinMode: true } && (sss != null || transmit != null)) modes.Add("sss_mode_skin");
-        var m = new ShaderMaterial { Shader = LitShader(string.Join(", ", modes), defines), RenderPriority = classic.RenderPriority };
+        var shader = LitShader(string.Join(", ", modes), defines);
+        var m = reuse ?? new ShaderMaterial();
+        if (m.Shader != shader)
+            m.Shader = shader;
+        m.RenderPriority = classic.RenderPriority;
         foreach (var p in new[] { "material_colour", "alpha_threshold", "scroll", "uv_morph_set" })
         {
             using var v = classic.GetShaderParameter(Variants.Name(p));
@@ -368,10 +385,10 @@ void fragment() {
                 m.SetShaderParameter(Variants.Name("detail_scale"), std.UV2Scale.X);
                 m.SetShaderParameter(Variants.Name("detail_blend"), (int)std.DetailBlendMode);
             }
-            Count.Pbr++;
+            if (live == null) Count.Pbr++;
         }
         else
-            Count.Plain++;
+            if (live == null) Count.Plain++;
         PartIds.SetString(m, LitTextureMeta, id ?? "");
         return m;
     }
