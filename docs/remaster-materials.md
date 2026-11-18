@@ -7,9 +7,8 @@ R2b replaces that with a view built for the job: one texture, one map at a
 time, a big lit preview that changes while a slider moves, and profiles that
 carry the settings over to the next texture.
 
-Status: phases 1 to 4 implemented (2026-11-18, "Phase 1: what there is",
-"Phase 2: what there is", "Phase 3: what there is", "Phase 4: what there
-is"); phases 5 and 6 planned. Decisions taken with the user are marked as such; the ones
+Status: phases 1 to 5 implemented (2026-11-18, "Phase 1: what there is"
+to "Phase 5: what there is"); phase 6 planned. Decisions taken with the user are marked as such; the ones
 taken while implementing are in "Decisions".
 
 ## What it reuses and what it learns from
@@ -832,7 +831,9 @@ at 1024 px **24 ms** (35 of 164 passes; phase 2's 15 ms with 31 of 137),
 the roughness's contrast 11 ms, a band rebuild 40 ms, the occlusion settled
 in 4 frames; bakes 251 ms at 1024 px, **975 ms at 2048 px**, **6.8 s at
 4096 px** (phase 2's graph: 2.5 s; the 4096 px target of 4 s is not met with
-every map on: the added maps' passes at full size, not measured apart). Under llvmpipe (Xvfb): a cheap change
+every map on: the added maps' passes at full size, not measured apart;
+phase 5 found the time in allocation and read backs, and made it 1.7 s:
+"Phase 5: what there is"). Under llvmpipe (Xvfb): a cheap change
 220 ms, bakes 1.3 s, 2.9 s and 14.8 s. A texture with only the core maps
 costs what it did in phase 2 (its passes and their signatures are
 unchanged).
@@ -841,7 +842,214 @@ Not in phase 4: height from an imported normal map (planned with the height
 step, not part of this phase's list), the In map preview of the added maps
 (phase 5), refraction in the game's map path.
 
+## Phase 5: what there is
+
+**The keyboard** (`MaterialsTab.Keys.cs`). The tab's keys are Godot editor
+shortcuts of their own, in Editor Settings, Shortcuts, section **FFX
+Materials** (`EditorSettings.AddShortcut`, each added once: a binding changed
+there is kept). They are answered only while the tab is shown and the
+keyboard focus is inside it (a click in the preview, the 2D map, the queue,
+the strip or a setting gives it the focus; the 3D view, the docks and the
+script editor keep their keys), and read before the editor's menus, so Ctrl+S
+saves the texture there, not the scene.
+
+| Keys | What |
+|---|---|
+| 0 ... 9 | the step numbered so in the strip (0 Source ... 7 Emission; 8, 9 the first two added maps: the strip numbers its buttons by place) |
+| [ and ] | the step before or after in the strip (every added map too) |
+| Up, Left / Down, Right | the texture before or after in the queue (the settings kept) |
+| Tab | the compare off (all material) or on again (the wipe where it was) |
+| Shift+Tab | the whole preview the compare's side, then the material's (A/B) |
+| Ctrl+S | Save the current texture's material |
+| R | the setting under the mouse back to its default (one undo step) |
+| F | frame the object (the mouse over the 2D map: the whole map) |
+| M | the In map preview on or off |
+| ? (Shift+/) | the list of these with their keys now (also the **?** under the preview) |
+
+A focused slider, list or option keeps its own arrows; typing in a field
+keeps its letters and digits (Ctrl+S still saves).
+
+**Colour picking** (`MaterialsTab.Pick.cs`). Every colour setting's **Pick**
+(the height's and roughness's samples, the metal's colour, each mask step's
+colour, the backlight's and transmittance's colours) takes its colour from a
+click or a drag in the 2D map or on the object in the preview (the In map
+view too): the cursor an eyedropper (the editor's colour-pick icon), in the
+2D map the pick's disc and a swatch of the colour it would take under it; the
+colour is the mean over a disc of **Pick radius** map pixels (beside the 2D
+map's options, 0 to 16, default 1; wrapping when the texture tiles), set live
+while dragging and one undo step at the release. Picking a sample of the
+current step shows its mask (the isolate view) as it changes.
+
+**Textures picked in the open map** (`RemasterPlugin.Pick.cs`). In the 3D
+view, **Alt+click** on a surface (a click: Godot's Alt+drag still moves the
+selection) or a click while **Pick texture** (the 3D view's toolbar, beside
+Remastered) is on puts the texture under the cursor into the Materials tab's
+queue; **Shift** adds every texture of that part's segment. A ray against the
+map's own triangles decides (the classic map's meshes only: not the edit
+scene's helpers, the game's data of R5, additions or hidden parts; the
+nearest surface wins, so the texture is the one seen, also where a part draws
+several). A toast and the tab's status say what was queued; the 3D view stays
+shown, so several can be picked in a row.
+
+**The In map preview** (`InMapScene.cs`, `MaterialsTab.InMap.cs`; **In map**
+in the object box, or M). The map that uses the texture, in the preview: the
+open map when it draws the texture, else the first map the where-used index
+names, loaded from the classic import when asked for (Besaid beach's
+neighbour in the check: 0.2 s once imported). Its geometry is
+copied into the preview's own world (every visible mesh of the classic map;
+the edit scene's helpers, the game's data and hidden parts left out), every
+surface drawn by the game's lit shader (`RemasterLook.Lit`: its saved
+material or its colour texture, the baked vertex light as the game draws it)
+on both sides of the compare. The surfaces that draw the texture are copied
+twice: on the material's side with the live, unsaved material
+(`RemasterLook.LitWith`: the lit shader over the tab's maps, the passes'
+targets on the GPU, so a change shows in the next frame), on the compare's
+with their classic material (or the raw texture lit, by the compare box). So
+the wipe compares only the texture, in place. The camera frames the
+surfaces that draw the texture (together, or the largest of them when they
+are spread over the map); orbit, zoom, pan, F, the wipe and colour picks
+work as on the objects. Choosing In map turns **The map's light** on (R3's
+resolved lighting of that map). The lit shader reads the same global
+parameters as the 3D view's remastered look (how much of the baked vertex
+light stays, the gamma of Compatibility), so the view shows what the
+editor's 3D view would; under the WSL editor's Compatibility renderer the
+sand of Besaid beach came out bright where the classic side is warm
+(Forward+ not looked at in the editor yet). Besaid beach's most drawn
+texture: 7 surfaces of 145 meshes, framed on the beach.
+
+**ComfyUI in the Source step** (`MaterialsTab.Comfy.cs`, `ComfyUpscaler`).
+**Upscaler**: Lanczos-3 (built in) or ComfyUI (the server of the editor
+setting `ffx_remaster/comfyui_url`, the model of
+`ffx_remaster/comfyui_upscale_model`). With ComfyUI and an upscale above 1
+the texture goes to the server in the background: the progress (uploading,
+queueing, queued, waiting or running as `GET /queue` says, downloading) and
+**Cancel** under it, **Run again** after a cancel or a failure; the Lanczos
+upscale stands in meanwhile. The answer is cached per texture (its pixels),
+model and factor, in memory and in `user://remaster/comfyui-cache/` (this
+machine's, never in git), and is the graph's source from then on (resized to
+the working size by the graph's own Lanczos pass; at the full size as it
+is). Save and Apply to queue write the tool, the model and its licence into
+the texture's Source (`material source: upscaled x2 by ComfyUI (<model>;
+licence: <the editor setting ffx_remaster/comfyui_model_licence>)`); Apply to
+queue takes each texture's cached answer, else Lanczos (and says so there).
+The client was run against a fake server of the editor check's
+(`FakeComfy.cs`: the same five calls on the loopback, the answer the
+uploaded image scaled nearest-neighbour and tinted): never yet against a real
+ComfyUI.
+
+**Bake speed.** Phase 4 measured a 4096 px bake with every map on at 6.8 s
+on the Arc 140T (the target: 4 s). Profiled on the GPU (the check's bake
+profile: the graph's build, the draw, each read back, and the same bake on
+targets already allocated), at 4096 px:
+
+| | Arc 140T, Vulkan (Windows export) |
+|---|---|
+| drawing every pass (186; on targets allocated already: the warm bake) | 0.3 to 0.5 s |
+| the graph's build (making the passes: allocating their targets, about 6 GB) | 0.9 to 1.7 s |
+| reading back the 14 maps a save writes | 0.4 to 0.65 s |
+| reading back the other five too (phase 4 read every map: the source and the height, float targets converted to 8 bits, and the ORM's three) | 0.5 to 1.7 s more |
+
+So the time was allocation and read backs, not the passes (the occlusion's
+sampling included: its 16 directions at 4096 px are part of the 0.3 to 0.5 s).
+The large passes' own GPU times could not be read: Godot keeps 256
+timestamps a frame, and the profile's passes asked for more (they came back
+0). Three changes: a save reads back only the maps it writes
+(the albedo, the normal, the emission unless skipped, the added maps, the
+ORM and the float height: not the source, the 8-bit height or the ORM's
+three, each read again for nothing before); a pass's viewport is given its
+size last (it was given it first, so Godot allocated 3D buffers and an 8-bit
+target for it, then freed and made them again for `Disable3D`, `UseHdr2D` and
+`TransparentBg`); and the last bake's passes are kept for 15 s and for the
+whole of an Apply to queue run (`BakeBackends`), so a save after a save, and
+every texture of a run after the first, draws into targets already there.
+Measured (`--selftest-materialize`, every feature and all nine added maps,
+the overlap; the Windows export, Vulkan):
+
+| Every feature and all nine added maps | Phase 4 | Phase 5 |
+|---|---|---|
+| bake at 4096 px, as a save makes it (the maps it writes read back; new targets) | | **1.66 s** |
+| bake at 4096 px, every map read back (phase 4's measure) | 6.8 s | 2.9 s |
+| bake at 4096 px on the last bake's targets (a save after a save; Apply to queue's textures after the first) | | 0.71 to 0.75 s |
+| the graph's build at 4096 px (its share of the above) | | 0.36 to 0.58 s (0.9 to 1.7 s with the size set first) |
+| bake at 2048 px (as a save; every map read) | 975 ms | 354 ms; 504 ms |
+| bake at 1024 px (as a save; every map read) | 251 ms | 155 ms; 189 ms |
+| a cheap change at 1024 px (a height band's weight: 35 of 164 passes) | 24 ms | 14 ms |
+| a band rebuild (the height's smoothing: 56 passes) | 40 ms | 20 ms |
+
+The 4096 px target (4 s) is met with every map on, with room: a cold bake in
+1.7 s, a warm one in 0.7 s. The numbers vary from run to run on the shared
+memory of the Arc 140T (the same build: a cold 4096 px bake 2.5 to 3.1 s
+before the size fix in three runs, 1.66 s after).
+
+The parity is unchanged, to the digit (the passes are the same): on the Arc
+140T the overlap recipe's normal 0.56/2/2, ORM 0.24/1/3, refraction
+1.34/12/18, height 0.0019/0.0027, as phase 4's table.
+
+Not in phase 5: regions and AI estimation (phase 6); the In map copy follows
+edits to the open map only when In map is chosen again; fog in the preview;
+ComfyUI against a real server.
+
 ## Decisions
+
+Taken while implementing phase 5 (2026-11-18):
+
+- **The keys are editor shortcuts** (Editor Settings, Shortcuts, "FFX
+  Materials"; `EditorSettings.AddShortcut`), answered only while the tab is
+  shown and the keyboard focus is inside it, and read in `_Input`, before the
+  editor's menus: Ctrl+S saves the texture while the tab has the focus, the
+  scene elsewhere. A focused slider, list or option keeps its arrows; a
+  field being typed in keeps its letters.
+- **The step keys follow the strip's numbers**, 0 Source to 7 Emission (the
+  plan said 1 to 8; the strip has always shown 0 Source), 8 and 9 the first
+  two added maps: the strip now numbers its buttons by their place, so an
+  added map's number is its place, not its enum value. [ and ] reach every
+  step.
+- **Tab turns the compare off and on** (the wipe kept), **Shift+Tab swaps**
+  (the whole view one side, then the other); **M** (not in the plan) turns In
+  map on and off.
+- **A pick is a drag**: pressed, moved and released in the 2D map or on the
+  object, the colour live, one undo step at the release; the colour is the
+  mean over a disc (Pick radius in map pixels, default 1: a 3x3 disc, so one
+  noisy texel does not decide); picking a sample of the current step turns
+  its mask on (it stays on). The eyedropper is the editor's ColorPick icon as
+  the cross cursor while picking.
+- **Picking textures in the map: Alt+click, not Alt+press**: Godot's Alt+drag
+  moves the selection in the 3D view, so only a press and release in one
+  place picks (and the click still reaches Godot); **Pick texture** in the 3D
+  toolbar consumes clicks while on. The ray meets the classic map's own
+  triangles (nearest wins), not the physics or the editor's own picking, so
+  the edit scene's helpers, the game's data, additions and hidden parts never
+  answer. The tab is not shown on a pick (a toast says what was queued), so
+  several are picked in a row.
+- **In map copies the map's meshes** into the preview's world (no second
+  instance of the edit scene, nothing of it changed), every surface lit by the
+  game's lit shader on both sides; only the texture's surfaces differ between
+  the sides (live material against the classic look), so the wipe compares the
+  texture in place. `RemasterLook.LitWith` builds the live lit material from
+  the tab's `ORMMaterial3D` (the same code as the game's lit path, filled
+  again on each change, not cached). The camera frames the texture's
+  surfaces together unless their box is over 2.5 times the largest's, then the
+  largest. The copy is made when In map is chosen (the open map's at once,
+  another map's when its classic import is in) and not kept in step with
+  edits to the open map. The UV tiling box does not apply (the game's UVs).
+- **ComfyUI's progress is by stages and `GET /queue`**, polled with the
+  history, not ComfyUI's websocket: no second protocol for a progress bar.
+  The cache key is the texture's pixels (SHA-1), its size, the model and the
+  factor, not the server's address; the answer is resized to exactly the
+  upscaled size (a model's x4 scaled by ComfyUI can be a pixel off). A cancel
+  or a failure leaves Lanczos until **Run again** (no automatic retry on the
+  next change). The Source note is one line, `material source: ...`,
+  replaced on each save; the licence comes from a new editor setting,
+  `ffx_remaster/comfyui_model_licence` ("not given, write it here" without
+  one).
+- **The fake ComfyUI is the editor check's own** (C#, `HttpListener` on
+  127.0.0.1, a random port), not a script beside it: it runs in the editor
+  process the check drives and counts the calls it got.
+- **A save reads back only what it writes**; the parity check still reads
+  every map (`GpuBake.Finish(all: true)`).
+- **The last bake's passes are kept 15 s** (`BakeBackends`) and through an
+  Apply to queue run, then freed: a 4096 px bake's targets are about 6 GB, too
+  much to keep for long, and allocating them is most of a cold bake.
 
 Taken while implementing phase 4 (2026-11-18):
 
@@ -1059,7 +1267,18 @@ Taken while implementing phase 1 (2026-11-18):
   the queue (a cancelled run, then whole), undo and redo, a profile changed
   and made again, an R2-era entry migrated, a pack's profile layer over a
   starter one; pictures under Xvfb (`FFX_EDITOR_SHOT=1`) (docs/remaster-editor.md,
-  "Checks").
+  "Checks"). Phase 5's part: each shortcut sent as an input event (none fires
+  with the focus outside the tab or the tab hidden; Ctrl+S saves the
+  texture), a colour pick dragged in the 2D map (the mean over the radius, one
+  undo step, the mask shown) and one clicked on the preview's plane, a
+  texture picked in the open map (Alt+click queues it, Pick texture with
+  Shift, an Alt+drag picks nothing), In map (the open map's copy, the live lit
+  material on the texture's surfaces, the classic look on the compare's side,
+  the map's light, a pick on the piece; under a renderer its pixels follow a
+  setting and the wipe differs; a texture of a Besaid neighbour loaded on
+  demand), ComfyUI through the check's fake server (progress, a cancel that
+  fetches nothing, Run again, the answer as the source, from memory and from
+  the cache folder with no request, the Source note on Save).
 - **A game-side check** on the GPU (`--selftest-materialize`, the Windows
   export through `tools/compare-shot-win.sh`; `--no-game`: a synthetic
   texture): the pipeline's time per slider change, per band rebuild and per
@@ -1076,7 +1295,11 @@ Taken while implementing phase 1 (2026-11-18):
   synthetic texture's size, without the game), `--materialize-probe=X,Y[,slot...]`
   (one pixel of passes from both backends), `--materialize-cpu-2048` (the CPU's
   bake at 2048 px too), `--shot=FILE.png` (the GPU's maps side by side, and
-  the maps that miss the parity beside it).
+  the maps that miss the parity beside it). Phase 5: the bakes as a save makes
+  them (the maps it writes read back) and with every map read, the graph's
+  build per bake, then a profile of a 4096 px bake (the build, the draw, each
+  read back, the large passes' GPU times where Godot's timestamps allow) and
+  two warm bakes on the same targets.
 - **The materials and lighting checks** (`--selftest-materials`,
   `--selftest-lighting`) with materials made by starter profiles (rock,
   stone and concrete) on the CPU graph.

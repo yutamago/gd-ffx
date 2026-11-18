@@ -43,10 +43,34 @@ void fragment() {
     private bool _arrowDrag;
     private readonly ArrowOverlay _overlay;
 
-    /// <summary>The next left click picks (the map's UV, 0-1, to <see cref="Picked"/>) instead of panning.</summary>
-    public bool Picking { get; set; }
+    /// <summary>
+    /// Left clicks and drags pick (the map's UV, 0-1, to <see cref="PickDrag"/>) instead of
+    /// panning; the cursor a cross, the pick's disc and its colour drawn under it.
+    /// </summary>
+    public bool Picking
+    {
+        get => _picking;
+        set
+        {
+            _picking = value;
+            _pickDrag &= value;
+            MouseDefaultCursorShape = value ? CursorShape.Cross : CursorShape.Arrow;
+            if (!value)
+                _overlay.PickAt = null;
+            _overlay.QueueRedraw();
+        }
+    }
 
-    public event System.Action<Vector2>? Picked;
+    private bool _picking, _pickDrag;
+
+    /// <summary>A pick: the UV under the mouse and the phase (0 pressed, 1 dragged, 2 released).</summary>
+    public event System.Action<Vector2, int>? PickDrag;
+
+    /// <summary>The pick's radius in map pixels (the disc drawn under the cursor).</summary>
+    public int PickRadius { get; set; } = 1;
+
+    /// <summary>The colour a pick at a UV would take (the swatch beside the cursor), or null.</summary>
+    public System.Func<Vector2, Color?>? Sampler { get; set; }
 
     /// <summary>The painted light's angle (degrees anticlockwise from the right; null: no arrow).</summary>
     public float? Arrow
@@ -66,6 +90,10 @@ void fragment() {
     private sealed partial class ArrowOverlay : Control
     {
         public float? Angle;
+        /// <summary>The pick cursor: where, the disc's radius on screen, the colour there.</summary>
+        public Vector2? PickAt;
+        public float PickR;
+        public Color? Swatch;
 
         public Vector2 Tip => Size / 2 + Dir * Radius;
         public Vector2 Dir => Angle is { } a ? new Vector2(Mathf.Cos(Mathf.DegToRad(a)), -Mathf.Sin(Mathf.DegToRad(a))) : Vector2.Zero;
@@ -73,6 +101,18 @@ void fragment() {
 
         public override void _Draw()
         {
+            if (PickAt is { } at)
+            {
+                // the eyedropper's disc and the colour it takes
+                DrawArc(at, Mathf.Max(2, PickR), 0, Mathf.Tau, 32, Colors.Black, 3, true);
+                DrawArc(at, Mathf.Max(2, PickR), 0, Mathf.Tau, 32, Colors.White, 1.5f, true);
+                if (Swatch is { } sw)
+                {
+                    var box = new Rect2(at + new Vector2(14, -34), new Vector2(26, 26));
+                    DrawRect(box.Grow(2), Colors.Black);
+                    DrawRect(box, new Color(sw, 1));
+                }
+            }
             if (Angle == null)
                 return;
             var c = Size / 2;
@@ -91,6 +131,8 @@ void fragment() {
         CustomMinimumSize = new Vector2(0, 260);
         SizeFlagsVertical = SizeFlags.ExpandFill;
         MouseFilter = MouseFilterEnum.Stop;
+        // a click gives the tab the keyboard (its shortcuts)
+        FocusMode = FocusModeEnum.Click;
         Resized += Fit;
         Split = -1;
         _overlay = new ArrowOverlay { MouseFilter = MouseFilterEnum.Ignore };
@@ -108,6 +150,26 @@ void fragment() {
             return null;
         var t = uv * (Tiled ? 2f : 1f);
         return new Vector2(t.X - Mathf.Floor(t.X), t.Y - Mathf.Floor(t.Y));
+    }
+
+    private Vector2 _lastPick;
+
+    /// <summary>One map pixel's size on screen.</summary>
+    private float TexelOnScreen()
+    {
+        var tex = _map ?? _before;
+        if (tex == null || tex.GetWidth() <= 0)
+            return 1;
+        var fit = _mat.GetShaderParameter("fit").AsVector2();
+        return Size.X * fit.X * _zoom / (tex.GetWidth() * (Tiled ? 2f : 1f));
+    }
+
+    /// <summary>The view's point over a UV (0-1; the checks put the mouse there), the tiling's first tile.</summary>
+    public Vector2 PointOf(Vector2 uv)
+    {
+        var fit = _mat.GetShaderParameter("fit").AsVector2();
+        var u = uv / (Tiled ? 2f : 1f);
+        return ((u - _pan - new Vector2(0.5f, 0.5f)) * _zoom * fit + new Vector2(0.5f, 0.5f)) * Size;
     }
 
     /// <summary>Tiled 2x2 (seams show).</summary>
@@ -175,10 +237,32 @@ void fragment() {
                 Apply();
                 AcceptEvent();
                 break;
-            case InputEventMouseButton { ButtonIndex: MouseButton.Left, Pressed: true } pick when Picking:
-                Picking = false;
-                if (UvAt(pick.Position) is { } puv)
-                    Picked?.Invoke(puv);
+            case InputEventMouseButton { ButtonIndex: MouseButton.Left } pick when Picking || _pickDrag:
+                if (pick.Pressed && UvAt(pick.Position) is { } puv)
+                {
+                    _pickDrag = true;
+                    PickDrag?.Invoke(puv, 0);
+                }
+                else if (!pick.Pressed && _pickDrag)
+                {
+                    _pickDrag = false;
+                    PickDrag?.Invoke(UvAt(pick.Position) ?? _lastPick, 2);
+                }
+                AcceptEvent();
+                break;
+            case InputEventMouseMotion pm when Picking:
+                if (UvAt(pm.Position) is { } muv)
+                {
+                    _lastPick = muv;
+                    if (_pickDrag)
+                        PickDrag?.Invoke(muv, 1);
+                    _overlay.PickAt = pm.Position;
+                    _overlay.PickR = (PickRadius + 0.5f) * TexelOnScreen();
+                    _overlay.Swatch = Sampler?.Invoke(muv);
+                }
+                else
+                    _overlay.PickAt = null;
+                _overlay.QueueRedraw();
                 AcceptEvent();
                 break;
             case InputEventMouseButton { ButtonIndex: MouseButton.Left } ab when Arrow != null && (_arrowDrag || (ab.Pressed && ab.Position.DistanceTo(_overlay.Tip) < 16)):

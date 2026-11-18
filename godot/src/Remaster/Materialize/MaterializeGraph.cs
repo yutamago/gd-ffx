@@ -382,7 +382,20 @@ public sealed class MaterializeGraph
     {
         var mode = MaterialPipeline.ModeOf(_r, MaterialStep.Source);
         var img = mode == StepMode.Import && Import(MaterialStep.Source) is { } own ? own : _original;
-        var orig = _b.Input(mode == StepMode.Import ? $"source-import:{_r.SourceFile}:{img.Width}x{img.Height}" : $"orig:{_key}:{img.Width}x{img.Height}", img);
+        var inKey = mode == StepMode.Import ? $"source-import:{_r.SourceFile}:{img.Width}x{img.Height}" : $"orig:{_key}:{img.Width}x{img.Height}";
+        // an upscale made outside the graph (ComfyUI's, R2b phase 5): the texture at the upscaled
+        // size, named by the import "upscaled:<key>|x<factor>|<content>"; resized to the size asked
+        if (mode != StepMode.Import && _r.Upscaler == "comfyui" && Math.Clamp(_r.Upscale, 1, 4) > 1)
+        {
+            var prefix = $"upscaled:{_key}|x{Math.Clamp(_r.Upscale, 1, 4)}|";
+            foreach (var (k, up) in _imports)
+                if (k.StartsWith(prefix, StringComparison.Ordinal))
+                {
+                    (img, inKey) = (up, k);
+                    break;
+                }
+        }
+        var orig = _b.Input(inKey, img);
         if (img.Width == _w && img.Height == _h)
             return SeamSource(F("src", "copy", 4, [orig]));
         var (lh, lv) = (LanczosUni(img.Width, _w, 0), LanczosUni(img.Height, _h, 1));

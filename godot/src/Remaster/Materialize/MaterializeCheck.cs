@@ -416,7 +416,7 @@ public sealed partial class MaterializeCheck : Node
             Say($"{label}: passes furthest apart (mean/max): " + string.Join(", ", passDiffs.OrderByDescending(d => d.Mean).Take(12).Select(d => $"{d.Slot} {d.Mean:0.#####}/{d.Max:0.####}")));
             if (bake.Backend.OrderErrors > 0)
                 yield return $"{bake.Backend.OrderErrors} pass(es) read a pass drawn after them";
-            var (gb, gms) = bake.Finish();
+            var (gb, gms) = bake.Finish(all: true);
             if (label == "overlap" && GameSettings.Arg("shot") is { Length: > 0 } shot)
             {
                 // the GPU's maps side by side (a picture outside git: made from the game's texture)
@@ -547,20 +547,77 @@ public sealed partial class MaterializeCheck : Node
         pipe.Backend.QueueFree();
         yield return null;
 
-        // 4. bakes at 1024, 2048, 4096 (the GPU), 1024 and 2048 (the CPU)
+        // 4. bakes at 1024, 2048, 4096 (the GPU), 1024 and 2048 (the CPU): what a save reads back,
+        // and every map (phase 4's measure); then where a 4096 px bake's time goes
         var bakes = new List<string>();
+        var builds4k = new List<string>();
         foreach (int target in new[] { 1024, 2048, 4096 })
         {
             int bw = target, bh = (int)Math.Round((double)target * _texture.Height / _texture.Width);
             var times = new List<double>();
-            for (int k = 0; k < 2; k++)
+            var allTimes = new List<double>();
+            for (int k = 0; k < 3; k++)
             {
                 var b = new GpuBake(this, inputs, bw, bh, (double)bw / _texture.Width);
+                builds4k.Add($"{target}:{b.BuildMs:0}");
                 while (!b.Done) yield return null;
-                times.Add(b.Finish().Ms);
+                if (k < 2)
+                    times.Add(b.Finish(recipe: recipe).Ms);
+                else
+                    allTimes.Add(b.Finish(all: true).Ms);
                 yield return null;
             }
-            bakes.Add($"{target} px {times.Min():0} ms (first {times[0]:0})");
+            bakes.Add($"{target} px {times.Min():0} ms (first {times[0]:0}; every map read {allTimes.Min():0})");
+        }
+        Say($"bakes (the maps a save writes, read back): GPU {string.Join(", ", bakes)}; the graph's builds (size:ms) {string.Join(" ", builds4k)}");
+        foreach (int target in new[] { 4096 })
+        {
+            // the profile: the graph's build (CPU), the draw (to the first read back), each read
+            // back, and every pass's GPU time (timestamps, read a few frames after the draw)
+            int bw = target, bh = (int)Math.Round((double)target * _texture.Height / _texture.Width);
+            GpuBackend.MeasureGpu = (long)bw * bh / 4;
+            var t0 = Stopwatch.StartNew();
+            var keep = new GpuBackend();
+            AddChild(keep);
+            var b = new GpuBake(this, inputs, bw, bh, (double)bw / _texture.Width, keep);
+            double build = t0.Elapsed.TotalMilliseconds;
+            GpuBackend.MeasureGpu = 0;
+            int frames = 0;
+            while (!b.Done) { frames++; yield return null; }
+            double drawnSeen = t0.Elapsed.TotalMilliseconds;
+            b.Sync();
+            double synced = t0.Elapsed.TotalMilliseconds;
+            for (int f = 0; f < 6; f++) yield return null;
+            var gpu = b.Backend.GpuTimes();
+            var (_, ms) = b.Finish(recipe: recipe);
+            double total = gpu.Sum(x => x.Gpu);
+            var byKernel = gpu.GroupBy(x => x.Kernel).Select(g => (g.Key, Ms: g.Sum(x => x.Gpu), N: g.Count())).OrderByDescending(x => x.Ms).Take(10);
+            var bySize = gpu.GroupBy(x => (x.W >= bw / 2 ? (x.W >= bw ? "full" : "half") : "smaller") + (x.Hdr ? " float" : " 8-bit"))
+                .Select(g => $"{g.Key} {g.Count()} passes {g.Sum(x => x.Gpu):0} ms");
+            Say($"bake profile at {target} px: build (CPU) {build:0} ms, {frames} frame(s) to drawn ({drawnSeen:0} ms; the GPU finished at {synced:0} ms), {gpu.Count} passes, GPU time {total:0} ms "
+                + $"(by kernel: {string.Join(", ", byKernel.Select(k => $"{k.Key} {k.Ms:0} ({k.N})"))}; by size: {string.Join(", ", bySize)}); "
+                + $"slowest passes: {string.Join(", ", gpu.OrderByDescending(x => x.Gpu).Take(10).Select(x => $"{x.Slot} {x.Gpu:0.0}"))}; "
+                + $"read backs {string.Join(", ", b.Reads.Select(r => $"{r.What} {r.Ms:0}"))} (total {b.Reads.Sum(r => r.Ms):0} ms); whole {ms:0} ms (with 6 frames' wait)");
+            yield return null;
+            // the same bake on the same passes (their targets allocated already): every pass drawn again
+            var warm = new List<string>();
+            for (int k = 0; k < 2; k++)
+            {
+                var t1 = Stopwatch.StartNew();
+                var wb = new GpuBake(this, inputs, bw, bh, (double)bw / _texture.Width, keep);
+                double wbuild = t1.Elapsed.TotalMilliseconds;
+                int wf = 0;
+                while (!wb.Done) { wf++; yield return null; }
+                wb.Sync();
+                double wdraw = t1.Elapsed.TotalMilliseconds;
+                var (_, wms) = wb.Finish(recipe: recipe);
+                warm.Add($"build {wbuild:0} ms, drawn and finished at {wdraw:0} ms ({wf} frame(s)), read back {wb.Reads.Sum(r => r.Ms):0} ms, whole {wms:0} ms");
+                yield return null;
+            }
+            Say($"warm bakes at {target} px (the targets kept, every pass drawn again): {string.Join("; ", warm)}");
+            keep.Clear();
+            keep.QueueFree();
+            yield return null;
         }
         var cpuBakes = new List<string>();
         foreach (int target in GameSettings.Flag("materialize-cpu-2048") ? new[] { 1024, 2048 } : new[] { 1024 })
@@ -575,7 +632,7 @@ public sealed partial class MaterializeCheck : Node
             cpuBakes.Add($"{target} px {t0.Elapsed.TotalMilliseconds:0} ms");
             yield return null;
         }
-        Say($"bakes (every map, read back): GPU {string.Join(", ", bakes)}; CPU {string.Join(", ", cpuBakes)}");
+        Say($"CPU bakes: {string.Join(", ", cpuBakes)}");
         Say($"targets: a slider {Median(cheap):0} ms (33), bake 2048 and 4096 above (1000, 4000)");
         if (!ok)
             yield return "the GPU's maps are not within the parity's limits of the CPU's";

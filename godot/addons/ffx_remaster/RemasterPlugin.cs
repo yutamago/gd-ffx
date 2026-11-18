@@ -73,6 +73,7 @@ public partial class RemasterPlugin : EditorPlugin
         AddDock(_textures);
         EnterCharacters();
         EnterMedia();
+        EnterPick();
         // the 3D view's compare: the open map classic or remastered (its render path when opened)
         _lookToggle = new CheckButton { Text = "Remastered", TooltipText = "Draw the open map remastered (PBR materials, the map's lighting) or classic" };
         _lookToggle.Toggled += on => SetEditorLook(on);
@@ -80,6 +81,7 @@ public partial class RemasterPlugin : EditorPlugin
         _inspector = new PartInspector(this);
         AddInspectorPlugin(_inspector);
         MaterialsTab.RegisterSettings();
+        MaterialsTab.RegisterShortcuts();
         _materials = new MaterialsTab(this);
         EditorInterface.Singleton.GetEditorMainScreen().AddChild(_materials);
         _MakeVisible(false);
@@ -115,6 +117,7 @@ public partial class RemasterPlugin : EditorPlugin
         }
         ExitCharacters();
         ExitMedia();
+        ExitPick();
         if (_textures != null)
         {
             RemoveDock(_textures);

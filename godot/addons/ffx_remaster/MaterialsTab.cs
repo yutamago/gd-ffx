@@ -273,11 +273,11 @@ public partial class MaterialsTab : VBoxContainer
     {
         var col = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill, SizeFlagsStretchRatio = 2.2f };
         _preview = new MaterialPreview();
-        _preview.Picked += PickedAt;
+        _preview.PickDrag += PickDragged;
         col.AddChild(_preview);
         var row = new HBoxContainer();
         col.AddChild(row);
-        _shape = new OptionButton { TooltipText = "The object: Object is the game piece that draws the texture (from the open map, else the first map that uses it)" };
+        _shape = new OptionButton { TooltipText = "The object: Object is the game piece that draws the texture (from the open map, else the first map that uses it); In map is that map around it, lit by its remastered lighting, with the live material (M)" };
         foreach (var o in MaterialPreview.Objects)
             _shape.AddItem(o);
         _shape.Selected = MaterialPreview.Sphere;
@@ -317,7 +317,12 @@ public partial class MaterialsTab : VBoxContainer
         _tile.ValueChanged += _ => UpdateMaterials();
         row.AddChild(_tile);
         Add(row, "Frame", "Frame the object (F in the view)", () => _preview.Frame());
-        col.AddChild(new Label { Text = "Drag: orbit · wheel: zoom · middle: pan · Shift+drag: light · Alt+drag: environment · F: frame", Modulate = new Color(1, 1, 1, 0.6f) });
+        var hints = new HBoxContainer();
+        col.AddChild(hints);
+        hints.AddChild(new Label { Text = "Drag: orbit · wheel: zoom · middle: pan · Shift+drag: light · Alt+drag: environment · F: frame · Tab: compare · M: in map", Modulate = new Color(1, 1, 1, 0.6f), SizeFlagsHorizontal = SizeFlags.ExpandFill, ClipText = true });
+        var help = new Button { Text = "?", Flat = true, TooltipText = "The tab's shortcuts (?)", FocusMode = FocusModeEnum.None };
+        help.Pressed += () => ShowShortcuts();
+        hints.AddChild(help);
         return col;
     }
 
@@ -331,7 +336,7 @@ public partial class MaterialsTab : VBoxContainer
         _stepNote = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = new Color(1, 1, 1, 0.7f) };
         col.AddChild(_stepNote);
         _map2d = new MapView2D();
-        _map2d.Picked += PickedAt;
+        _map2d.PickDrag += PickDragged;
         _map2d.ArrowMoved += a => LiveSet("NormalLightAngle", a);
         _map2d.ArrowReleased += _ => EndDrag("NormalLightAngle");
         col.AddChild(_map2d);
@@ -346,6 +351,7 @@ public partial class MaterialsTab : VBoxContainer
         _split.Toggled += on => _map2d.Split = on ? 0.5f : -1f;
         row.AddChild(_split);
         Add(row, "Whole", "Back to the whole map (or double click)", () => _map2d.Reset());
+        col.AddChild(BuildPickRadius());
         row = new HBoxContainer();
         col.AddChild(row);
         _mode = new OptionButton { TooltipText = "Generate the map, take a file of your own (Import), or a constant (Skip)" };
@@ -508,6 +514,16 @@ public partial class MaterialsTab : VBoxContainer
     /// <summary>Adds every texture the open map draws.</summary>
     public int AddOpenMap() => Add(TextureActions.OnMap(_plugin.Current).Keys);
 
+    /// <summary>Takes <paramref name="id"/> out of the queue (the current one: the next shown).</summary>
+    public void RemoveFromQueue(string id)
+    {
+        id = id.ToLowerInvariant();
+        if (id == Current)
+            RemoveCurrent();
+        else if (Queue.Remove(id))
+            FillQueue();
+    }
+
     private void RemoveCurrent()
     {
         if (Current == null)
@@ -556,20 +572,6 @@ public partial class MaterialsTab : VBoxContainer
         Open(Queue[((i % Queue.Count) + Queue.Count) % Queue.Count]);
     }
 
-    public override void _UnhandledKeyInput(InputEvent e)
-    {
-        if (!IsVisibleInTree() || e is not InputEventKey { Pressed: true } k)
-            return;
-        var focus = GetViewport().GuiGetFocusOwner();
-        if (focus != null && !IsAncestorOf(focus))
-            return;
-        if (k.Keycode is Key.Down or Key.Up && focus is not ItemList)
-        {
-            Next(k.Keycode == Key.Down ? 1 : -1);
-            GetViewport().SetInputAsHandled();
-        }
-    }
-
     /// <summary>Shows <paramref name="id"/> (the settings kept): its pixels read here (the extension answers on the main thread), the maps made again.</summary>
     public string? Open(string id)
     {
@@ -594,6 +596,9 @@ public partial class MaterialsTab : VBoxContainer
         RebuildSettings();
         RefreshProfileBox();
         FindObject(id);
+        // the In map view follows the texture (its map found again)
+        if (_shape.Selected == MaterialPreview.InMap)
+            EnterInMap();
         UpdateLight();
         Remake();
         UpdateMaterials();
@@ -681,6 +686,8 @@ public partial class MaterialsTab : VBoxContainer
 
     private void SetShape(int shape)
     {
+        if (shape == MaterialPreview.InMap)
+            EnterInMap();
         if (shape == MaterialPreview.Object && !_preview.HasObject)
             Say(_objectLevel != null ? "loading the game piece..." : "no game piece known for this texture: a sphere");
         _preview.SetShape(shape, null, null);
@@ -765,7 +772,7 @@ public partial class MaterialsTab : VBoxContainer
 
     private void RebuildSettings()
     {
-        _stepTitle.Text = $"{(int)Step} · {Label(Step)}";
+        _stepTitle.Text = $"{Mathf.Max(0, StripSteps().IndexOf(Step))} · {Label(Step)}";
         _stepNote.Text = Notes[Step];
         foreach (var c in _settingsBox.GetChildren())
             c.QueueFree();
@@ -828,6 +835,8 @@ public partial class MaterialsTab : VBoxContainer
         }
         if (Step == MaterialStep.Detail)
             BuildDetailSources();
+        if (Step == MaterialStep.Source)
+            BuildComfyRow();
         _removeMap.Visible = !MaterialPipeline.IsCore(Step);
         _map2d.Arrow = Step == MaterialStep.Normal ? Recipe.NormalLightAngle : null;
         _checkLabel.Visible = Step == MaterialStep.Albedo && _checkLabel.Text.Length > 0;
@@ -846,12 +855,13 @@ public partial class MaterialsTab : VBoxContainer
         cp.PopupClosed += () => EndDrag(prop);
         row.AddChild(cp);
         _controls[prop] = cp;
-        var pick = new Button { Text = "Pick", TooltipText = "Click the colour in the 2D map or on the object in the preview", ToggleMode = true };
+        var pick = new Button { Text = "Pick", TooltipText = "Click or drag in the 2D map or on the object in the preview (the mean over the pick radius)", ToggleMode = true };
         pick.Toggled += on =>
         {
-            _pickFor = on ? prop : null;
-            _map2d.Picking = on;
-            _preview.Picking = on;
+            if (on)
+                StartPick(prop);
+            else
+                EndPick();
         };
         row.AddChild(pick);
         AddReset(row, prop, st.Label);
@@ -983,14 +993,13 @@ public partial class MaterialsTab : VBoxContainer
         cp.PopupClosed += () => EndDrag(prop);
         row.AddChild(cp);
         _controls[prop] = cp;
-        var pick = new Button { Text = "Pick", TooltipText = "Click the colour in the 2D map or on the object in the preview", ToggleMode = true };
+        var pick = new Button { Text = "Pick", TooltipText = "Click or drag in the 2D map or on the object in the preview (the mean over the pick radius; its mask shown while picking)", ToggleMode = true };
         pick.Toggled += on =>
         {
-            _pickFor = on ? prop : null;
-            _map2d.Picking = on;
-            _preview.Picking = on;
             if (on)
-                Say("click the colour in the 2D map or on the object in the preview");
+                StartPick(prop);
+            else
+                EndPick();
         };
         row.AddChild(pick);
         int index = prop[^1] is >= '1' and <= '3' ? prop[^1] - '0' : 1;
@@ -1019,33 +1028,6 @@ public partial class MaterialsTab : VBoxContainer
             BeginDrag(prop);
         SetLive(prop, value);
         Changed([prop]);
-    }
-
-    /// <summary>The 2D view was clicked while picking: the colour there (of the step's input) becomes the setting's (one undo step).</summary>
-    private void PickedAt(Vector2 uv)
-    {
-        if (_pickFor is not { } prop)
-            return;
-        _pickFor = null;
-        _map2d.Picking = false;
-        _preview.Picking = false;
-        foreach (var b in _settingsBox.FindChildren("*", "Button", true, false).OfType<Button>().Where(b => b.ToggleMode && b.Text == "Pick"))
-            b.SetPressedNoSignal(false);
-        if (PickColour(prop, uv) is { } c)
-            Say($"{LabelOf(prop)}: picked #{c.ToHtml(false)}");
-    }
-
-    /// <summary>The colour of the step's input at <paramref name="uv"/> set as <paramref name="prop"/> (one undo step); the colour, or null.</summary>
-    public Color? PickColour(string prop, Vector2 uv)
-    {
-        var from = prop.StartsWith("Height", System.StringComparison.Ordinal) && Recipe.HeightFrom == HeightInput.Source ? MaterialStep.Source : MaterialStep.Albedo;
-        if (Pixels(from) is not { } img)
-            return null;
-        int x = Mathf.Clamp((int)(uv.X * img.Width), 0, img.Width - 1), y = Mathf.Clamp((int)(uv.Y * img.Height), 0, img.Height - 1);
-        int i = (y * img.Width + x) * 4;
-        var c = new Color(img.Rgba[i] / 255f, img.Rgba[i + 1] / 255f, img.Rgba[i + 2] / 255f, 1);
-        SetSetting(prop, c);
-        return c;
     }
 
     private void RefreshControls()
@@ -1088,12 +1070,16 @@ public partial class MaterialsTab : VBoxContainer
             if (!MaterialPipeline.On(Recipe, s))
                 popup.AddItem(Label(s), (int)s);
         _addMap.Disabled = popup.ItemCount == 0;
+        // numbered by their place in the strip: the keys 0 to 9 go there
+        var shown = StripSteps();
         foreach (var s in MaterialPipeline.Steps)
         {
             _strip[s].Col.Visible = MaterialPipeline.On(Recipe, s);
             var mode = MaterialPipeline.ModeOf(Recipe, s);
             string mark = mode == StepMode.Skip ? " –" : mode == StepMode.Import ? " ⇩" : _shownSide.GetValueOrDefault(s) >= _workingSide && _workingSide > 0 ? " ✓" : " …";
-            _strip[s].Button.Text = $"{(int)s} {Label(s)}{mark}";
+            int at = shown.IndexOf(s);
+            _strip[s].Button.Text = $"{(at >= 0 ? at : (int)s)} {Label(s)}{mark}";
+            _strip[s].Button.TooltipText = $"Go to the {Label(s)} step" + (at is >= 0 and <= 9 ? $" (key {at})" : "");
             _strip[s].Thumb.Texture = s == MaterialStep.Source ? (_maps.TryGetValue(s, out var src) ? src : _sourceTex) : MaterialPipeline.On(Recipe, s) ? _maps.GetValueOrDefault(s) : null;
             if (s == Step)
                 _strip[s].Button.SetPressedNoSignal(true);
@@ -1454,7 +1440,7 @@ public partial class MaterialsTab : VBoxContainer
     {
         // an added or removed map, or the detail's source: the panel's rows change
         if (props.Any(p => p.EndsWith("On", System.StringComparison.Ordinal) || p is nameof(PbrRecipe.DetailFrom) or nameof(PbrRecipe.DetailTexture)
-            or nameof(PbrRecipe.DetailAlbedoFile) or nameof(PbrRecipe.DetailNormalFile)))
+            or nameof(PbrRecipe.DetailAlbedoFile) or nameof(PbrRecipe.DetailNormalFile) or nameof(PbrRecipe.Upscaler)))
             RebuildSettings();
         RefreshControls();
         if (props.All(MaterialPipeline.MaterialOnly.Contains))
@@ -1482,6 +1468,8 @@ public partial class MaterialsTab : VBoxContainer
         var snap = (PbrRecipe)Recipe.Duplicate();
         foreach (var f in MaterialPipeline.Files(snap))
             LoadImport(f);
+        // ComfyUI's upscale as the source when it is cached (else asked for; Lanczos meanwhile)
+        ComfyPrepare(snap);
         // the maps taken out of the material: off it at once
         bool removed = false;
         foreach (var s in MaterialPipeline.Extras)
@@ -1531,6 +1519,9 @@ public partial class MaterialsTab : VBoxContainer
     {
         if (_gpu != null)
             TickGpu();
+        TickComfy();
+        if (!Saving && _bakeRun == null)
+            BakeBackends.Trim();
         int shown = 0;
         while (shown < 6 && _pipe.Results.TryDequeue(out var r))
         {
@@ -1548,6 +1539,7 @@ public partial class MaterialsTab : VBoxContainer
             FinishBake();
         TickBake();
         PollObject();
+        PollInMap();
     }
 
     private void TickGpu()
@@ -1691,7 +1683,9 @@ public partial class MaterialsTab : VBoxContainer
     private void UpdateMaterials()
     {
         var r = Recipe;
-        float t = (float)_tile.Value;
+        // the In map view draws the game's UVs as they are
+        bool inMap = _shape.Selected == MaterialPreview.InMap;
+        float t = inMap ? 1f : (float)_tile.Value;
         _preview.Tiling = t;
         var uv = new Vector3(t, t, 1);
         foreach (var m in new BaseMaterial3D[] { _mat, _raw, _unshaded })
@@ -1728,6 +1722,7 @@ public partial class MaterialsTab : VBoxContainer
         PbrBuilder.ApplyExtras(_mat, role => ExtraTexture(role, r), r);
         _mat.UV2Scale = new Vector3(r.DetailScale * t, r.DetailScale * t, 1);
         bool classic = _compare.Selected == 1;
+        SetInMapMaterials(classic);
         _preview.UseClassic = classic;
         _preview.SetMaterials(_mat, classic ? _unshaded : _raw);
     }
@@ -1763,6 +1758,9 @@ public partial class MaterialsTab : VBoxContainer
         _compare.Selected = compare;
         UpdateMaterials();
     }
+
+    /// <summary>A step's map as the preview's material samples it (the checks), or null.</summary>
+    public Texture2D? MapTexture(MaterialStep s) => s == MaterialStep.Source ? _maps.GetValueOrDefault(s) ?? _sourceTex : _maps.GetValueOrDefault(s);
 
     /// <summary>The preview's material (the checks).</summary>
     public OrmMaterial3D Material3D => _mat;
@@ -2053,7 +2051,7 @@ public partial class MaterialsTab : VBoxContainer
     private void Start(List<QueueBake.Job> jobs, string action)
     {
         BakeResult = null;
-        _bakeRun = new QueueBake(this, jobs, _gpu != null, LoadImport, FinishJob, action);
+        _bakeRun = new QueueBake(this, jobs, _gpu != null, LoadImport, FinishJob, action) { Upscaled = UpscaledFor };
         Say($"{action}: making {jobs.Count} on the {(_gpu != null ? "GPU" : "CPU")}...");
         FillQueue();
         RefreshProfileBox();
@@ -2093,6 +2091,7 @@ public partial class MaterialsTab : VBoxContainer
     {
         var r = (PbrRecipe)job.Recipe.Duplicate();
         var entry = MakeEntry(job.Id, baked, r, job.Profile);
+        SetMaterialSourceNote(entry, UpscaleNote(r, _bakeRun?.ComfyUsed.Contains(job.Id) == true));
         var thumb = PbrBuilder.ToImage(baked.Maps[MaterialStep.Albedo]);
         thumb.Resize(48, Mathf.Max(1, 48 * thumb.GetHeight() / Mathf.Max(1, thumb.GetWidth())), Image.Interpolation.Bilinear);
         _thumbs[job.Id] = ImageTexture.CreateFromImage(thumb);
@@ -2154,6 +2153,8 @@ public partial class MaterialsTab : VBoxContainer
     private RgbaImage? _saveOrm;
     private Image? _saveHeight;
     private GpuBake? _bake;
+    /// <summary>Whether the save's source is ComfyUI's upscale (its Source note).</summary>
+    private bool _saveComfy;
 
     /// <summary>Whether a save is going; the last save's outcome (null: none yet).</summary>
     public bool Saving => _saveRun >= 0 || _bake != null;
@@ -2178,6 +2179,7 @@ public partial class MaterialsTab : VBoxContainer
         _saveRecipe = (PbrRecipe)Recipe.Duplicate();
         _saveRecipe.Version = 3;
         _saveId = Current;
+        _saveComfy = ComfySourceInUse;
         _saveMaps.Clear();
         _saveAux.Clear();
         (_saveOrm, _saveHeight) = (null, null);
@@ -2188,7 +2190,8 @@ public partial class MaterialsTab : VBoxContainer
         if (_gpu != null)
         {
             var (w, h, scale) = MaterialPipeline.Size(inputs, MaterialPipeline.FullSide);
-            _bake = new GpuBake(this, inputs, w, h, scale);
+            // the last bake's passes when kept (no targets allocated again at the same size)
+            _bake = new GpuBake(this, inputs, w, h, scale, BakeBackends.Take(this));
             return null;
         }
         _saveRun = _pipe.Request(inputs, Step, [MaterialPipeline.FullSide], keep: true);
@@ -2199,7 +2202,8 @@ public partial class MaterialsTab : VBoxContainer
 
     private void FinishBake()
     {
-        var (baked, _) = _bake!.Finish();
+        var (baked, _) = _bake!.Finish(recipe: _saveRecipe);
+        BakeBackends.Return(_bake.Backend);
         _bake = null;
         foreach (var (s, img) in baked.Maps)
             _saveMaps[s] = img;
@@ -2250,6 +2254,7 @@ public partial class MaterialsTab : VBoxContainer
         var baked = new BakedMaps(new Dictionary<MaterialStep, RgbaImage>(_saveMaps), _saveOrm!, _saveHeight ?? PbrBuilder.ToImage(_saveMaps[MaterialStep.Height]),
             new Dictionary<string, RgbaImage>(_saveAux));
         var entry = MakeEntry(id, baked, r, ProfileName);
+        SetMaterialSourceNote(entry, UpscaleNote(r, _saveComfy));
         _plugin.SetTexture(id, entry, $"Save the material of {RemasterTextures.ShortName(id)}");
         _savedHere.Add(id);
         FillQueue();

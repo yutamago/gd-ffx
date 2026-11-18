@@ -337,6 +337,21 @@ out. The Source step's **seam tool** (a height-aware overlap, or a scatter of
 rotated copies) makes a texture that does not tile tile, every map
 following it.
 
+R2b's phase 5 (docs/remaster-materials.md, "Phase 5: what there is"):
+**keys** while the tab has the focus (editor shortcuts, section "FFX
+Materials": 0 to 9 the strip's steps, [ and ] step by step, the arrows the
+queue, Tab the compare, Shift+Tab swaps the sides, Ctrl+S saves the texture,
+R resets the setting under the mouse, F frames, M In map, ? lists them);
+**colour picks** by a click or a drag in the 2D map or on the preview's
+object, averaged over the pick radius; **Alt+click** on a surface in the 3D
+view (or **Pick texture** in its toolbar) queues the texture under the
+cursor (Shift: the part's every texture); the **In map** preview (the map
+that uses the texture around it, lit by its remastered lighting, the live
+material on the texture's surfaces, the classic look across the wipe); and
+**ComfyUI** as the Source step's upscaler (progress, cancel, the answer
+cached per texture and model, the tool, model and licence in the texture's
+Source).
+
 ### Profiles and the queue
 
 R2b's phase 3 (docs/remaster-materials.md, "Profiles", "Phase 3: what there
@@ -379,7 +394,12 @@ set the editor setting `ffx_remaster/comfyui_url`, e.g.
 ImageUpscaleWithModel, ImageScaleBy, SaveImage) and makes the answer the
 replacement. gd-ffx ships no model and downloads nothing; use models whose
 licences allow it and write the model and its licence into the texture's
-`Source`. The ComfyUI client has not been run against a real server yet.
+`Source` (the editor setting `ffx_remaster/comfyui_model_licence`: the
+Materials tab writes it there itself). The Materials tab's Source step takes
+ComfyUI as its upscaler too (R2b phase 5: in the background, with progress
+and cancel, the answer cached in `user://remaster/comfyui-cache/`). The
+client is checked against the editor check's fake server (the same calls);
+it has not been run against a real ComfyUI yet.
 
 ## The render path
 
@@ -975,6 +995,27 @@ FFX_EDITOR_SHOT=1 FFX_GAME_DIR=<game> tools/remaster-editor-check.sh [OUT_DIR]  
    lit`), and `materials-isolate.png`, `materials-normal-light.png`,
    `materials-occlusion.png`, `materials-defaults.png`, `materials-bands.png`,
    `materials-lit-raw.png`, `materials-lit-material.png`.
+   Phase 5 (after phase 4's): every shortcut of the tab sent as an input
+   event (0 to 9 and the brackets to the strip's steps, Tab and Shift+Tab the
+   wipe, the arrows the queue, R the setting under the mouse back to its
+   default in one undo step, F, ? the list, Ctrl+S a save in one undo step),
+   none with the focus on a control outside the tab or with the tab hidden; a
+   colour sample picked by a drag in the 2D map (radius 3: the disc's mean,
+   one undo step, its mask shown) and one by a click on the preview's plane;
+   a texture of Besaid beach picked in the 3D view (the editor's camera put in
+   front of a surface: Alt+click queues it, Pick texture with Shift consumes
+   the click, an Alt+drag picks nothing); the In map view (M: the open map's
+   copy, the live lit material on the texture's surfaces and the classic
+   material across the wipe, the map's light, a pick on the piece; a texture
+   of another Besaid map loaded on demand); ComfyUI through the fake server
+   (`FakeComfy`: progress, a cancel before any answer, Run again, the answer
+   cached and the source, from memory and from the cache folder without a
+   request, the Source note on Save; its cache file removed after). Under a
+   renderer the In map view's pixels, where the texture is drawn (where the
+   two sides differ), change with the de-lighting, the normals' strength and
+   the metal, and its classic side differs from the live one; `r2b5-shortcuts.png`,
+   `r2b5-pick-mask.png`, `r2b5-pick-in-map.png`, `r2b5-in-map.png`,
+   `r2b5-in-map-wipe.png`, `r2b5-in-map-changed.png`.
    Phase 3 (after the save; profiles into `--remaster-profiles=res://remaster/check/profiles`,
    a layer after the project's, gitignored, removed at the end): the eight
    starter profiles listed (the project's layer), their files as the editor
@@ -1271,6 +1312,10 @@ export that holds either (`project.godot` still names the plugin's
 | `QueueBake.cs` | a run of Apply to queue or Make again: one texture after another at the full size, GPU or CPU |
 | `TextureStore.cs` | the project's texture index and files, the import |
 | `MaterialsTab.cs` | the Materials tab (R2b): the queue, the steps and their settings, undo, the pipeline's results, save; profiles, exceptions, Apply to queue, Make again |
+| `MaterialsTab.Keys.cs`, `.Pick.cs`, `.InMap.cs`, `.Comfy.cs` | the tab's shortcuts, colour picks, the In map preview, ComfyUI in the Source step (R2b phase 5) |
+| `InMapScene.cs` | the In map preview's copy of a map (the live and classic surfaces of the texture) |
+| `RemasterPlugin.Pick.cs` | textures picked in the open map (Alt+click, Pick texture) |
+| `FakeComfy.cs` | the editor check's stand-in ComfyUI server (loopback) |
 | `MaterialPreview.cs` | the tab's 3D preview: the objects, the camera, the compare wipe, studio, HDRI and the map's light |
 | `MapView2D.cs` | the tab's map in 2D (zoom, pan, 2x2, the split, picking, the painted light's arrow) |
 | `PreviewObject.cs` | the game piece that draws a texture, as one mesh |

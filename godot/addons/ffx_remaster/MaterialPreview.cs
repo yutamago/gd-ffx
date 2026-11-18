@@ -31,8 +31,8 @@ public sealed record MapLight(string Level, ResolvedLighting Light, MapLighting 
 [Tool]
 public partial class MaterialPreview : Control
 {
-    public const int Plane = 0, Cube = 1, Cylinder = 2, Sphere = 3, Object = 4;
-    public static readonly string[] Objects = ["Plane", "Cube", "Cylinder", "Sphere", "Object"];
+    public const int Plane = 0, Cube = 1, Cylinder = 2, Sphere = 3, Object = 4, InMap = 5;
+    public static readonly string[] Objects = ["Plane", "Cube", "Cylinder", "Sphere", "Object", "In map"];
 
     private const string WipeCode = @"shader_type canvas_item;
 uniform sampler2D left_view : filter_linear;
@@ -65,16 +65,41 @@ void fragment() {
     private float _yaw = 0.6f, _pitch = -0.45f, _distance = 4.2f;
     private Vector3 _target;
     private float _keyYaw = -0.7f, _keyPitch = -0.8f, _envYaw;
+    /// <summary>The cameras' far plane at least (the In map view: the whole map), 0: from the distance.</summary>
+    private float _far;
     private enum Drag { None, Orbit, Light, Environment, Pan, Wipe }
     private Drag _drag;
 
     public int Shape { get; private set; } = Sphere;
 
-    /// <summary>The next left click picks the object's UV under the mouse (<see cref="Picked"/>) instead of orbiting.</summary>
-    public bool Picking { get; set; }
+    /// <summary>Left clicks and drags pick the object's UV under the mouse (<see cref="PickDrag"/>) instead of orbiting (the cursor a cross).</summary>
+    public bool Picking
+    {
+        get => _picking;
+        set
+        {
+            _picking = value;
+            _pickDrag &= value;
+            MouseDefaultCursorShape = value ? CursorShape.Cross : CursorShape.Arrow;
+        }
+    }
 
-    /// <summary>A click while <see cref="Picking"/>: the UV of the object under it (0-1, the tiling undone).</summary>
-    public event System.Action<Vector2>? Picked;
+    private bool _picking, _pickDrag;
+    private Vector2 _lastPick;
+
+    /// <summary>A pick while <see cref="Picking"/>: the UV of the object under the mouse (0-1, the tiling undone) and the phase (0 pressed, 1 dragged, 2 released).</summary>
+    public event System.Action<Vector2, int>? PickDrag;
+
+    /// <summary>The In map view's copy of the map (null: none built).</summary>
+    public InMapScene? MapScene => _inMap;
+
+    private InMapScene? _inMap;
+
+    /// <summary>The In map view's materials, from each live surface's classic material: the material's side and the compare's.</summary>
+    public System.Func<Material?, Material?>? InMapRight, InMapLeft;
+
+    /// <summary>The meshes' arrays a pick tests (by mesh and surface), kept until the object changes.</summary>
+    private readonly Dictionary<(Mesh, int), (Vector3[] V, Vector2[] T, int[]? I)> _pickArrays = new();
 
     /// <summary>The UV tiling on the primitives (the pick undoes it).</summary>
     public float Tiling { get; set; } = 1;
@@ -82,38 +107,97 @@ void fragment() {
     /// <summary>The UV of the object under a point of the view (a ray against its triangles), or null.</summary>
     public Vector2? UvAt(Vector2 pos)
     {
-        if (_objRight.Mesh is not { } mesh || Size.X < 1 || Size.Y < 1)
+        if (Size.X < 1 || Size.Y < 1)
             return null;
         // the camera's ray, from the view's own projection (the SubViewport has the view's size)
-        var from = _camRight.ProjectRayOrigin(pos);
-        var dir = _camRight.ProjectRayNormal(pos);
-        var inv = _objRight.GlobalTransform.AffineInverse();
-        from = inv * from;
-        dir = (inv.Basis * dir).Normalized();
+        var origin = _camRight.ProjectRayOrigin(pos);
+        var ray = _camRight.ProjectRayNormal(pos);
         float best = float.MaxValue;
         Vector2? uv = null;
-        for (int s = 0; s < mesh.GetSurfaceCount(); s++)
+        foreach (var (inst, s) in PickTargets())
         {
-            var arrays = mesh.SurfaceGetArrays(s);
-            if (arrays[(int)Mesh.ArrayType.TexUV].VariantType == Variant.Type.Nil)
+            if (inst.Mesh is not { } mesh || s >= mesh.GetSurfaceCount())
                 continue;
-            var v = arrays[(int)Mesh.ArrayType.Vertex].AsVector3Array();
-            var t = arrays[(int)Mesh.ArrayType.TexUV].AsVector2Array();
-            var idx = arrays[(int)Mesh.ArrayType.Index].VariantType == Variant.Type.Nil ? null : arrays[(int)Mesh.ArrayType.Index].AsInt32Array();
+            var inv = inst.GlobalTransform.AffineInverse();
+            var from = inv * origin;
+            var dir = (inv.Basis * ray).Normalized();
+            if (!_pickArrays.TryGetValue((mesh, s), out var arr))
+            {
+                var arrays = mesh.SurfaceGetArrays(s);
+                arr = arrays[(int)Mesh.ArrayType.TexUV].VariantType == Variant.Type.Nil ? ([], [], null)
+                    : (arrays[(int)Mesh.ArrayType.Vertex].AsVector3Array(), arrays[(int)Mesh.ArrayType.TexUV].AsVector2Array(),
+                        arrays[(int)Mesh.ArrayType.Index].VariantType == Variant.Type.Nil ? null : arrays[(int)Mesh.ArrayType.Index].AsInt32Array());
+                _pickArrays[(mesh, s)] = arr;
+            }
+            var (v, t, idx) = arr;
+            if (t.Length == 0)
+                continue;
             int n = idx?.Length ?? v.Length;
             for (int i = 0; i + 2 < n; i += 3)
             {
                 int a = idx?[i] ?? i, b = idx?[i + 1] ?? i + 1, c = idx?[i + 2] ?? i + 2;
-                if (Hit(from, dir, v[a], v[b], v[c]) is not { } hit || hit.T >= best)
+                if (Hit(from, dir, v[a], v[b], v[c]) is not { } hit)
                     continue;
-                best = hit.T;
+                // the distances compared in the view's space (the meshes have their own scales)
+                float dist = (inst.GlobalTransform * (from + dir * hit.T)).DistanceTo(origin);
+                if (dist >= best)
+                    continue;
+                best = dist;
                 uv = t[a] * (1 - hit.U - hit.V) + t[b] * hit.U + t[c] * hit.V;
             }
         }
         if (uv is not { } u)
             return null;
-        var tiled = Shape == Object ? u : u * Tiling;
+        var tiled = Shape is Object or InMap ? u : u * Tiling;
         return new Vector2(tiled.X - Mathf.Floor(tiled.X), tiled.Y - Mathf.Floor(tiled.Y));
+    }
+
+    /// <summary>The surfaces a pick tests: the object's (all), or in the In map view the ones that draw the texture.</summary>
+    private IEnumerable<(MeshInstance3D Mesh, int Surface)> PickTargets()
+    {
+        if (Shape == InMap && _inMap != null)
+        {
+            foreach (var (m, s, _) in _inMap.Live)
+                yield return (m, s);
+            yield break;
+        }
+        for (int s = 0; s < (_objRight.Mesh?.GetSurfaceCount() ?? 0); s++)
+            yield return (_objRight, s);
+    }
+
+    /// <summary>The view's point over the centre of the In map view's framed box, or of the object.</summary>
+    public Vector2 FocusPoint() => _camRight.UnprojectPosition(_target);
+
+    /// <summary>
+    /// A point of the view over a triangle a pick tests (the In map view's surfaces with the
+    /// texture, else the object's), the one nearest the view's centre (the checks click there); null:
+    /// none in view.
+    /// </summary>
+    public Vector2? PiecePoint()
+    {
+        Vector2? best = null;
+        var centre = Size / 2;
+        foreach (var (inst, s) in PickTargets())
+        {
+            if (inst.Mesh is not { } mesh || s >= mesh.GetSurfaceCount())
+                continue;
+            var arrays = mesh.SurfaceGetArrays(s);
+            var v = arrays[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+            var idx = arrays[(int)Mesh.ArrayType.Index].VariantType == Variant.Type.Nil ? null : arrays[(int)Mesh.ArrayType.Index].AsInt32Array();
+            int n = idx?.Length ?? v.Length;
+            for (int i = 0; i + 2 < n; i += 3)
+            {
+                var c = inst.GlobalTransform * ((v[idx?[i] ?? i] + v[idx?[i + 1] ?? i + 1] + v[idx?[i + 2] ?? i + 2]) / 3);
+                if (_camRight.IsPositionBehind(c))
+                    continue;
+                var p = _camRight.UnprojectPosition(c);
+                if (p.X < 0 || p.Y < 0 || p.X >= Size.X || p.Y >= Size.Y || UvAt(p) == null)
+                    continue;
+                if (best is not { } b || p.DistanceTo(centre) < b.DistanceTo(centre))
+                    best = p;
+            }
+        }
+        return best;
     }
 
     /// <summary>Möller-Trumbore: the ray's distance and the barycentric weights of <paramref name="b"/> and <paramref name="c"/>.</summary>
@@ -208,6 +292,8 @@ void fragment() {
 
     private void ApplyMaterials()
     {
+        if (_inMap != null && InMapRight != null && InMapLeft != null)
+            _inMap.Apply(InMapRight, InMapLeft);
         int n = _objRight.Mesh?.GetSurfaceCount() ?? 0;
         for (int i = 0; i < n; i++)
         {
@@ -236,7 +322,18 @@ void fragment() {
     {
         if (objectMesh != null)
             (_objectMesh, _objectClassic) = (objectMesh, classic);
-        Shape = shape == Object && _objectMesh == null ? Sphere : shape;
+        Shape = shape == Object && _objectMesh == null || shape == InMap && _inMap == null ? Sphere : shape;
+        _pickArrays.Clear();
+        // the In map view draws the map's copy instead of the object
+        _objRight.Visible = _objLeft.Visible = Shape != InMap;
+        if (_inMap != null)
+            _inMap.Root.Visible = Shape == InMap;
+        if (Shape == InMap)
+        {
+            ApplyMaterials();
+            Frame();
+            return;
+        }
         Mesh mesh = Shape switch
         {
             Plane => new PlaneMesh { Size = new Vector2(2.4f, 2.4f) },
@@ -278,6 +375,25 @@ void fragment() {
     }
 
     public bool HasObject => _objectMesh != null;
+
+    /// <summary>The In map view's copy of a map (null: none; the view falls back to the sphere).</summary>
+    public void SetInMap(InMapScene? scene)
+    {
+        if (_inMap != null)
+            _inMap.Root.QueueFree();
+        _inMap = scene;
+        _pickArrays.Clear();
+        if (scene != null)
+        {
+            scene.Root.Visible = Shape == InMap;
+            _root.AddChild(scene.Root);
+            ApplyMaterials();
+        }
+        else if (Shape == InMap)
+            SetShape(Sphere, null, null);
+        if (Shape == InMap)
+            Frame();
+    }
 
     /// <summary>The lighting: studio, an HDRI (a file), or a map's (resolved).</summary>
     public void SetLight(PreviewLight light, string hdri, MapLight? map)
@@ -370,6 +486,21 @@ void fragment() {
     /// <summary>Frames the object.</summary>
     public void Frame()
     {
+        if (Shape == InMap && _inMap != null)
+        {
+            // the piece that draws the texture, the camera a little above it
+            var f = _inMap.Focus;
+            _target = f.GetCenter();
+            float fr = Mathf.Max(0.05f, f.Size.X * 0.5f);
+            _distance = fr / Mathf.Tan(Mathf.DegToRad(_camRight.Fov * 0.5f)) * 1.1f;
+            _pitch = Mathf.Min(_pitch, -0.6f);
+            _far = Mathf.Max(_distance * 20f, _inMap.Bounds.Size.Length() * 2f);
+            _key.DirectionalShadowMaxDistance = Mathf.Max(100f, _distance * 4f);
+            UpdateCamera();
+            return;
+        }
+        _far = 0;
+        _key.DirectionalShadowMaxDistance = 100f;
         var aabb = _objRight.Mesh?.GetAabb() ?? new Aabb(-Vector3.One, Vector3.One * 2);
         _target = aabb.GetCenter();
         float r = Mathf.Max(0.5f, aabb.Size.Length() * 0.5f);
@@ -401,7 +532,7 @@ void fragment() {
         _camRight.GlobalTransform = t;
         _camLeft.GlobalTransform = t;
         _camRight.Near = _camLeft.Near = Mathf.Max(0.01f, _distance * 0.02f);
-        _camRight.Far = _camLeft.Far = _distance * 20f;
+        _camRight.Far = _camLeft.Far = Mathf.Max(_distance * 20f, _far);
     }
 
     public override void _GuiInput(InputEvent e)
@@ -418,10 +549,25 @@ void fragment() {
                 UpdateCamera();
                 AcceptEvent();
                 break;
-            case InputEventMouseButton { ButtonIndex: MouseButton.Left, Pressed: true } pick when Picking:
-                Picking = false;
-                if (UvAt(pick.Position) is { } puv)
-                    Picked?.Invoke(puv);
+            case InputEventMouseButton { ButtonIndex: MouseButton.Left } pick when Picking || _pickDrag:
+                if (pick.Pressed && UvAt(pick.Position) is { } puv)
+                {
+                    (_pickDrag, _lastPick) = (true, puv);
+                    PickDrag?.Invoke(puv, 0);
+                }
+                else if (!pick.Pressed && _pickDrag)
+                {
+                    _pickDrag = false;
+                    PickDrag?.Invoke(UvAt(pick.Position) ?? _lastPick, 2);
+                }
+                AcceptEvent();
+                break;
+            case InputEventMouseMotion pm when _pickDrag:
+                if (UvAt(pm.Position) is { } muv)
+                {
+                    _lastPick = muv;
+                    PickDrag?.Invoke(muv, 1);
+                }
                 AcceptEvent();
                 break;
             case InputEventMouseButton { ButtonIndex: MouseButton.Left } b:
