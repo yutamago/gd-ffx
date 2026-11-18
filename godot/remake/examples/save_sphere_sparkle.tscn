@@ -27,7 +27,7 @@ billboard_keep_scale = true
 
 [sub_resource type="QuadMesh" id="QuadMesh_spark"]
 material = SubResource("StandardMaterial3D_spark")
-size = Vector2(0.9, 0.9)
+size = Vector2(1.5, 1.5)
 
 [sub_resource type="Gradient" id="Gradient_life"]
 offsets = PackedFloat32Array(0, 0.15, 0.7, 1)
@@ -63,7 +63,7 @@ script = ExtResource("1_fx")
 Note = "R7's example remade effect (original work, made of Godot's particles and generated gradients; no game data): sparkles rising around a save sphere. The checks register it for Besaid beach's save sphere glow, field program 15 (bsil00-fp15)."
 
 [node name="Sparkles" type="GPUParticles3D" parent="."]
-amount = 64
+amount = 120
 lifetime = 1.8
 preprocess = 1.0
 visibility_aabb = AABB(-10, -10, -10, 20, 24, 20)
@@ -72,5 +72,5 @@ draw_pass_1 = SubResource("QuadMesh_spark")
 
 [node name="Glow" type="OmniLight3D" parent="."]
 light_color = Color(0.6, 0.85, 1, 1)
-light_energy = 1.2
+light_energy = 2.0
 omni_range = 14.0

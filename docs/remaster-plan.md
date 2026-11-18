@@ -48,7 +48,8 @@ not: Godot is the renderer and the editor.
 | R4 | The remaster wizard: a first automated pass per map (de-light, PBR by a profile chosen per texture, sun from the game's light, sky, GI) with a review step; batch over all maps | R2b, R3 |
 | R5 | The game's data in the editor: walkmesh and collision, triggers, entrances and events, script-moved objects, map cameras; checks that remade geometry lines up | R1 |
 | R6 | Characters: higher-detail models, retargeting to the game's bones, skin/hair/eye shaders, cloth (the game's simulation or Godot's), faces | R1 |
-| R7 | The rest: effects as Godot particles by effect id, 2D rooms rebuilt in 3D, movies, audio replacement by id, UI art | R1-R3 |
+| R7a | Effects as Godot particles by effect id, audio replacement by id, movies | R1-R3 |
+| R7b | The rest: 2D rooms rebuilt in 3D, UI art | R1-R3, R5 |
 | R8 | Quality: before/after renders of every map, a status dashboard, regression pictures in the sweep, performance budgets (Steam Deck), the GPU checks | all |
 
 ## R1 in detail
@@ -461,6 +462,119 @@ Open after R6:
   R3's rig lights them on a remastered map);
 - real character art (the user's), and a CC0 humanoid in glTF to test an
   import end to end.
+
+## R7a in detail
+
+R7a, effects, audio and movies, is done (2026-11-18; docs/remake.md, "Effects"
+and "Replaced sounds and movies"; docs/remaster-editor.md, "Effects, audio and
+movies"; docs/architecture.md, "Replacing music, sound effects, voice and
+movies"):
+
+- **Effects by stable id.** The extension resolves who made each captured
+  effect draw (`fxowner.rs`, from the game's memory at the boundary of the
+  update the frame drew): a map's field program, `<level>-fp<n>` (entry `n` of
+  the map's effect table, by the ppp objects of its part `g_FpRun + 0x80 n`),
+  or a spell overlay, `magic-<id>` (the overlay's image range). On Besaid beach
+  all 30 draws have owners: 15 field programs, the save sphere's glow
+  `bsil00-fp15` (8 draws), the sea's strips `fp0`..`fp13`.
+- **Remade effects in the game.** A scene registered for the id (kind
+  `effect`: the convention's `res://remake/effect/<id>.tscn`, `remake.json`,
+  packs) is instanced at the effect's place while it draws, following it; its
+  classic draws are left out; when the classic effect ends the remake's
+  particles stop and it is freed after they died out. Options on a
+  `RemadeEffect` root (hide the classic, follow, offset, linger).
+- **Recordings for the editor**: each effect the game draws, once a run, its
+  draw list over 120 updates (`user://remaster/effects/<id>.fxrec`, an
+  index); the player's, never in git.
+- **The example**: `res://remake/examples/save_sphere_sparkle.tscn`, sparkles
+  and a light of Godot's particles and generated gradients (original), on
+  `bsil00-fp15`.
+- **Audio by id**: every sound command the game queues is seen at
+  `Fmod_PushCommand` (wrapped in the function table, as the Flash screens'
+  functions are: no ffx-rust change); a replaced id is silent in the game's mix
+  (music and voice by their category and track volumes, a sound effect by its
+  own) while Godot plays the replacement at the same moments: music looping
+  between loop points, following the game's fades and volumes; sound effects
+  at the game's volume for them; voice lines; the options' volumes. Layers:
+  `res://remaster/audio/audio.tres` and the packs'.
+- **Movies by name**: `PVideoPlaybackWin32_open`/`_terminate` name the movie
+  and its end, the manager its frame and pause, the movie's sound stream is
+  silenced while Godot shows the replacement (Ogg Theora, its own sound or a
+  file or the game's, SubRip subtitles), 16:9 over the picture. An entry for
+  `LCI` replaces every language's file (`LCI_jp`, `LCI_us`). Layers:
+  `res://remaster/movies/movies.tres` and the packs'.
+- **F8** turns every replacement off and on for the run (`--no-replacements`).
+- **Editor**: the Media dock: Effects (the recordings, an effect opened with
+  its classic replay scrubbable beside the remake, assign, classic), Audio (the
+  game's sounds by id with their names from the data: 92 music tracks, 6,774
+  sound effects, 8,665 voice lines; the classic sound decoded from the player's
+  copy and the replacement played; assign with loop points and volume), Movies
+  (the game's 57 movies by name and language; assign a video and its sound,
+  preview); one undo step each.
+- **Checks**: `--selftest-effects --devsave=7`, `--selftest-audio
+  --devsave=7`, `--selftest-movie --devsave=22 --movie-video=FILE`
+  (`tools/make-test-movie.sh` makes an original test video with Godot's movie
+  writer); `tools/remaster-editor-check.sh`'s step 6 (the editor, then the game
+  with its files); `--selftest-besaid --devsave=7`, `--selftest-battle
+  --devsave=7 --battle=3,0,0`, `tools/selftest.sh` (the start-up opening),
+  `--selftest-mods --no-game` and the quick sweep (10 of 10, 0 errors)
+  unchanged; the example's pictures under Xvfb (Compatibility).
+
+### Decisions (R7a)
+
+- **An effect's id is its maker's.** The game's draws carry addresses; the
+  stable identity is what makes them: a map's field-program entry (the map
+  file's table) or a spell overlay. The battle's effect records keep their
+  record id (G6's `EffectView`); that id holds a per-character counter, so it
+  names one effect only within one battle's run. The battle's shared effects
+  and the op system's records get no id yet (they stay classic) rather than a
+  guessed one.
+- **Resolved in gd-ffx, at the game's boundary.** Reading the game's memory
+  from a snapshot observer (on the game's main thread, while the objects the
+  frame's draws name still exist) needs no ffx-rust change; gd-ffx already
+  reads the game's tables (encounters). An FXDR field for the owner would be
+  the cleaner home once ffx-rust's capture wants it.
+- **The game keeps playing; Godot plays over it.** Replaced sounds and movies
+  are not skipped in the game: its scripts wait on their states and ends, so
+  the game plays them silently (volumes held at 0, the movie's stream zeroed)
+  and Godot plays the replacement at the same moments. Music and voice are
+  silenced by their category and track volumes (one plays at a time); a sound
+  effect by its own volume (many overlap). The hooks wrap the game's functions
+  in the function table (`Fmod_PushCommand`, `Sg_MainLoop`, the movie player's
+  open, terminate and read callback), as `crate::flash` does.
+- **Ids as the game queues them.** Music by the FMOD command's id (the battle's
+  is 0x10, `1_09_battle_theme`), sound effects by sequence number (Besaid's sea
+  is `c355`, sample `50005`), voice by voice id, movies by file name with an
+  optional language suffix. Names come from the player's data (the music table
+  in `FFX.exe`, the event projects, `voiceidmapper.txt`); nothing is stored.
+- **Layers like the textures.** Sounds and movies are resources
+  (`RemasterSoundSet`, `RemasterMovieSet`) layered project, packs, run time, per
+  id; remade effects are scenes through the remake registry and its
+  convention, as characters and maps are. The editor writes at once, one undo
+  step each (the file's text before and after).
+- **One compare key for R7**: F8, beside F7's render path.
+- **Recordings once a run, 120 updates**, like R5's captures: enough to replay
+  an effect's look and timing next to a remake; capped at 400,000 vertices.
+- **Test media are generated**: the checks' tones are made in code, the test
+  video by Godot's own movie writer from a pattern drawn in code
+  (`tools/make-test-movie.sh`); nothing downloaded, nothing of the game's.
+
+Open after R7a:
+
+- the classic movie picture: gd-ffx draws none (the null device drops the
+  movie's texture uploads); decoding the game's WebM in the extension with
+  ffx-rust's `ffx-movie` (its VP8 and WebM readers) and showing it at the
+  manager's frame would also give the editor a classic preview;
+- effect ids for the battle's shared effects (`bat_eff`) and the op system's
+  records (by the effect record that started them), and an owner field in
+  ffx-rust's FXDR capture;
+- a replaced sound effect's pan, positional sound; the voice list in other
+  languages; re-synchronising a replacement video to the game's frame when it
+  drifts;
+- several recordings per effect (moments, variants), effects in the where-used
+  index;
+- ffx-rust's docs could take the facts found here (a field program's ppp
+  objects hang from its part; Besaid's save sphere glow is entry 15).
 
 ## Beyond the milestones
 

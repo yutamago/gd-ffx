@@ -124,9 +124,48 @@ target may hold there (not measured: that means playing sound aloud);
 `FFX_AUDIO_TARGET` tries one. Below a block (1,600 frames, the mixer's
 unit) nothing can go.
 
-The game's sound requests (G3's later steps: music and effects as Godot
-streams, positional sound) are not routed yet: Godot plays the finished
-mix.
+Godot plays the finished mix; replaced sounds are played by Godot beside
+it (below).
+
+## Replacing music, sound effects, voice and movies (R7a)
+
+The game keeps playing its sounds and movies as it always does (their
+timing, play states and ends are what its scripts wait on). The extension
+wraps four of its functions in the function table, as `crate::flash` does
+(`rust/ffx-gd/src/media.rs`; no ffx-rust change):
+
+- `Fmod_PushCommand(mgr; cmd, a, b, c, d)` (`0x006fa300`): every `iMusic*`,
+  `iSfx*`, `iVoice*` call queues one FMOD command there (ffx-rust's
+  sound.md, "FMOD command queue"; the handlers in its ffx-sound
+  `ffxfmod.rs`). Each is noted for Godot (`FfxGame.audio_events`). For an id
+  Godot replaces (`set_audio_replaced`) the game's own is made silent in its
+  mix: a music track by the music volume (command 0x43, `FfxFmod +0x1c`) and
+  the track's own volume (0x23) held at 0 while it is the one playing, a voice
+  line by the voice volume (0x44), a sound effect by its own volume (the
+  start's, 0x3b, 0x3c set to 0).
+- `Sg_MainLoop(dt)` (`0x00820ae0`): once an update, after a change of the
+  replaced ids (F8), the music or voice playing is silenced or given the
+  settings' volume and its track volume again.
+- `PVideoPlaybackWin32_open` and `_terminate` (`0x00a27f20`, `0x00a28430`):
+  the movie opened (its file name: `LCI_jp.webm`) and ended;
+  `FfxGame.movie_state` reads the manager's frame, pause and end
+  (`g_FMVPlayerManager +0x6d0..+0x710`).
+- the movie's sound stream's read callback (`0x00a27ee0`): silence while a
+  replacement plays (`set_movie_muted`).
+
+`AudioReplacementView` plays the replacements at the same moments (the
+music looping between its loop points, following the game's fades and
+volumes, stopping when the game stops it; a sound effect from its start at the
+game's volume for it, which it follows; a voice line), times the options'
+volumes (commands 0x42..0x45). `MovieView` (first in the overlay, under the
+fades and messages) shows a replaced movie's video 16:9 with bars, its sound
+as the entry says, its subtitles, paused with the game's movie, gone when the
+game ends or skips it. gd-ffx draws no classic movie picture yet: a movie
+without a replacement shows the 3D view as before.
+
+`FfxGame.audio_mix_level` (the RMS of the game's last half second of mix,
+measured as the blocks are queued) and `audio_holds` (the game's FMOD
+volumes) are for the checks.
 
 ## The game-state API (G1)
 
@@ -933,11 +972,21 @@ the game gets from `ViewProjection2` (traced only as the main camera's).
   black in mode 3 and holds at 1.000 (118 frames); a fade to black that
   stays below 1 fails it.
 
+- **Remade effects by id** (R7a, `EffectRemakeView`, under the 3D view):
+  each frame the extension tells who made each captured draw
+  (`FfxGame.effect_draw_owners`, `rust/ffx-gd/src/fxowner.rs`: resolved on the
+  game's main thread at the boundary of the update the frame drew, by a
+  snapshot observer, from the game's memory: a map's field-program entry by
+  the ppp objects of its part, a spell by the overlay's image range). An id
+  with a remade scene (docs/remake.md, "Effects") gets the scene at the
+  effect's place while it draws, and `EffectDrawView` leaves its classic draws
+  out; every effect is also recorded once a run for the editor
+  (`EffectRecorder`). At Besaid all 30 draws have owners (15 field programs).
 - **Effects as events** (`EffectView`, under the 3D view): each effect
   record the game starts (`Effects.running`, keyed by slot) plays where the
   game plays it, on each target or else on its character, while the game
-  keeps the record. A remade effect registered for its id (docs/remake.md)
-  is instanced there. Otherwise the game's own draws show it (above); only
+  keeps the record. A remade effect registered for its record id
+  (docs/remake.md) is instanced there. Otherwise the game's own draws show it (above); only
   when they are not captured does it get a stand-in, a short burst of
   particles in a colour of its id. Who a character index
   is: in battle the battler (below), out of battle the actor in that slot.
