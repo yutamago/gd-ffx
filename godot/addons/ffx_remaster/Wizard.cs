@@ -69,6 +69,12 @@ public sealed class Wizard
     {
         _plugin = plugin;
         State = WizardState.Load();
+        // a batch the last session left running comes back paused: Resume goes on
+        if (State.Batch is { Finished: false, Paused: false } b)
+        {
+            b.Paused = true;
+            Status = $"a batch at {b.Next} of {b.Maps.Count} (paused: Resume goes on)";
+        }
     }
 
     /// <summary>Reads the state file again (another editor session, an undo wrote it).</summary>

@@ -195,6 +195,7 @@ public partial class RemasterPlugin : EditorPlugin
         _catalogue = null;
         _dock?.ArchiveChanged();
         _characters?.Fill();
+        _wizardDock?.Refresh();
         if (ok)
             Uses.Start(Session);
         _textures?.UsesChanged();

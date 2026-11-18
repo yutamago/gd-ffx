@@ -172,6 +172,9 @@ public sealed class WizardTest : ITest
         }
         RemasterTextures.Register(set, "wizard", _dir);
         _lighting = WizardPass.Lighting(Level, box);
+        // --wizard-gi=none|sdfgi|voxelgi: another GI than the pass chose (measuring the choice)
+        if (GameSettings.Arg("wizard-gi") is { Length: > 0 } gi && System.Enum.TryParse<GiMode>(gi, true, out var g))
+            _lighting.GiMode = g;
         SaveLighting();
         var ov = new MapOverrides { Level = PartIds.LevelKey(Level), Status = MapStatus.InProgress, RenderPath = RenderPath.Remastered };
         ResourceSaver.Save(ov, $"{_dir}/overrides.tres");
