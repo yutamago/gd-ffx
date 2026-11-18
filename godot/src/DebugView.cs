@@ -82,6 +82,8 @@ public partial class DebugView : Control
             _test = new Remaster.Wizard.ClassifierCheck(timeout);
         else if (GameSettings.Flag("selftest-materialize"))
             _test = new Remaster.Materialize.MaterializeTest(timeout);
+        else if (GameSettings.Flag("selftest-ui-art"))
+            _test = new Remaster.UiArtTest(timeout, GameSettings.Arg("shot-dir"));
         else if (GameSettings.Flag("selftest-rebuild"))
             _test = new Remaster.RebuildTest(timeout, GameSettings.Arg("shot"));
         else if (GameSettings.Flag("selftest-sky"))
