@@ -97,11 +97,13 @@ public sealed class MaterializeOutputs
     public Tex? SourceStats, AlbedoStats;
     /// <summary>The occlusion's progressive parts: how many there are, how many are in.</summary>
     public int AoChunks, AoDone;
+    /// <summary>Maps besides the steps' own (the detail's albedo and normal, <see cref="MaterialPipeline.DetailAlbedo"/>), each at its own size.</summary>
+    public readonly Dictionary<string, Tex> Aux = new();
 }
 
 /// <summary>What a build is asked for.</summary>
 /// <param name="AoDone">The preview's progressive occlusion: how many chunks of four directions are in (the rest held); -1: the bake, every direction in one pass.</param>
-/// <param name="Isolate">The colour sample to show as a mask: (step, sample 1-3; the metal's colour: 1).</param>
+/// <param name="Isolate">The colour sample to show as a mask: (step, sample 1-3; the metal's and the mask steps' colour: 1).</param>
 public sealed record BuildRequest(int W, int H, double Scale, int AoDone = -1, (MaterialStep Step, int Sample)? Isolate = null);
 
 /// <summary>
@@ -249,7 +251,53 @@ public sealed class MaterializeGraph
         var colour = s is MaterialStep.Source or MaterialStep.Albedo or MaterialStep.Emission;
         var key = $"import:{file}:{img.Width}x{img.Height}:{_w}x{_h}";
         var sized = img.Width == _w && img.Height == _h ? img : ImportCache.Resized(key, img, _w, _h, colour);
-        return _b.Input(key, sized);
+        var t = _b.Input(key, sized);
+        // the seam tool moves every map the same way (an imported map too), so they stay aligned
+        return _seamH != null && s != MaterialStep.Source ? Seam($"seam/{s}", t, s is MaterialStep.Normal or MaterialStep.BentNormal) : t;
+    }
+
+    // ---- the seam tool (docs/remaster-materials.md, "Source"; R2b phase 4) ----------------------------
+
+    /// <summary>The seam tool's height (the source's brightness, smoothed), and after the horizontal overlap (null: the tool is off).</summary>
+    private Tex? _seamH, _seamHH;
+
+    /// <summary>The source through the seam tool (when on); its height kept for the imported maps.</summary>
+    private Tex SeamSource(Tex src)
+    {
+        if (_r.SeamMode == SeamMode.Off)
+            return src;
+        var lum = Ch(F("seam/lum", "lum", 1, [src]), 1);
+        _seamH = Blur("seam/hb", lum, _r.SeamHeightBlur * _s);
+        if (_r.SeamMode == SeamMode.Overlap)
+            _seamHH = P("seam/hh", "seam", _w, _h, true, 1, [_seamH, _seamH], SeamUni(0, false));
+        return Seam("src", src, false);
+    }
+
+    private Uni SeamUni(int dir, bool normal)
+    {
+        float o = MathF.Max(2, MathF.Round(Math.Clamp(_r.SeamOverlap, 0.02f, 0.45f) * (dir == 0 ? _w : _h)));
+        return U().Add("dir", dir).Add("o", o).Add("k", MathF.Max(0, _r.SeamHeight)).Add("s", MathF.Max(0.01f, _r.SeamSoftness)).Add("normal", normal);
+    }
+
+    /// <summary>
+    /// <paramref name="x"/> through the seam tool: the overlap (horizontally, then vertically: each
+    /// pass the tile shortened by the overlap, its two ends blended where the taller feature wins,
+    /// stretched back to the size) or the scatter (stamps in a staggered grid, rotated, composited
+    /// by height under a soft centre mask; normals turned with their stamp). The same height drives
+    /// every map, so they stay aligned.
+    /// </summary>
+    private Tex Seam(string slot, Tex x, bool normal)
+    {
+        if (_r.SeamMode == SeamMode.Scatter)
+        {
+            int grid = Math.Clamp(_r.ScatterGrid / 2 * 2, 2, 16);
+            var u = U().Add("grid", grid).Add("scale", Math.Clamp(_r.ScatterScale, 0.5f, 4f)).Add("rot", _r.ScatterRotation * MathF.PI / 180f)
+                .Add("rrot", Math.Clamp(_r.ScatterRandomRotation, 0, 180) * MathF.PI / 180f).Add("jitter", Math.Clamp(_r.ScatterJitter, 0, 1))
+                .Add("seed", Math.Max(0, _r.ScatterSeed)).Add("soft", Math.Clamp(_r.ScatterSoftness, 0.05f, 1f)).Add("k", MathF.Max(0, _r.ScatterHeight)).Add("normal", normal);
+            return P($"{slot}/sc", "scatter", _w, _h, true, x.Channels, [x, _seamH], u);
+        }
+        var h = P($"{slot}/sh", "seam", _w, _h, true, x.Channels, [x, _seamH], SeamUni(0, normal));
+        return P($"{slot}/sv", "seam", _w, _h, true, x.Channels, [h, _seamHH], SeamUni(1, normal));
     }
 
     private Tex Const(string slot, bool hdr, float r, float g, float b, float a = 1) =>
@@ -293,18 +341,36 @@ public sealed class MaterializeGraph
         o.Maps[MaterialStep.Emission] = Emission(albedo);
         o.Orm = M("orm", "orm", [ao, rough, metal]);
 
+        // the maps added with "+ map" (R2b phase 4)
+        foreach (var s in MaterialPipeline.MaskSteps)
+            if (MaterialPipeline.On(_r, s))
+                o.Maps[s] = MaskMap(s, albedo, height, _normalF ?? normal);
+        if (_r.AnisotropyOn)
+            o.Maps[MaterialStep.Anisotropy] = Anisotropy(lumA);
+        if (_r.TransmittanceOn)
+            o.Maps[MaterialStep.Transmittance] = Transmittance(albedo, height, lumA);
+        if (_r.DetailOn)
+        {
+            var (ak, nk) = MaterialPipeline.DetailKeys(_r);
+            o.Aux[MaterialPipeline.DetailAlbedo] = DetailAux("detail/albedo", ak, new System.Numerics.Vector4(0.5f, 0.5f, 0.5f, 0));
+            o.Aux[MaterialPipeline.DetailNormal] = DetailAux("detail/normal", nk, new System.Numerics.Vector4(0.5f, 0.5f, 1, 1));
+        }
+
         if (_q.Isolate is { } iso)
         {
+            bool maskStep = MaterialPipeline.MaskSteps.Contains(iso.Step);
             var colour = iso.Step switch
             {
                 MaterialStep.Height => _r.HeightFrom == HeightInput.Albedo ? albedo : src,
                 MaterialStep.Metallic => Blur("m/cb", albedo, _r.MetallicBlur * _s),
+                _ when maskStep => Blur($"x/{MaterialPipeline.Role(iso.Step)}/cb", albedo, (float)MaterialPipeline.Prop($"{iso.Step}Blur").GetValue(_r)! * _s),
                 _ => albedo,
             };
             var (sample, prefix) = iso.Step switch
             {
                 MaterialStep.Height => ((Godot.Color)MaterialPipeline.Prop($"HeightSample{iso.Sample}").GetValue(_r)!, "Height"),
                 MaterialStep.Metallic => (_r.MetallicColour, "Metallic"),
+                _ when maskStep => ((Godot.Color)MaterialPipeline.Prop($"{iso.Step}Colour").GetValue(_r)!, iso.Step.ToString()),
                 _ => ((Godot.Color)MaterialPipeline.Prop($"RoughnessSample{Math.Clamp(iso.Sample, 1, 3)}").GetValue(_r)!, "Roughness"),
             };
             o.Mask = M("mask", "mask_view", [colour], Mask(U().Add("smp", C(sample)), prefix));
@@ -318,10 +384,10 @@ public sealed class MaterializeGraph
         var img = mode == StepMode.Import && Import(MaterialStep.Source) is { } own ? own : _original;
         var orig = _b.Input(mode == StepMode.Import ? $"source-import:{_r.SourceFile}:{img.Width}x{img.Height}" : $"orig:{_key}:{img.Width}x{img.Height}", img);
         if (img.Width == _w && img.Height == _h)
-            return F("src", "copy", 4, [orig]);
+            return SeamSource(F("src", "copy", 4, [orig]));
         var (lh, lv) = (LanczosUni(img.Width, _w, 0), LanczosUni(img.Height, _h, 1));
         var hpass = P("src/h", "lanczos", _w, img.Height, true, 4, [orig], lh.Add("mode", 0));
-        return F("src", "lanczos", 4, [hpass], lv.Add("mode", 1));
+        return SeamSource(F("src", "lanczos", 4, [hpass], lv.Add("mode", 1)));
     }
 
     private static Uni LanczosUni(int from, int to, int dir)
@@ -370,7 +436,7 @@ public sealed class MaterializeGraph
             hA = Blur("a/h", srcLum, 1f * _s);
             if (occ > 0)
                 aoA = Ch(F("a/ao", "ao", 1, [hA, Flat], U().Add("radius", 6f * _s).Add("depth", 16f * _s).Add("dirs", 8).Add("first", 0).Add("count", 8)
-                    .Add("nshare", 0f)), 1);
+                    .Add("nshare", 0f).Add("bent", false)), 1);
             if (cav > 0)
                 aroundH = Blur("a/hc", hA, MathF.Max(0.5f, 2f * _s));
         }
@@ -503,6 +569,19 @@ public sealed class MaterializeGraph
     private Tex Occlusion(Tex height, Tex normal, MaterializeOutputs o)
     {
         var r = _r;
+        bool aoGen = MaterialPipeline.ModeOf(r, MaterialStep.Occlusion) == StepMode.Generate;
+        bool bentOn = r.BentNormalOn;
+        bool bentGen = bentOn && MaterialPipeline.ModeOf(r, MaterialStep.BentNormal) == StepMode.Generate;
+        // one sampling of the directions for both (the bent normal: the mean open direction)
+        Tex? sum = aoGen || bentGen ? AoSampling(height, normal, bentGen, o) : null;
+        if (bentOn)
+            o.Maps[MaterialStep.BentNormal] = MaterialPipeline.ModeOf(r, MaterialStep.BentNormal) switch
+            {
+                StepMode.Generate => M("bent_normal", "bent_out", [sum!, normal],
+                    U().Add("strength", Math.Clamp(r.BentNormalStrength, 0, 1)).Add("from_normals", Math.Clamp(r.BentNormalFromNormals, 0, 1))),
+                StepMode.Import when Import(MaterialStep.BentNormal) is { } bimg => M("bent_normal", "copy", [ImportTex(MaterialStep.BentNormal, bimg)]),
+                _ => M("bent_normal", "const", [], U().Add("value", new System.Numerics.Vector4(0.5f, 0.5f, 1f, 1f))),
+            };
         switch (MaterialPipeline.ModeOf(r, MaterialStep.Occlusion))
         {
             case StepMode.Import when Import(MaterialStep.Occlusion) is { } img:
@@ -510,37 +589,127 @@ public sealed class MaterializeGraph
             case StepMode.Import or StepMode.Skip:
                 return M("occlusion", "const", [], U().Add("value", System.Numerics.Vector4.One));
         }
+        return M("occlusion", "ao_out", [sum!], U().Add("strength", r.OcclusionStrength).Add("power", MathF.Max(0.01f, r.OcclusionPower)).Add("bias", r.OcclusionBias));
+    }
+
+    /// <summary>
+    /// The occlusion's directions over the height: per pixel the horizon's mean (r) and, with
+    /// <paramref name="bent"/>, the mean open direction (gba: the cosine-weighted mean of each
+    /// direction's open arc). In the preview in chunks of four directions (the rest held), in the
+    /// bake all at once.
+    /// </summary>
+    private Tex AoSampling(Tex height, Tex normal, bool bent, MaterializeOutputs o)
+    {
+        var r = _r;
+        int ch = bent ? 4 : 1;
         int dirs = Math.Clamp(r.OcclusionSamples, 1, 64);
         Uni Ao(int first, int count) => U().Add("radius", MathF.Max(1, r.OcclusionRadius * _s)).Add("depth", r.OcclusionDepth * _s).Add("dirs", dirs)
-            .Add("first", first).Add("count", count).Add("nshare", Math.Clamp(r.OcclusionNormalShare, 0, 1));
-        Tex occ;
+            .Add("first", first).Add("count", count).Add("nshare", Math.Clamp(r.OcclusionNormalShare, 0, 1)).Add("bent", bent);
         if (_q.AoDone < 0)
         {
-            occ = Ch(F("ao", "ao", 1, [height, normal], Ao(0, dirs)), 1);
             (o.AoChunks, o.AoDone) = (1, 1);
+            return Ch(F("ao", "ao", ch, [height, normal], Ao(0, dirs)), ch);
         }
-        else
+        int chunks = (dirs + AoChunk - 1) / AoChunk;
+        int done = Math.Clamp(_q.AoDone, 1, chunks);
+        var parts = new Tex?[8];
+        var counts = new float[8];
+        // at most eight chunks: more directions go into the chunks evenly
+        int n = Math.Min(chunks, 8);
+        int per = (dirs + n - 1) / n;
+        done = Math.Min(done, n);
+        for (int c = 0; c < n; c++)
         {
-            int chunks = (dirs + AoChunk - 1) / AoChunk;
-            int done = Math.Clamp(_q.AoDone, 1, chunks);
-            var parts = new Tex?[8];
-            var counts = new float[8];
-            // at most eight chunks: more directions go into the chunks evenly
-            int n = Math.Min(chunks, 8);
-            int per = (dirs + n - 1) / n;
-            done = Math.Min(done, n);
-            for (int c = 0; c < n; c++)
-            {
-                int first = c * per, count = Math.Max(0, Math.Min(per, dirs - first));
-                counts[c] = count;
-                parts[c] = Ch(F($"ao/c{c}", "ao", 1, [height, normal], Ao(first, count), hold: c >= done), 1);
-            }
-            for (int c = n; c < 8; c++)
-                parts[c] = Dummy;
-            occ = Ch(F("ao/sum", "ao_sum", 1, parts, U().Add("counts", counts).Add("done", done)), 1);
-            (o.AoChunks, o.AoDone) = (n, done);
+            int first = c * per, count = Math.Max(0, Math.Min(per, dirs - first));
+            counts[c] = count;
+            parts[c] = Ch(F($"ao/c{c}", "ao", ch, [height, normal], Ao(first, count), hold: c >= done), ch);
         }
-        return M("occlusion", "ao_out", [occ], U().Add("strength", r.OcclusionStrength).Add("power", MathF.Max(0.01f, r.OcclusionPower)).Add("bias", r.OcclusionBias));
+        for (int c = n; c < 8; c++)
+            parts[c] = Dummy;
+        (o.AoChunks, o.AoDone) = (n, done);
+        return Ch(F("ao/sum", "ao_sum", ch, parts, U().Add("counts", counts).Add("done", done)), ch);
+    }
+
+    // ---- the maps added with "+ map" (R2b phase 4) ----------------------------------------------------
+
+    /// <summary>
+    /// A mask step's map (rim, clearcoat, subsurface, backlight, refraction, the detail's mask):
+    /// the value everywhere, or a ramp over the (pre-blurred) brightness, a colour mask, a ramp
+    /// over the height or the normals' tilt; inverted, times the value. R the mask (G 1: the rim's
+    /// tint and the coat's roughness at the material's values); the backlight: the mask times its
+    /// tint (linear RGB: Godot adds it to the material's backlight colour).
+    /// </summary>
+    private Tex MaskMap(MaterialStep s, Tex albedo, Tex height, Tex normalF)
+    {
+        var slot = MaterialPipeline.Role(s);
+        string p = s.ToString();
+        object V(string n) => MaterialPipeline.Prop(p + n).GetValue(_r)!;
+        var mode = MaterialPipeline.ModeOf(_r, s);
+        if (mode == StepMode.Import)
+            return Import(s) is { } img ? M(slot, "copy", [ImportTex(s, img)]) : M(slot, "const", [], U().Add("value", System.Numerics.Vector4.One));
+        var src = mode == StepMode.Skip ? MaskSource.Constant : (MaskSource)V("Source");
+        var colour = (Godot.Color)V("Colour");
+        if (src == MaskSource.Colour && colour.A <= 0)
+            src = MaskSource.Constant;
+        bool rgb = s == MaterialStep.Backlight;
+        Tex? cb = src is MaskSource.Colour or MaskSource.Brightness ? Blur($"x/{slot}/cb", albedo, (float)V("Blur") * _s) : null;
+        var tint = rgb ? _r.BacklightTint : Godot.Colors.White;
+        var u = Mask(U().Add("src", (int)src).Add("smp", C(colour)).Add("threshold", (float)V("Threshold")).Add("softness", (float)V("Softness"))
+            .Add("invert", (bool)V("Invert")).Add("value", Math.Clamp((float)V("Value"), 0, 1)).Add("rgb", rgb).Add("tint", C(tint))
+            .Add("from_albedo", rgb ? Math.Clamp(_r.BacklightFromAlbedo, 0, 1) : 0f), p);
+        return M(slot, "xmask", [cb ?? Dummy, src == MaskSource.Height ? height : Dummy, src == MaskSource.Tilt ? normalF : Dummy, rgb ? albedo : Dummy], u);
+    }
+
+    /// <summary>
+    /// The anisotropy's flowmap (Godot's: RG the direction, x right and y up, A the strength): the
+    /// grain from the albedo's brightness (its gradient's structure tensor, smoothed: the dominant
+    /// orientation, the highlight across the grain unless along it; the strength from how clear the
+    /// grain is), or a fixed angle.
+    /// </summary>
+    private Tex Anisotropy(Tex lumA)
+    {
+        var r = _r;
+        var mode = MaterialPipeline.ModeOf(r, MaterialStep.Anisotropy);
+        if (mode == StepMode.Import)
+            return Import(MaterialStep.Anisotropy) is { } img ? M("flowmap", "copy", [ImportTex(MaterialStep.Anisotropy, img)])
+                : M("flowmap", "const", [], U().Add("value", new System.Numerics.Vector4(1, 0.5f, 0, 1)));
+        bool grain = mode == StepMode.Generate && r.AnisotropySource == FlowSource.Grain;
+        var u = U().Add("mode", grain ? 0 : 1).Add("angle", -r.AnisotropyAngle * MathF.PI / 180f).Add("along", r.AnisotropyAlongGrain)
+            .Add("coh", grain ? Math.Clamp(r.AnisotropyCoherence, 0, 1) : 0f);
+        if (!grain)
+            return M("flowmap", "aniso", [Dummy], u);
+        var st = F("an/st", "st", 3, [lumA]);
+        var sb = Blur("an/sb", st, MathF.Max(0.5f, r.AnisotropySmooth * _s));
+        return M("flowmap", "aniso", [sb], u);
+    }
+
+    /// <summary>
+    /// The transmittance (Godot multiplies its colour by it; alpha the amount): RGB the light's
+    /// colour through the surface (the albedo's hue at full brightness, its saturation scaled, or a
+    /// colour; linear), A the thinness (1 - the thickness from the height or brightness, or
+    /// inverted), its contrast and bias.
+    /// </summary>
+    private Tex Transmittance(Tex albedo, Tex height, Tex lumA)
+    {
+        var r = _r;
+        var mode = MaterialPipeline.ModeOf(r, MaterialStep.Transmittance);
+        if (mode == StepMode.Import)
+            return Import(MaterialStep.Transmittance) is { } img ? M("transmittance", "copy", [ImportTex(MaterialStep.Transmittance, img)])
+                : M("transmittance", "const", [], U().Add("value", System.Numerics.Vector4.One));
+        var thick = mode == StepMode.Skip ? ThicknessSource.Constant : r.TransmittanceThickness;
+        var u = U().Add("tint", (int)r.TransmittanceTint).Add("colour", C(r.TransmittanceColour)).Add("sat", MathF.Max(0, r.TransmittanceSaturation))
+            .Add("thick", (int)thick).Add("invert", r.TransmittanceInvert).Add("contrast", r.TransmittanceContrast).Add("bias", r.TransmittanceBias);
+        return M("transmittance", "transmit", [albedo, thick == ThicknessSource.Height ? height : Dummy, thick == ThicknessSource.Brightness ? lumA : Dummy], u);
+    }
+
+    /// <summary>The detail's albedo or normal (a file, or another texture's made map) at its own size (at most 2048 px); none: <paramref name="none"/>, which changes nothing.</summary>
+    private Tex DetailAux(string slot, string key, System.Numerics.Vector4 none)
+    {
+        if (key.Length == 0 || !_imports.TryGetValue(key, out var img))
+            return P(slot, "const", 4, 4, false, 4, [], U().Add("value", none));
+        var (w, h) = Lanczos.FitWithin(img.Width, img.Height, 2048);
+        var sized = w == img.Width && h == img.Height ? img : ImportCache.Resized($"detail:{key}:{w}x{h}", img, w, h, slot.EndsWith("albedo", StringComparison.Ordinal));
+        return P(slot, "copy", w, h, false, 4, [_b.Input($"detail:{key}:{w}x{h}", sized)]);
     }
 
     private Tex F(string slot, string kernel, int ch, Tex?[] ins, Uni u, bool hold) => P(slot, kernel, _w, _h, true, ch, ins, u, hold);

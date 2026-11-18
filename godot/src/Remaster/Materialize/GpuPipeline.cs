@@ -94,6 +94,9 @@ public sealed class GpuPipeline
 
     public Texture2D? Mask => (Outputs?.Mask as GpuTex)?.Texture;
 
+    /// <summary>An aux map's target (the detail's albedo or normal), null: none.</summary>
+    public Texture2D? Aux(string name) => Outputs?.Aux.TryGetValue(name, out var t) == true ? ((GpuTex)t).Texture : null;
+
     /// <summary>A map's pixels (a read back: waits for the GPU).</summary>
     public RgbaImage? Pixels(MaterialStep s) => Outputs?.Maps.TryGetValue(s, out var t) == true && Backend.Drawn ? Backend.Read(t) : null;
 
@@ -133,17 +136,20 @@ public sealed class GpuBake
     /// <summary>The passes the bake draws.</summary>
     public int Passes => _b.Count;
 
-    /// <summary>The maps (8-bit), the ORM pack, the height as stored (float), the colour check; the time from the start to the last read back. Frees the passes.</summary>
-    public (Dictionary<MaterialStep, RgbaImage> Maps, RgbaImage Orm, Image Height, double Ms) Finish()
+    /// <summary>The maps (8-bit), the ORM pack, the height as stored (float), the aux maps; the time from the start to the last read back. Frees the passes.</summary>
+    public (BakedMaps Baked, double Ms) Finish()
     {
         var maps = new Dictionary<MaterialStep, RgbaImage>();
         foreach (var (s, t) in _outs.Maps)
             maps[s] = _b.Read(t);
         var orm = _b.Read(_outs.Orm);
         var height = _b.ReadImage(_outs.Maps[MaterialStep.Height]);
+        var aux = new Dictionary<string, RgbaImage>();
+        foreach (var (name, t) in _outs.Aux)
+            aux[name] = _b.Read(t);
         double ms = _clock.Elapsed.TotalMilliseconds;
         _b.Clear();
         _b.QueueFree();
-        return (maps, orm, height, ms);
+        return (new BakedMaps(maps, orm, height, aux), ms);
     }
 }

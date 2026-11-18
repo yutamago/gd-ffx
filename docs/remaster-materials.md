@@ -7,8 +7,9 @@ R2b replaces that with a view built for the job: one texture, one map at a
 time, a big lit preview that changes while a slider moves, and profiles that
 carry the settings over to the next texture.
 
-Status: phases 1 to 3 implemented (2026-11-18, "Phase 1: what there is",
-"Phase 2: what there is", "Phase 3: what there is"); phases 4 to 6 planned. Decisions taken with the user are marked as such; the ones
+Status: phases 1 to 4 implemented (2026-11-18, "Phase 1: what there is",
+"Phase 2: what there is", "Phase 3: what there is", "Phase 4: what there
+is"); phases 5 and 6 planned. Decisions taken with the user are marked as such; the ones
 taken while implementing are in "Decisions".
 
 ## What it reuses and what it learns from
@@ -669,7 +670,201 @@ renderer), are the pictures looked at.
 Not in phase 3: the other maps (phase 4), regions with their own profile
 (phase 6), choosing a profile per texture automatically (R4).
 
+## Phase 4: what there is
+
+**The maps added with "+ map"** (`MaterialPipeline.Extras`): bent normal, rim,
+clearcoat, anisotropy, subsurface, transmittance, backlight, refraction and
+detail, every map Godot 4.7's `BaseMaterial3D` takes besides the core ones.
+The strip shows the core steps and the added ones; **+ map** (after them)
+lists the others, a click adds one (`PbrRecipe.<Step>On`, one undo step) and
+goes to it; **Remove map** in the step panel takes it out (its settings
+kept). Each added step is a step like the others: its generator as passes of
+the graph (both backends, in the parity check), its settings in the panel,
+Generate, Import, Skip, Reset, pins (exceptions), saved into the profile
+(the `On` switch too, so a profile carries its maps), shown live in the 3D
+preview (the passes' targets on the material) and written on Save with the
+material's matching flags and amounts.
+
+| Step | The map (file role) | Made from | The material (Save, the preview, the game) |
+|---|---|---|---|
+| Bent normal | `bent_normal`, a normal map (OpenGL, X+ Y+ Z+) | the occlusion's directions: per direction the open arc above the horizon, its cosine-weighted mean direction (horizontal `cos²a / 2` along the direction, vertical `(π/2 - a) / 2 + sin 2a / 4`), averaged, normalised; bent by the normal map's tilt (**From the normals**), mixed toward flat (**Strength**). It shares the occlusion's sampling (the same passes, four channels: the occlusion in red, the open direction in the others), progressive in the preview as the occlusion; Skip: flat | `bent_normal_enabled`, `bent_normal_texture` |
+| Rim | `rim`: R the mask, G 1 | a mask step (below) | `rim_enabled`, `rim` (**Rim**), `rim_tint` (**Rim tint**), `rim_texture` |
+| Clearcoat | `clearcoat`: R the mask, G 1 | a mask step | `clearcoat_enabled`, `clearcoat` (**Coat**), `clearcoat_roughness` (**Coat roughness**), `clearcoat_texture` |
+| Anisotropy | `flowmap`: RG the direction (x right, y up, as Godot's flowmap), A the strength | **the grain**: the albedo's brightness gradient (Sobel), its structure tensor (gx², gy², gx·gy) blurred by **Grain smoothing**, the dominant orientation `½ atan2(2·Jxy, Jxx - Jyy)`, the highlight across the grain (Godot stretches it along the flow; a brushed surface's and hair's highlight lies across the scratches) unless **Along the grain**, turned by **Angle**; the strength from the grain's clarity (`(λ1 - λ2) / (λ1 + λ2)`, by **From clarity**); or **a fixed angle** (Skip too) | `anisotropy_enabled`, `anisotropy` (**Anisotropy**), `anisotropy_flowmap` |
+| Subsurface | `subsurface`: R the mask | a mask step | `subsurf_scatter_enabled`, `subsurf_scatter_strength` (**Strength**), `subsurf_scatter_skin_mode` (**Skin**), `subsurf_scatter_texture` |
+| Transmittance | `transmittance`: RGB the colour (linear), A how much | the colour: the albedo's hue at full brightness (its saturation scaled) or a colour; the amount: the thinness, 1 - the thickness from the height (high is thick) or the brightness (**High is thin** inverts), its contrast and bias; Skip: one thickness | `subsurf_scatter_transmittance_enabled`, its colour white (the map holds it), `..._texture`, `..._depth` (**Depth**), `..._boost` (**Boost**) |
+| Backlight | `backlight`: RGB the light (linear) | a mask step times a tint (**Tint**, or the albedo's own colour by **Tint from albedo**) | `backlight_enabled`, `backlight` black (Godot adds the map to it), `backlight_texture` |
+| Refraction | `refraction`: R the mask | a mask step | `refraction_enabled`, `refraction_scale` (**Scale**), `refraction_texture`, its red channel |
+| Detail | `detail_mask`: R the mask; `detail_albedo`, `detail_normal` at their own size (at most 2048 px) | a mask step; the albedo and normal from **two files** or **another texture's made maps** (a texture of the project with a material: its albedo and normal files, read from its material's text) | `detail_enabled`, `detail_mask`, `detail_albedo`, `detail_normal`, `detail_blend_mode` (**Blend**: mix, add, sub, mul), `detail_uv_layer` UV2, `uv2_scale` (**Detail repeats**) |
+
+**A mask step** (rim, clearcoat, subsurface, backlight, refraction, the
+detail's mask: one kernel, `xmask`): **Mask from** the value everywhere
+(Constant, and Skip), a ramp over the (pre-blurred, **Pre-blur**) albedo's
+brightness, a colour mask (Materialize's HSL mask, the kernel the height's
+and roughness's samples use: **Colour** picked in the 2D view or on the
+object, **Isolate** shows it), a ramp over the height, or a ramp over the
+normals' tilt (full at 30 degrees); **Ramp at**, **Ramp softness**,
+**Invert**, **Value**.
+
+**The seam tool** (the Source step; Materialize's concepts, our own code): it
+makes a texture that does not tile tile, before the rest of the graph, so
+every map follows; an imported map goes through the same transform with the
+same heights (a normal map's vectors renormalised, and turned with their
+stamp), so they stay aligned. Turning it on turns **Tiling** on (one undo
+step). The height it compares is the source's brightness smoothed by
+**Height smoothing**.
+
+- **Overlap**: horizontally, then vertically: in a band along each edge
+  (**Overlap**, a fraction of the side) the copy shifted by half the size
+  takes over (its own seam lies in the middle, under the original), so the
+  two edges meet as the middle of the texture does. Across the band the two
+  are blended, the weight a smoothstep of `(the two copies' heights'
+  difference) × Taller wins + (the ramp across the band, -1 at the edge to 1
+  inside) × (softness + Taller wins)` over ±**Seam softness**: the taller
+  feature wins inside the band, and at the edge the shifted copy is taken
+  exactly (the ramp's term outweighs any height difference there: the edge
+  falloff). No resampling: every pixel is a pixel of the source. It takes
+  out edges, not slow gradients: light painted across the whole texture
+  leaves a softer band along the edges (the albedo's **Colour cast flat**
+  and the de-lighting take most of such light out first; the scatter hides
+  it best).
+- **Scatter**: stamps of the texture on a staggered grid (**Stamps** per
+  side, even so the rows wrap), each at a random place in the source (its
+  disc inside the image), turned by **Rotation** plus a random turn up to
+  **Random rotation**, its place jittered by **Jitter** of a cell, sized
+  **Stamp size** against its cell, the layout by **Seed**; composited by
+  height under a soft disc (**Stamp softness**): each stamp weighs
+  `mask × exp(Taller stamp wins × (height - 1))`, normalised (the twenty-five
+  stamps around a pixel; the source where none reaches).
+
+Measured (`MaterializeCheck.SeamRatio`: across each axis, the mean RGB step
+over the wrap boundary against the 95th percentile of the same mean over the
+boundaries inside; the larger axis; 1 or below: the wrap edge is no stronger
+than edges the texture has inside): the synthetic lit noise (smooth coloured
+noise under light painted across the texture, no game data) 35.8 → overlap
+0.61, scatter 1.04; Besaid beach's sand (12800_20_128_000_4_128_128, which
+tiles already) 0.77 → 0.91, 0.83 (`--selftest-materialize`, the CPU); in the
+editor check (the tab, a 256 px synthetic texture with seams imported as the
+source, upscaled x2): the source 68.9 → overlap 0.66, scatter 1.00, the
+height made from it 11.4 → 0.74, 1.07.
+
+**The preview** shows every added map live (`PbrBuilder.ApplyExtras`, the
+same code as the material written without the project): the passes' targets
+on the GPU, the CPU's maps on the CPU; the detail on UV2 at its repeats, the
+preview's meshes carrying UV1 as UV2 (the compare side keeps the mesh as it
+is). The WSL editor's Compatibility renderer does not draw subsurface
+scattering and transmittance (Forward+ only); the Windows editor does.
+
+**Save and the game.** The maps are written beside the others
+(content-named; the presets: the normals as normal maps, the detail's albedo
+as colour, the rest as data, linear), the material's text gets their flags
+and amounts (`TextureStore.MaterialText`; its name changes only when a map
+is added, so the materials made before keep theirs). The game's remastered
+path (`RemasterLook`) reads them too: its lit shader gains the bent normal,
+rim, clearcoat, anisotropy, subsurface, transmittance, backlight and the
+detail (UV1 at the detail's repeats, Godot's blend modes); refraction stays
+in the material file and the preview (it needs the screen behind it, a
+transparent pass the map's parts do not have). An imported detail file is
+kept beside the maps as the imports are (`import-detail-albedo.<hash>.png`),
+the recipe naming it store-relative; a texture's detail files are its
+exceptions to the profile.
+
+**Profiles.** A profile holds the `On` switches and every added step's
+settings (not the files). The profile's hash counts the settings added in
+phase 4 only where they differ from their defaults
+(`MaterialProfiles.Hash`), so textures made before phase 4 keep their
+profile's hash; changing a starter profile below changes its hash, as any
+edit does (Make again). The starter profiles (measured with
+`--selftest-materialize --materialize-profiles`, which now reports the added
+maps and fails a missing or degenerate one):
+
+- **grass and foliage**: backlight (the leaves' own colour through them,
+  value 0.4) and subsurface scattering (strength 0.35) on;
+- **fabric**: a rim light on (rim 0.35, tint 0.6);
+- **rock**: the bent normal on;
+- **wood**: the clearcoat tuned (coat 0.6, roughness 0.25) but off: + map,
+  Clearcoat for polished wood;
+- **metal**: the anisotropy tuned (amount 0.6, grain smoothing 4) but off.
+
+Measured (2026-11-18, the CPU, 512 px at most; the core numbers of phase 3's
+table are unchanged): rock's bent normal tilts 0.033 to 0.123 (1 - z; its
+normal map 0.032 to 0.106: the open direction leans a little further out of
+the cracks); grass and foliage's backlight 0.23 to 0.33 (the mean of the
+linear RGB), its subsurface mask 1 (constant); fabric's rim mask 1
+(constant). Every profile passes the colour check and its ranges.
+
+**The parity check** (`--selftest-materialize`) runs two recipes now: every
+feature with the overlap and every added map (the rim from a colour, the
+clearcoat from brightness, the subsurface from height, the refraction from
+the tilt, the detail from two synthetic files, the grain's flowmap), and
+every feature with the scatter, an imported normal map through it, and the
+other branches (the fixed angle, a colour's transmittance, the other mask
+sources); each map against the CPU's, the flowmap's and transmittance's
+alpha too. PARITYNUMBERS
+
+Not in phase 4: height from an imported normal map (planned with the height
+step, not part of this phase's list), the In map preview of the added maps
+(phase 5), refraction in the game's map path.
+
 ## Decisions
+
+Taken while implementing phase 4 (2026-11-18):
+
+- **One switch per added map** (`PbrRecipe.<Step>On`) rather than a list: a
+  profile is flat settings, the switch is one of them (saved, pinned, hashed
+  like the rest), and every added step keeps its settings while it is off
+  (wood's clearcoat and metal's anisotropy are tuned and off).
+- **The added settings hash only when set**: declared after
+  `EmissionEnergy`, they enter a profile's hash only where they differ from
+  their defaults, so no texture made before phase 4 shows its profile as
+  changed.
+- **Godot's channel layouts as they are**: the rim's and clearcoat's G is 1
+  (the tint and the coat's roughness are the material's amounts), the
+  flowmap's A is the strength, the transmittance's A is how much, the
+  backlight's RGB is added to a black `backlight` (Godot adds the two).
+- **Linear data for the backlight and transmittance**: Godot reads both
+  without `source_color`, so the kernels write linear values and the files
+  are data (the detail's albedo is colour).
+- **The bent normal shares the occlusion's sampling** (the same passes, four
+  channels) and is cosine-weighted per direction (Godot's note on bent normal
+  maps); it only follows the occlusion's radius, depth and directions.
+- **The anisotropy's flow lies across the grain** by default (a brushed
+  surface's highlight crosses its scratches; Godot stretches the highlight
+  along the flow), one of the two opposite directions chosen (x ≥ 0: the
+  highlight is the same).
+- **The tilt mask is full at 30 degrees** (`min(1, 2·|n.xy|)`): steeper
+  scales turned the normals' 1/255 differences between the backends into
+  differences of 15 to 20 in the mask.
+- **The detail on UV2** in the material file (Godot scales detail only on
+  UV2: `uv2_scale`); the game's lit path reads UV1 at that scale, the
+  preview's meshes copy UV1 to UV2 on the material's side.
+- **The detail's maps keep their own size** (at most 2048 px), not the
+  working size; without a file they are a transparent grey and a flat normal
+  (no change in any blend mode).
+- **Another texture's made maps are read from its material's text** (the
+  ext_resource paths), not loaded: no import needed, and nothing changes
+  when that texture is made again until its material file does.
+- **Refraction is not in the game's map path**: it needs the screen behind
+  (a transparent pass); the material file and the preview have it.
+- **The seam tool uses the source's brightness as height** (smoothed): the
+  height map comes after it in the graph.
+- **The overlap swaps in the half-shifted copy at the edges** rather than
+  shortening the tile and stretching it back (tried first): the stretch
+  resampled the inside, which smoothed it, while the wrap pair fell on whole
+  pixels, so the edge stayed the sharpest line (the seam ratio of an already
+  tiling Besaid texture rose from 0.97 to 1.42). The shifted copy keeps every
+  pixel a source pixel and the features their size; its cost is the middle
+  band's content shown again at the edges.
+- **The seam measure compares the wrap boundary with the boundaries inside**
+  (their 95th percentile), not with the mean step: a texture's own strong
+  lines (a brick's mortar) are edges too, and the half shift can land the
+  wrap on one. Its test texture is aperiodic noise (the synthetic bricks'
+  period lined a mortar line up with the shifted wrap).
+- **Turning the seam tool on turns Tiling on** (one undo step): its result
+  tiles, so every filter after it wraps.
+- **The scatter's stamps take their source inside the image** (no wrap
+  inside a stamp: the source may not tile), and a pixel no stamp reaches
+  keeps the source.
 
 Taken while implementing phase 3 (2026-11-18):
 

@@ -351,14 +351,9 @@ public static class TextureStore
     {
         var paths = new Dictionary<string, string>();
         foreach (var (role, img) in PbrBuilder.Files(maps))
-            paths[role] = WriteImage(id, role, img, role switch
-            {
-                "normal" => TexturePreset.Normal,
-                "orm" or "height" => TexturePreset.Mask,
-                _ => TexturePreset.Colour,
-            });
+            paths[role] = WriteImage(id, role, img, PresetOf(role));
         var folder = RemasterTextures.Folder(id, Dir);
-        var key = string.Join("|", paths.Values) + $"|{recipe.HeightScale}|{recipe.Wrap}" + (recipe.EmissionEnergy != 1f ? $"|{recipe.EmissionEnergy}" : "");
+        var key = string.Join("|", paths.Values) + $"|{recipe.HeightScale}|{recipe.Wrap}" + (recipe.EmissionEnergy != 1f ? $"|{recipe.EmissionEnergy}" : "") + ExtrasKey(paths, recipe);
         var file = $"{folder}/material.{MapStore.Hash(key)}.tres";
         if (!FileAccess.FileExists(file))
         {
@@ -373,13 +368,36 @@ public static class TextureStore
             {
                 // outside the project nothing is imported: the material holds its maps
                 var (a, n, o, h, e) = PbrBuilder.InMemory(maps);
-                if (ResourceSaver.Save(PbrBuilder.Material(a, n, o, h, e, recipe), file) != Error.Ok)
+                if (ResourceSaver.Save(PbrBuilder.Material(a, n, o, h, e, recipe, PbrBuilder.ExtrasInMemory(maps)), file) != Error.Ok)
                     GD.PrintErr($"ffx remaster: cannot write {file}");
             }
         }
         if (InProject)
             EditorInterface.Singleton.GetResourceFilesystem().UpdateFile(file);
         return (Relative(file), paths["albedo"]);
+    }
+
+    /// <summary>A map file's import preset by its role: normals, colour (albedo, emission, the detail's albedo), the rest data.</summary>
+    public static TexturePreset PresetOf(string role) => role switch
+    {
+        "normal" or "bent_normal" or "detail_normal" => TexturePreset.Normal,
+        "albedo" or "emission" or "detail_albedo" => TexturePreset.Colour,
+        _ => TexturePreset.Mask,
+    };
+
+    /// <summary>The added maps' material settings, as part of the material's name (empty without added maps: names as before).</summary>
+    private static string ExtrasKey(IReadOnlyDictionary<string, string> paths, PbrRecipe r)
+    {
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        var sb = new System.Text.StringBuilder();
+        if (paths.ContainsKey("rim")) sb.Append(inv, $"|rim{r.RimAmount},{r.RimTint}");
+        if (paths.ContainsKey("clearcoat")) sb.Append(inv, $"|cc{r.ClearcoatAmount},{r.ClearcoatRoughness}");
+        if (paths.ContainsKey("flowmap")) sb.Append(inv, $"|an{r.AnisotropyAmount}");
+        if (paths.ContainsKey("subsurface")) sb.Append(inv, $"|ss{r.SubsurfaceStrength},{r.SubsurfaceSkin}");
+        if (paths.ContainsKey("transmittance")) sb.Append(inv, $"|tr{r.TransmittanceDepth},{r.TransmittanceBoost}");
+        if (paths.ContainsKey("refraction")) sb.Append(inv, $"|rf{r.RefractionScale}");
+        if (paths.ContainsKey("detail_mask")) sb.Append(inv, $"|dt{r.DetailScale},{(int)r.DetailBlend}");
+        return sb.ToString();
     }
 
     /// <summary>
@@ -389,7 +407,7 @@ public static class TextureStore
     public static string MaterialText(IReadOnlyDictionary<string, string> maps, PbrRecipe r)
     {
         var inv = System.Globalization.CultureInfo.InvariantCulture;
-        var roles = new[] { "albedo", "normal", "orm", "height", "emission" }.Where(maps.ContainsKey).ToList();
+        var roles = new[] { "albedo", "normal", "orm", "height", "emission" }.Concat(PbrBuilder.ExtraRoles).Where(maps.ContainsKey).ToList();
         var sb = new System.Text.StringBuilder();
         sb.Append($"[gd_resource type=\"ORMMaterial3D\" load_steps={roles.Count + 1} format=3]\n\n");
         for (int i = 0; i < roles.Count; i++)
@@ -405,6 +423,35 @@ public static class TextureStore
             sb.Append($"emission_enabled = true\nemission = Color(1, 1, 1, 1)\nemission_energy_multiplier = {r.EmissionEnergy.ToString("0.0##", inv)}\nemission_texture = ExtResource(\"emission\")\n");
         if (maps.ContainsKey("height"))
             sb.Append($"heightmap_enabled = true\nheightmap_scale = {(r.HeightScale * 100f).ToString("0.###", inv)}\nheightmap_texture = ExtResource(\"height\")\n");
+        // the maps added with "+ map" (R2b phase 4), as PbrBuilder.ApplyExtras sets them
+        string F(float v) => v.ToString("0.0#####", inv);
+        if (maps.ContainsKey("bent_normal"))
+            sb.Append("bent_normal_enabled = true\nbent_normal_texture = ExtResource(\"bent_normal\")\n");
+        if (maps.ContainsKey("rim"))
+            sb.Append($"rim_enabled = true\nrim = {F(r.RimAmount)}\nrim_tint = {F(r.RimTint)}\nrim_texture = ExtResource(\"rim\")\n");
+        if (maps.ContainsKey("clearcoat"))
+            sb.Append($"clearcoat_enabled = true\nclearcoat = {F(r.ClearcoatAmount)}\nclearcoat_roughness = {F(r.ClearcoatRoughness)}\nclearcoat_texture = ExtResource(\"clearcoat\")\n");
+        if (maps.ContainsKey("flowmap"))
+            sb.Append($"anisotropy_enabled = true\nanisotropy = {F(r.AnisotropyAmount)}\nanisotropy_flowmap = ExtResource(\"flowmap\")\n");
+        if (maps.ContainsKey("subsurface"))
+            sb.Append($"subsurf_scatter_enabled = true\nsubsurf_scatter_strength = {F(r.SubsurfaceStrength)}\nsubsurf_scatter_skin_mode = {(r.SubsurfaceSkin ? "true" : "false")}\n"
+                + "subsurf_scatter_texture = ExtResource(\"subsurface\")\n");
+        if (maps.ContainsKey("transmittance"))
+            sb.Append($"subsurf_scatter_transmittance_enabled = true\nsubsurf_scatter_transmittance_color = Color(1, 1, 1, 1)\nsubsurf_scatter_transmittance_texture = ExtResource(\"transmittance\")\n"
+                + $"subsurf_scatter_transmittance_depth = {F(r.TransmittanceDepth)}\nsubsurf_scatter_transmittance_boost = {F(r.TransmittanceBoost)}\n");
+        if (maps.ContainsKey("backlight"))
+            sb.Append("backlight_enabled = true\nbacklight = Color(0, 0, 0, 1)\nbacklight_texture = ExtResource(\"backlight\")\n");
+        if (maps.ContainsKey("refraction"))
+            sb.Append($"refraction_enabled = true\nrefraction_scale = {F(r.RefractionScale)}\nrefraction_texture = ExtResource(\"refraction\")\nrefraction_texture_channel = 0\n");
+        if (maps.ContainsKey("detail_mask"))
+        {
+            sb.Append($"detail_enabled = true\ndetail_mask = ExtResource(\"detail_mask\")\ndetail_blend_mode = {(int)r.DetailBlend}\ndetail_uv_layer = 1\n");
+            if (maps.ContainsKey("detail_albedo"))
+                sb.Append("detail_albedo = ExtResource(\"detail_albedo\")\n");
+            if (maps.ContainsKey("detail_normal"))
+                sb.Append("detail_normal = ExtResource(\"detail_normal\")\n");
+            sb.Append($"uv2_scale = Vector3({F(r.DetailScale)}, {F(r.DetailScale)}, 1)\n");
+        }
         return sb.ToString();
     }
 }

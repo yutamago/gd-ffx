@@ -47,7 +47,9 @@ public partial class MaterialsTab : VBoxContainer
     private readonly Dictionary<string, Control> _controls = new();
     private EditorFileDialog? _fileDialog;
     // the strip
-    private readonly Dictionary<MaterialStep, (Button Button, TextureRect Thumb)> _strip = new();
+    private readonly Dictionary<MaterialStep, (Button Button, TextureRect Thumb, Control Col)> _strip = new();
+    private MenuButton _addMap = null!;
+    private Button _removeMap = null!;
     private Button _save = null!;
     private Label _timing = null!;
     private TextureRect _lastMade = null!;
@@ -99,6 +101,8 @@ public partial class MaterialsTab : VBoxContainer
     private readonly Dictionary<MaterialStep, int> _shownSide = new();
     private readonly ImageTexture _orm = new();
     private readonly ImageTexture _maskCpu = new();
+    /// <summary>The CPU's aux maps (the detail's albedo and normal).</summary>
+    private readonly Dictionary<string, ImageTexture> _auxCpu = new();
     private RgbaImage? _ormPixels;
     private float[]? _heightFloat;
     /// <summary>The colour sample shown as a mask in the 2D view (the isolate view), or null.</summary>
@@ -358,6 +362,7 @@ public partial class MaterialsTab : VBoxContainer
         row.AddChild(_mode);
         _importButton = Add(row, "Import...", "A map of your own (PNG, WebP, JPEG), resized to the working size", () => ChooseImport(Step));
         Add(row, "Reset step", "Every setting of this step back to its default, the mode too (one undo step)", () => ResetStep(Step));
+        _removeMap = Add(row, "Remove map", "Take this map out of the material (its settings are kept; one undo step)", () => Say(RemoveMap(Step) ?? ""));
         col.AddChild(new HSeparator());
         _settingsBox = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
         col.AddChild(_settingsBox);
@@ -372,6 +377,13 @@ public partial class MaterialsTab : VBoxContainer
         var group = new ButtonGroup();
         foreach (var s in MaterialPipeline.Steps)
         {
+            if (s == MaterialPipeline.Extras[0])
+            {
+                // the maps added per profile ("+ map": the strip stays short)
+                _addMap = new MenuButton { Text = "+ map", Flat = false, TooltipText = "Add a map to the material: bent normal, rim, clearcoat, anisotropy, subsurface, transmittance, backlight, refraction, detail (kept in the profile)" };
+                _addMap.GetPopup().IdPressed += id => Say(AddMap((MaterialStep)(int)id) ?? "");
+                row.AddChild(_addMap);
+            }
             var col = new VBoxContainer();
             var thumb = new TextureRect
             {
@@ -384,8 +396,10 @@ public partial class MaterialsTab : VBoxContainer
             b.Pressed += () => SelectStep(step);
             col.AddChild(b);
             row.AddChild(col);
-            _strip[s] = (b, thumb);
+            _strip[s] = (b, thumb, col);
         }
+        // "+ map" after the added maps
+        row.MoveChild(_addMap, row.GetChildCount() - 1);
         row.AddChild(new VSeparator());
         var end = new VBoxContainer();
         row.AddChild(end);
@@ -720,7 +734,7 @@ public partial class MaterialsTab : VBoxContainer
 
     private static readonly Dictionary<MaterialStep, string> Notes = new()
     {
-        [MaterialStep.Source] = "The colour texture the maps start from (the replacement, else the classic one), upscaled; or an image of your own (Import).",
+        [MaterialStep.Source] = "The colour texture the maps start from (the replacement, else the classic one), upscaled; or an image of your own (Import). The seam tool makes a texture that does not tile tile (every map follows; check with 2×2).",
         [MaterialStep.Albedo] = "R2's de-lighting: the painted light out of the colour, hot and dark spots evened, the colour checked against the classic texture. Skip: the source as it is.",
         [MaterialStep.Height] = "From the albedo (or the source): seven bands of its brightness, fine to coarse, each a weight and a contrast; colour samples set their colour's height. Skip: flat (no parallax).",
         [MaterialStep.Normal] = "The height's slope in seven bands (crisp to smooth), shape from the painted shading, angularity; OpenGL convention (green up, as Godot reads it). Skip: flat.",
@@ -728,6 +742,15 @@ public partial class MaterialsTab : VBoxContainer
         [MaterialStep.Metallic] = "Most FFX textures skip it (the value everywhere). Generate: a colour mask (pick the metal) or a mask from brightness.",
         [MaterialStep.Occlusion] = "Horizon occlusion from the height and the normals over many directions (the preview adds four a frame). Skip: none (white).",
         [MaterialStep.Emission] = "Usually skipped. Generate: the albedo where its brightest channel passes the threshold.",
+        [MaterialStep.BentNormal] = "The mean open direction (cosine-weighted), from the occlusion's directions (its radius, depth and directions; progressive as the occlusion): better occlusion of the sky's light. Skip: flat.",
+        [MaterialStep.Rim] = "Soft light at grazing angles (cloth, velvet, moss): a mask (everywhere, by brightness, a picked colour, height or tilt) times the material's rim and tint. Skip: everywhere.",
+        [MaterialStep.Clearcoat] = "A lacquer layer (polished wood, wet stone, paint): a mask times the material's coat and its roughness. Skip: everywhere.",
+        [MaterialStep.Anisotropy] = "Highlights stretched along a direction (brushed metal, hair, grain): the texture's own grain (its brightness gradient, smoothed) or a fixed angle; the strength from how clear the grain is. Skip: the fixed angle.",
+        [MaterialStep.Subsurface] = "Light scattered under the surface (skin, wax, leaves): a mask times the material's strength (Forward+ only: the WSL editor's Compatibility renderer does not show it). Skip: everywhere.",
+        [MaterialStep.Transmittance] = "Light through the surface: its colour (the albedo's hue or a colour) and how much (thin: more; the thickness from the height or brightness). Skip: one thickness.",
+        [MaterialStep.Backlight] = "Light through thin surfaces from behind (leaves, paper, cloth): a mask times a tint (the albedo's own colour, or a colour). Skip: everywhere.",
+        [MaterialStep.Refraction] = "What is behind bent by the normal map (glass, water): a mask times the material's scale. The material becomes transparent; the game's map path leaves it out. Skip: everywhere.",
+        [MaterialStep.Detail] = "A second, finer texture laid over at its own scale: the mask (where), and the detail's albedo and normal from two files or another texture's made maps.",
     };
 
     /// <summary>The band equalisers' presets (fine to coarse).</summary>
@@ -742,7 +765,7 @@ public partial class MaterialsTab : VBoxContainer
 
     private void RebuildSettings()
     {
-        _stepTitle.Text = $"{(int)Step} · {Step}";
+        _stepTitle.Text = $"{(int)Step} · {Label(Step)}";
         _stepNote.Text = Notes[Step];
         foreach (var c in _settingsBox.GetChildren())
             c.QueueFree();
@@ -761,7 +784,10 @@ public partial class MaterialsTab : VBoxContainer
             var type = MaterialPipeline.Prop(st.Property).PropertyType;
             if (type == typeof(Color))
             {
-                BuildSample(st);
+                if (st.Group == "sample")
+                    BuildSample(st);
+                else
+                    BuildColour(st);
                 continue;
             }
             var row = new HBoxContainer();
@@ -800,10 +826,81 @@ public partial class MaterialsTab : VBoxContainer
             AddReset(row, prop, st.Label);
             AddPin(row, [prop], st.Label);
         }
+        if (Step == MaterialStep.Detail)
+            BuildDetailSources();
+        _removeMap.Visible = !MaterialPipeline.IsCore(Step);
         _map2d.Arrow = Step == MaterialStep.Normal ? Recipe.NormalLightAngle : null;
         _checkLabel.Visible = Step == MaterialStep.Albedo && _checkLabel.Text.Length > 0;
         RefreshControls();
     }
+
+    /// <summary>A colour setting (a tint): a picker, Pick (a click in the 2D map or on the object), reset, pin.</summary>
+    private void BuildColour(StepSetting st)
+    {
+        var row = new HBoxContainer();
+        _settingsBox.AddChild(row);
+        var prop = st.Property;
+        row.AddChild(new Label { Text = (Pinned(prop) ? "● " : "") + st.Label, CustomMinimumSize = new Vector2(130, 0), TooltipText = st.Tip, MouseFilter = MouseFilterEnum.Pass });
+        var cp = new ColorPickerButton { EditAlpha = false, CustomMinimumSize = new Vector2(44, 0), TooltipText = st.Tip, SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        cp.ColorChanged += c => LiveSet(prop, new Color(c, 1));
+        cp.PopupClosed += () => EndDrag(prop);
+        row.AddChild(cp);
+        _controls[prop] = cp;
+        var pick = new Button { Text = "Pick", TooltipText = "Click the colour in the 2D map or on the object in the preview", ToggleMode = true };
+        pick.Toggled += on =>
+        {
+            _pickFor = on ? prop : null;
+            _map2d.Picking = on;
+            _preview.Picking = on;
+        };
+        row.AddChild(pick);
+        AddReset(row, prop, st.Label);
+        AddPin(row, [prop], st.Label);
+    }
+
+    /// <summary>The detail's albedo and normal: another texture's made maps (a texture of the project with a material), or two files.</summary>
+    private void BuildDetailSources()
+    {
+        if (Recipe.DetailFrom == DetailFrom.Texture)
+        {
+            var row = new HBoxContainer();
+            _settingsBox.AddChild(row);
+            row.AddChild(new Label { Text = (Pinned("DetailTexture") ? "● " : "") + "Texture", CustomMinimumSize = new Vector2(130, 0), TooltipText = "The texture whose made albedo and normal are the detail" });
+            var ob = new OptionButton { SizeFlagsHorizontal = SizeFlags.ExpandFill, TooltipText = "A texture of the project with a material: its albedo and normal map, at the detail's scale" };
+            ob.AddItem("(none)");
+            ob.SetItemMetadata(0, "");
+            foreach (var t in DetailCandidates())
+            {
+                ob.AddItem(RemasterTextures.ShortName(t));
+                ob.SetItemMetadata(ob.ItemCount - 1, t);
+                if (t == Recipe.DetailTexture)
+                    ob.Selected = ob.ItemCount - 1;
+            }
+            ob.ItemSelected += i => SetSetting("DetailTexture", ob.GetItemMetadata((int)i).AsString());
+            row.AddChild(ob);
+            AddPin(row, ["DetailTexture"], "Detail texture");
+            return;
+        }
+        foreach (var (prop, label) in new[] { ("DetailAlbedoFile", "Detail albedo"), ("DetailNormalFile", "Detail normal") })
+        {
+            var row = new HBoxContainer();
+            _settingsBox.AddChild(row);
+            row.AddChild(new Label { Text = (Pinned(prop) ? "● " : "") + label, CustomMinimumSize = new Vector2(130, 0) });
+            var file = (string)MaterialPipeline.Prop(prop).GetValue(Recipe)!;
+            var p = prop;
+            var b = new Button { Text = file.Length > 0 ? file.GetFile() : "Choose...", SizeFlagsHorizontal = SizeFlags.ExpandFill, TooltipText = $"{label}: a file of your own (PNG, WebP, JPEG)" };
+            b.Pressed += () => ChooseFile($"{label} (a file of your own)", f => SetSetting(p, f));
+            row.AddChild(b);
+            var clear = new Button { Text = "×", Flat = true, TooltipText = "No file" };
+            clear.Pressed += () => SetSetting(p, "");
+            row.AddChild(clear);
+            AddPin(row, [prop], label);
+        }
+    }
+
+    /// <summary>The project's textures with a material (other than the current one): the detail's choices.</summary>
+    public static IEnumerable<string> DetailCandidates() =>
+        TextureStore.Set.Textures.Where(t => t != null && t.Material.Length > 0).Select(t => t!.Id).OrderBy(id => RemasterTextures.ShortName(id), System.StringComparer.Ordinal);
 
     /// <summary>The pin of a setting (or a band equaliser's seven): ● pinned to the current texture (click: unpin), ○ the queue's (click: pin this value to the texture).</summary>
     private void AddPin(HBoxContainer row, string[] props, string label)
@@ -985,12 +1082,19 @@ public partial class MaterialsTab : VBoxContainer
 
     private void RefreshStrip()
     {
+        var popup = _addMap.GetPopup();
+        popup.Clear();
+        foreach (var s in MaterialPipeline.Extras)
+            if (!MaterialPipeline.On(Recipe, s))
+                popup.AddItem(Label(s), (int)s);
+        _addMap.Disabled = popup.ItemCount == 0;
         foreach (var s in MaterialPipeline.Steps)
         {
+            _strip[s].Col.Visible = MaterialPipeline.On(Recipe, s);
             var mode = MaterialPipeline.ModeOf(Recipe, s);
             string mark = mode == StepMode.Skip ? " –" : mode == StepMode.Import ? " ⇩" : _shownSide.GetValueOrDefault(s) >= _workingSide && _workingSide > 0 ? " ✓" : " …";
-            _strip[s].Button.Text = $"{(int)s} {s}{mark}";
-            _strip[s].Thumb.Texture = s == MaterialStep.Source ? (_maps.TryGetValue(s, out var src) ? src : _sourceTex) : _maps.GetValueOrDefault(s);
+            _strip[s].Button.Text = $"{(int)s} {Label(s)}{mark}";
+            _strip[s].Thumb.Texture = s == MaterialStep.Source ? (_maps.TryGetValue(s, out var src) ? src : _sourceTex) : MaterialPipeline.On(Recipe, s) ? _maps.GetValueOrDefault(s) : null;
             if (s == Step)
                 _strip[s].Button.SetPressedNoSignal(true);
         }
@@ -1020,11 +1124,44 @@ public partial class MaterialsTab : VBoxContainer
         foreach (var s in MaterialPipeline.Steps)
         {
             var (m, f) = MaterialPipeline.ModeProps(s);
+            if (!MaterialPipeline.IsCore(s))
+                yield return MaterialPipeline.OnProp(s);
             yield return m;
             yield return f;
             foreach (var st in MaterialPipeline.Settings[s])
                 yield return st.Property;
         }
+        yield return nameof(PbrRecipe.DetailTexture);
+        yield return nameof(PbrRecipe.DetailAlbedoFile);
+        yield return nameof(PbrRecipe.DetailNormalFile);
+    }
+
+    /// <summary>A step's name in the strip and the title.</summary>
+    public static string Label(MaterialStep s) => s switch
+    {
+        MaterialStep.BentNormal => "Bent normal",
+        _ => s.ToString(),
+    };
+
+    /// <summary>Adds "+ map" step <paramref name="s"/> to the material (one undo step) and goes to it. An error or null.</summary>
+    public string? AddMap(MaterialStep s)
+    {
+        if (MaterialPipeline.IsCore(s) || MaterialPipeline.On(Recipe, s))
+            return $"{Label(s)} is in the strip already";
+        Commit($"Materials: + {Label(s)}", new Godot.Collections.Dictionary { [MaterialPipeline.OnProp(s)] = true });
+        SelectStep(s);
+        return null;
+    }
+
+    /// <summary>Takes "+ map" step <paramref name="s"/> out of the material (one undo step; its settings kept). An error or null.</summary>
+    public string? RemoveMap(MaterialStep s)
+    {
+        if (MaterialPipeline.IsCore(s) || !MaterialPipeline.On(Recipe, s))
+            return $"{Label(s)} is not an added map";
+        if (Step == s)
+            SelectStep(MaterialStep.Emission);
+        Commit($"Materials: remove {Label(s)}", new Godot.Collections.Dictionary { [MaterialPipeline.OnProp(s)] = false });
+        return null;
     }
 
     /// <summary>The key of an undo step's dictionary that sets the queue's profile (not a setting).</summary>
@@ -1155,6 +1292,9 @@ public partial class MaterialsTab : VBoxContainer
         if (Same(Recipe.Get(prop), value))
             return;
         var after = new Godot.Collections.Dictionary { [prop] = value };
+        // the seam tool makes a tiling texture: the filters wrap from then on
+        if (prop == nameof(PbrRecipe.SeamMode) && value.AsInt32() != (int)SeamMode.Off && !Recipe.Wrap)
+            after[nameof(PbrRecipe.Wrap)] = true;
         Commit($"Materials: {LabelOf(prop)}", after);
     }
 
@@ -1230,19 +1370,21 @@ public partial class MaterialsTab : VBoxContainer
         Commit($"Materials: {s} {mode}", after);
     }
 
-    private void ChooseImport(MaterialStep s)
+    private void ChooseImport(MaterialStep s) => ChooseFile($"A map of your own for {s}", file => Say(Import(s, file) ?? $"{s}: {file.GetFile()}"));
+
+    private void ChooseFile(string title, System.Action<string> then)
     {
         _fileDialog ??= new EditorFileDialog
         {
             FileMode = EditorFileDialog.FileModeEnum.OpenFile, Access = EditorFileDialog.AccessEnum.Filesystem,
             Filters = ["*.png ; PNG", "*.webp ; WebP", "*.jpg, *.jpeg ; JPEG"],
         };
-        _fileDialog.Title = $"A map of your own for {s}";
+        _fileDialog.Title = title;
         if (_fileDialog.GetParent() == null)
             AddChild(_fileDialog);
         foreach (var c in _fileDialog.GetSignalConnectionList(FileDialog.SignalName.FileSelected))
             _fileDialog.Disconnect(FileDialog.SignalName.FileSelected, c["callable"].AsCallable());
-        _fileDialog.FileSelected += file => Say(Import(s, file) ?? $"{s}: {file.GetFile()}");
+        _fileDialog.FileSelected += file => then(file);
         _fileDialog.PopupFileDialog();
         RefreshControls();
     }
@@ -1262,6 +1404,8 @@ public partial class MaterialsTab : VBoxContainer
     {
         if (file.Length == 0)
             return null;
+        if (file.StartsWith("texture:", System.StringComparison.Ordinal))
+            return LoadMadeMap(file);
         if (_imports.TryGetValue(file, out var have))
             return have;
         var path = file.StartsWith("res://", System.StringComparison.Ordinal) || file.StartsWith("user://", System.StringComparison.Ordinal)
@@ -1272,9 +1416,46 @@ public partial class MaterialsTab : VBoxContainer
         return _imports[file] = PbrBuilder.From(img);
     }
 
+    /// <summary>The material each <c>texture:</c> key was last read from (read again when it changed).</summary>
+    private readonly Dictionary<string, string> _madeFrom = new();
+
+    /// <summary>
+    /// Another texture's made map, <c>texture:&lt;id&gt;:albedo</c> or <c>:normal</c> (the detail's):
+    /// the file its material names (read from the material's text: no import needed), cached per
+    /// material file.
+    /// </summary>
+    private RgbaImage? LoadMadeMap(string key)
+    {
+        var parts = key.Split(':');
+        if (parts.Length < 3)
+            return null;
+        var role = parts[^1];
+        var id = string.Join(":", parts[1..^1]);
+        if (TextureStore.Find(id) is not { Material.Length: > 0 } e)
+            return null;
+        var mat = TextureStore.Absolute(e.Material);
+        if (_madeFrom.TryGetValue(key, out var from) && from == mat && _imports.TryGetValue(key, out var have))
+            return have;
+        string? path = null;
+        if (FileAccess.FileExists(mat))
+            foreach (var line in FileAccess.GetFileAsString(mat).Split('\n'))
+                if (line.StartsWith("[ext_resource", System.StringComparison.Ordinal) && line.Contains($"id=\"{role}\"") && line.Split("path=\"") is { Length: > 1 } sp)
+                    path = sp[1].Split('"')[0];
+        if (path == null && ResourceLoader.Load(mat, "", ResourceLoader.CacheMode.Ignore) is BaseMaterial3D bm)
+            path = (role == "normal" ? bm.NormalTexture : bm.AlbedoTexture)?.ResourcePath;
+        if (path is not { Length: > 0 } || Image.LoadFromFile(ProjectSettings.GlobalizePath(path)) is not { } img || img.IsEmpty())
+            return null;
+        _madeFrom[key] = mat;
+        return _imports[key] = PbrBuilder.From(img);
+    }
+
     /// <summary>After settings changed: the controls, then the maps (or only the material for its own settings).</summary>
     private void Changed(IReadOnlyCollection<string> props)
     {
+        // an added or removed map, or the detail's source: the panel's rows change
+        if (props.Any(p => p.EndsWith("On", System.StringComparison.Ordinal) || p is nameof(PbrRecipe.DetailFrom) or nameof(PbrRecipe.DetailTexture)
+            or nameof(PbrRecipe.DetailAlbedoFile) or nameof(PbrRecipe.DetailNormalFile)))
+            RebuildSettings();
         RefreshControls();
         if (props.All(MaterialPipeline.MaterialOnly.Contains))
             UpdateMaterials();
@@ -1299,9 +1480,19 @@ public partial class MaterialsTab : VBoxContainer
         if (Current == null || _original == null)
             return;
         var snap = (PbrRecipe)Recipe.Duplicate();
-        foreach (var s in MaterialPipeline.Steps)
-            if (MaterialPipeline.ModeOf(snap, s) == StepMode.Import)
-                LoadImport(MaterialPipeline.FileOf(snap, s));
+        foreach (var f in MaterialPipeline.Files(snap))
+            LoadImport(f);
+        // the maps taken out of the material: off it at once
+        bool removed = false;
+        foreach (var s in MaterialPipeline.Extras)
+            if (!MaterialPipeline.On(snap, s))
+            {
+                removed |= _maps.Remove(s);
+                _pixels.Remove(s);
+                _shownSide.Remove(s);
+            }
+        if (removed)
+            UpdateMaterials();
         var inputs = new MaterialPipeline.Inputs(Current, _original, snap, new Dictionary<string, RgbaImage>(_imports));
         var (w, h, _) = MaterialPipeline.Size(inputs, Mathf.Max(MaterialPipeline.SmallSide, snap.WorkingSide));
         _workingSide = Mathf.Max(w, h);
@@ -1403,6 +1594,14 @@ public partial class MaterialsTab : VBoxContainer
         {
             _maskCpu.SetImage(PbrBuilder.ToImage(r.Image));
             ShowStep();
+        }
+        else if (r.Kind == ResultKind.Aux && r.Aux is { } aux)
+        {
+            if (!_auxCpu.TryGetValue(aux, out var at))
+                _auxCpu[aux] = at = new ImageTexture();
+            var img = PbrBuilder.ToImage(r.Image);
+            img.GenerateMipmaps();
+            at.SetImage(img);
         }
         else if (r.Step is { } s)
         {
@@ -1525,9 +1724,23 @@ public partial class MaterialsTab : VBoxContainer
         _mat.EmissionTexture = emission ? _maps[MaterialStep.Emission] : null;
         _mat.Emission = Colors.White;
         _mat.EmissionEnergyMultiplier = r.EmissionEnergy;
+        // the maps added with "+ map", shown live (the passes' targets on the GPU)
+        PbrBuilder.ApplyExtras(_mat, role => ExtraTexture(role, r), r);
+        _mat.UV2Scale = new Vector3(r.DetailScale * t, r.DetailScale * t, 1);
         bool classic = _compare.Selected == 1;
         _preview.UseClassic = classic;
         _preview.SetMaterials(_mat, classic ? _unshaded : _raw);
+    }
+
+    /// <summary>An added map's texture as shown, by its file role (null: not made, or off).</summary>
+    private Texture2D? ExtraTexture(string role, PbrRecipe r)
+    {
+        if (role is MaterialPipeline.DetailAlbedo or MaterialPipeline.DetailNormal)
+            return !r.DetailOn ? null : _gpu != null ? _gpu.Aux(role) : _auxCpu.GetValueOrDefault(role);
+        foreach (var s in MaterialPipeline.Extras)
+            if (MaterialPipeline.Role(s) == role)
+                return MaterialPipeline.On(r, s) ? _maps.GetValueOrDefault(s) : null;
+        return null;
     }
 
     /// <summary>The lighting as the light box sets it (the checks).</summary>
@@ -1907,14 +2120,25 @@ public partial class MaterialsTab : VBoxContainer
     /// <summary>The steps' imported files of <paramref name="r"/> kept beside <paramref name="id"/>'s maps (content-named), <paramref name="r"/> naming them relative to the store.</summary>
     private void StoreImports(string id, PbrRecipe r)
     {
+        // the detail's own files, kept as the imports are
+        if (r.DetailOn && r.DetailFrom == DetailFrom.Files)
+            foreach (var (prop, role, preset) in new[] { ("DetailAlbedoFile", "import-detail-albedo", TexturePreset.Colour), ("DetailNormalFile", "import-detail-normal", TexturePreset.Normal) })
+            {
+                var file = (string)MaterialPipeline.Prop(prop).GetValue(r)!;
+                if (file.Length == 0 || LoadImport(file) is not { } dpx)
+                    continue;
+                var rel = TextureStore.WriteImage(id, role, PbrBuilder.ToImage(dpx), preset);
+                _imports[rel] = dpx;
+                r.Set(prop, rel);
+            }
         foreach (var s in MaterialPipeline.Steps)
         {
             var (_, fp) = MaterialPipeline.ModeProps(s);
             var file = MaterialPipeline.FileOf(r, s);
-            if (MaterialPipeline.ModeOf(r, s) != StepMode.Import || file.Length == 0 || LoadImport(file) is not { } px)
+            if (!MaterialPipeline.On(r, s) || MaterialPipeline.ModeOf(r, s) != StepMode.Import || file.Length == 0 || LoadImport(file) is not { } px)
                 continue;
             var rel = TextureStore.WriteImage(id, $"import-{s.ToString().ToLowerInvariant()}", PbrBuilder.ToImage(px),
-                s is MaterialStep.Source or MaterialStep.Albedo or MaterialStep.Emission ? TexturePreset.Colour : s == MaterialStep.Normal ? TexturePreset.Normal : TexturePreset.Mask);
+                s is MaterialStep.Source or MaterialStep.Albedo or MaterialStep.Emission ? TexturePreset.Colour : s is MaterialStep.Normal or MaterialStep.BentNormal ? TexturePreset.Normal : TexturePreset.Mask);
             _imports[rel] = px;
             r.Set(fp, rel);
         }
@@ -1926,6 +2150,7 @@ public partial class MaterialsTab : VBoxContainer
     private string? _saveId;
     private PbrRecipe? _saveRecipe;
     private readonly Dictionary<MaterialStep, RgbaImage> _saveMaps = new();
+    private readonly Dictionary<string, RgbaImage> _saveAux = new();
     private RgbaImage? _saveOrm;
     private Image? _saveHeight;
     private GpuBake? _bake;
@@ -1954,6 +2179,7 @@ public partial class MaterialsTab : VBoxContainer
         _saveRecipe.Version = 3;
         _saveId = Current;
         _saveMaps.Clear();
+        _saveAux.Clear();
         (_saveOrm, _saveHeight) = (null, null);
         SaveResult = null;
         _saveClock = System.Diagnostics.Stopwatch.StartNew();
@@ -1973,11 +2199,14 @@ public partial class MaterialsTab : VBoxContainer
 
     private void FinishBake()
     {
-        var (maps, orm, height, _) = _bake!.Finish();
+        var (baked, _) = _bake!.Finish();
         _bake = null;
-        foreach (var (s, img) in maps)
+        foreach (var (s, img) in baked.Maps)
             _saveMaps[s] = img;
-        _saveOrm = orm;
+        foreach (var (name, img) in baked.Aux ?? new())
+            _saveAux[name] = img;
+        _saveOrm = baked.Orm;
+        var height = baked.Height;
         height.Convert(Image.Format.Rh);
         _saveHeight = height;
         SaveMakeMs = _saveClock.Elapsed.TotalMilliseconds;
@@ -2001,12 +2230,14 @@ public partial class MaterialsTab : VBoxContainer
         }
         else if (r.Side != 0 && r.Kind == ResultKind.Orm)
             _saveOrm = r.Image;
+        else if (r.Kind == ResultKind.Aux && r.Aux is { } aux)
+            _saveAux[aux] = r.Image;
         if (!r.Last)
             return;
         _saveRun = -1;
         _save.Disabled = false;
         SaveMakeMs = _saveClock.Elapsed.TotalMilliseconds;
-        SaveResult = _saveOrm != null && _saveMaps.Count == MaterialPipeline.Steps.Length ? Write() : $"the save failed: {_pipe.Error}";
+        SaveResult = _saveOrm != null && _saveMaps.Count == MaterialPipeline.Active(_saveRecipe!).Count ? Write() : $"the save failed: {_pipe.Error}";
         Say(SaveResult);
         Remake();
     }
@@ -2016,7 +2247,8 @@ public partial class MaterialsTab : VBoxContainer
         var id = _saveId!;
         var r = _saveRecipe!;
         // the height in 16 bits (half floats: an EXR), so parallax shows no terraces
-        var baked = new BakedMaps(new Dictionary<MaterialStep, RgbaImage>(_saveMaps), _saveOrm!, _saveHeight ?? PbrBuilder.ToImage(_saveMaps[MaterialStep.Height]));
+        var baked = new BakedMaps(new Dictionary<MaterialStep, RgbaImage>(_saveMaps), _saveOrm!, _saveHeight ?? PbrBuilder.ToImage(_saveMaps[MaterialStep.Height]),
+            new Dictionary<string, RgbaImage>(_saveAux));
         var entry = MakeEntry(id, baked, r, ProfileName);
         _plugin.SetTexture(id, entry, $"Save the material of {RemasterTextures.ShortName(id)}");
         _savedHere.Add(id);

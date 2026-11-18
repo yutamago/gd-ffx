@@ -146,6 +146,13 @@ public static class MaterialProfiles
 
     private static readonly PbrRecipe Defaults = new();
 
+    /// <summary>
+    /// The settings added after phase 3 (declared after <see cref="PbrRecipe.EmissionEnergy"/>):
+    /// the hash counts them only when they differ from their defaults, so a texture made before
+    /// keeps its profile's hash.
+    /// </summary>
+    private static readonly HashSet<string> Added = Props.SkipWhile(p => p != nameof(PbrRecipe.EmissionEnergy)).Skip(1).ToHashSet();
+
     /// <summary>A setting's value as invariant text (the hash's; any thread).</summary>
     public static string Text(PbrRecipe r, string prop) => Text(PropInfo[prop].GetValue(r));
 
@@ -168,7 +175,12 @@ public static class MaterialProfiles
     {
         var sb = new StringBuilder();
         foreach (var p in Props)
+        {
+            // R2b phase 4's settings count only when set: a profile without them has the hash it had
+            if (Added.Contains(p) && Text(r, p) == Text(Defaults, p))
+                continue;
             sb.Append(p).Append('=').Append(Text(r, p)).Append('\n');
+        }
         var h = System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString()));
         return Convert.ToHexString(h, 0, 6).ToLowerInvariant();
     }
@@ -226,6 +238,10 @@ public static class MaterialProfiles
         foreach (var s in MaterialPipeline.Steps)
             if (MaterialPipeline.ModeOf(settings, s) == StepMode.Import)
                 d[MaterialPipeline.ModeProps(s).File] = MaterialPipeline.FileOf(settings, s);
+        // the detail's own files (a texture's, as the imports)
+        foreach (var f in new[] { nameof(PbrRecipe.DetailAlbedoFile), nameof(PbrRecipe.DetailNormalFile) })
+            if (settings.DetailOn && settings.DetailFrom == DetailFrom.Files && (string)PropInfo[f].GetValue(settings)! is { Length: > 0 } file)
+                d[f] = file;
         var sorted = new Godot.Collections.Dictionary();
         foreach (var k in d.Keys.Select(k => k.AsString()).OrderBy(k => k, StringComparer.Ordinal))
             sorted[k] = d[k];

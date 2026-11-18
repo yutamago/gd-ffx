@@ -50,7 +50,7 @@ public static class ProfileSheet
 
     /// <summary>One texture's numbers.</summary>
     public sealed record Measure(string Texture, int W, int H, float L0, float L1, float C0, float C1, float Rough, float RoughP10, float RoughP90,
-        float Metal, float Ao, float HeightSd, float Tilt, double Ms);
+        float Metal, float Ao, float HeightSd, float Tilt, double Ms, string Added = "");
 
     /// <summary>Bakes every starter profile on its textures (main thread: the classic pixels); the failures (empty: all plausible), and the numbers.</summary>
     public static (List<string> Fails, List<string> Lines) Run(string? dir, int maxSide)
@@ -82,7 +82,13 @@ public static class ProfileSheet
                 var m = Measured(RemasterTextures.ShortName(id), src, baked, clock.Elapsed.TotalMilliseconds);
                 ms.Add(m);
                 var line = $"{k.Profile} {m.Texture} {m.W}x{m.H}: L {m.L0:0.000}->{m.L1:0.000} C {m.C0:0.000}->{m.C1:0.000} rough {m.Rough:0.00} ({m.RoughP10:0.00}..{m.RoughP90:0.00}) "
-                    + $"metal {m.Metal:0.00} ao {m.Ao:0.00} height sd {m.HeightSd:0.000} tilt {m.Tilt:0.000} ({m.Ms:0} ms)";
+                    + $"metal {m.Metal:0.00} ao {m.Ao:0.00} height sd {m.HeightSd:0.000} tilt {m.Tilt:0.000}{(m.Added.Length > 0 ? $" added: {m.Added}" : "")} ({m.Ms:0} ms)";
+                // the added maps (R2b phase 4): each made, its mean in its range
+                foreach (var x in MaterialPipeline.Extras)
+                    if (MaterialPipeline.On(r, x) && !baked.Maps.ContainsKey(x))
+                        fails.Add($"{k.Profile} on {m.Texture}: no {x} map");
+                if (AddedFails(baked) is { } af)
+                    fails.Add($"{k.Profile} on {m.Texture}: {af}");
                 lines.Add(line);
                 GD.Print($"ffx materialize: profile {line}");
                 if (MathF.Abs(m.L1 - m.L0) > LightnessLimit)
@@ -152,7 +158,56 @@ public static class ProfileSheet
         for (int i = 0; i < nm.Length; i += 4)
             tilt += 1 - (nm[i + 2] / 255.0 * 2 - 1);
         return new Measure(name, b.Maps[MaterialStep.Albedo].Width, b.Maps[MaterialStep.Albedo].Height, l0, l1, c0, c1,
-            (float)rough.Average(), rough[n / 10], rough[n * 9 / 10], (float)(metal / n), (float)(ao / n), (float)hsd, (float)(tilt / (nm.Length / 4)), ms);
+            (float)rough.Average(), rough[n / 10], rough[n * 9 / 10], (float)(metal / n), (float)(ao / n), (float)hsd, (float)(tilt / (nm.Length / 4)), ms, Added(b));
+    }
+
+    /// <summary>A map's channel's mean (0-1).</summary>
+    private static float Mean(RgbaImage img, int c)
+    {
+        double s = 0;
+        for (int i = c; i < img.Rgba.Length; i += 4)
+            s += img.Rgba[i] / 255.0;
+        return (float)(s / (img.Rgba.Length / 4));
+    }
+
+    /// <summary>The added maps' numbers: the bent normal's tilt (1 - z), the masks' means, the backlight's and transmittance's.</summary>
+    private static string Added(BakedMaps b)
+    {
+        var parts = new List<string>();
+        foreach (var (s, img) in b.Maps)
+        {
+            if (MaterialPipeline.IsCore(s))
+                continue;
+            parts.Add(s switch
+            {
+                MaterialStep.BentNormal => $"bent tilt {1 - (Mean(img, 2) * 2 - 1):0.000}",
+                MaterialStep.Anisotropy => $"flow strength {Mean(img, 3):0.00}",
+                MaterialStep.Transmittance => $"transmittance {Mean(img, 3):0.00}",
+                MaterialStep.Backlight => $"backlight {(Mean(img, 0) + Mean(img, 1) + Mean(img, 2)) / 3:0.00}",
+                _ => $"{s.ToString().ToLowerInvariant()} {Mean(img, 0):0.00}",
+            });
+        }
+        return string.Join(", ", parts);
+    }
+
+    /// <summary>An added map out of its range (null: all plausible): the bent normal tilted less than 60 degrees on average, a mask's mean not all off, the backlight lit.</summary>
+    private static string? AddedFails(BakedMaps b)
+    {
+        foreach (var (s, img) in b.Maps)
+        {
+            if (MaterialPipeline.IsCore(s))
+                continue;
+            float v = s switch
+            {
+                MaterialStep.BentNormal => 1 - (Mean(img, 2) * 2 - 1),
+                MaterialStep.Anisotropy or MaterialStep.Transmittance => Mean(img, 3),
+                MaterialStep.Backlight => (Mean(img, 0) + Mean(img, 1) + Mean(img, 2)) / 3,
+                _ => Mean(img, 0),
+            };
+            if (s == MaterialStep.BentNormal ? v > 0.5f : v < 0.01f)
+                return $"the {s} map's mean {v:0.000} is implausible";
+        }
+        return null;
     }
 
     private const int Cell = 192;

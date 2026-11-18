@@ -327,6 +327,16 @@ preview are four CC0 ones from Poly Haven in
 plugin) and those of the folder in the editor setting
 `ffx_remaster/hdri_dir`.
 
+R2b's phase 4 (docs/remaster-materials.md, "Phase 4: what there is"): **+
+map** at the end of the strip adds the other maps Godot's materials take
+(bent normal, rim, clearcoat, anisotropy, subsurface, transmittance,
+backlight, refraction, detail), each a step with its own settings, shown
+live in the preview and written with the material's flags on Save (the
+game's remastered path draws all but refraction); **Remove map** takes one
+out. The Source step's **seam tool** (a height-aware overlap, or a scatter of
+rotated copies) makes a texture that does not tile tile, every map
+following it.
+
 ### Profiles and the queue
 
 R2b's phase 3 (docs/remaster-materials.md, "Profiles", "Phase 3: what there
@@ -865,7 +875,20 @@ FFX_EDITOR_SHOT=1 FFX_GAME_DIR=<game> tools/remaster-editor-check.sh [OUT_DIR]  
    (a drag, one undo step) change the normal and the arrow follows, the
    occlusion settles in stages (its first directions, then all), the 3D
    preview's pick finds the sphere's UV, the colour check; the save's height
-   is a half-float EXR imported as a float texture. Under a renderer the raw
+   is a half-float EXR imported as a float texture.
+   Phase 4 (after phase 3's): every map added with + map on the first
+   texture (one undo step each, in the strip, made, its texture and flag on
+   the preview's material; the masks from a source other than the constant
+   vary; the detail from the second texture's made maps), undo and redo of
+   the detail with its settings, the rim's amount on the material without a
+   map made; a synthetic texture with seams imported as the source, the seam
+   tool's overlap and scatter (the wrap edges' step against the steps inside,
+   the source's and the height's, must drop; one undo step each, Tiling on),
+   undone; saved (the material's text with every added map's flag and
+   amount, loaded back by Godot with them); a profile with the maps saved
+   (its switches, no files), loaded over rock, undone, redone. With
+   `--editor-shot`: `maps-<step>.png` (the preview after each map),
+   `maps-strip.png`, `seam-overlap.png`, `seam-scatter.png`, `maps-all.png`. Under a renderer the raw
    texture and the default material lit by the studio on three textures
    (the mean OKLab lightness and chroma of the sphere, the line `materials
    lit`), and `materials-isolate.png`, `materials-normal-light.png`,

@@ -5,7 +5,7 @@
 [resource]
 script = ExtResource("1")
 Title = "Metal"
-Note = "Bare and worn metal: the brighter parts metallic (darker ones rust and dirt), smoother, worn edges. Tuned on znkd08_metal_01 to _03, znkd08_streetlamp_01 and Bevelle's machina (bvyt00)."
+Note = "Bare and worn metal: the brighter parts metallic (darker ones rust and dirt), smoother, worn edges. Tuned on znkd08_metal_01 to _03, znkd08_streetlamp_01 and Bevelle's machina (bvyt00). The anisotropy is tuned but off: + map, Anisotropy for brushed metal (the grain across the scratches)."
 Version = 3
 Delight = 0.5
 HeightContrast = 0.8
@@ -23,3 +23,5 @@ MetallicMode = 0
 MetallicThreshold = 0.25
 MetallicSoftness = 0.25
 MetallicBlur = 2.0
+AnisotropySmooth = 4.0
+AnisotropyAmount = 0.6
