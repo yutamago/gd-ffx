@@ -518,7 +518,9 @@ movies"):
   with its files); `--selftest-besaid --devsave=7`, `--selftest-battle
   --devsave=7 --battle=3,0,0`, `tools/selftest.sh` (the start-up opening),
   `--selftest-mods --no-game` and the quick sweep (10 of 10, 0 errors)
-  unchanged; the example's pictures under Xvfb (Compatibility).
+  unchanged; the example's pictures under Xvfb (Compatibility) and on the GPU
+  (the Windows export, Vulkan, Forward+, Intel Arc 140T: `--selftest-effects`
+  passes there too, the sparkles drawn where the classic glow was).
 
 ### Decisions (R7a)
 
