@@ -242,6 +242,24 @@ public static class RemasterTextures
         return err == Error.Ok ? img : null;
     }
 
+    /// <summary>
+    /// The maps <paramref name="m"/> names that did not load (empty: none): an ORM material without
+    /// its ORM map (it would draw as metal: its metallic multiplier is 1), a normal or height map
+    /// switched on without its texture (what Godot leaves of a material whose files are gone or not
+    /// imported yet). A later <see cref="RemasterTextures.Version"/> (the import done) makes it again.
+    /// </summary>
+    public static List<string> MissingMaps(BaseMaterial3D m)
+    {
+        var missing = new List<string>();
+        if (m is OrmMaterial3D { OrmTexture: null })
+            missing.Add("orm");
+        if (m.NormalEnabled && m.NormalTexture == null)
+            missing.Add("normal");
+        if (m.HeightmapEnabled && m.HeightmapTexture == null)
+            missing.Add("height");
+        return missing;
+    }
+
     private static Material? LoadMaterial(string path)
     {
         lock (Materials)

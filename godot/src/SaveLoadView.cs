@@ -93,9 +93,40 @@ public partial class SaveLoadView : Control
 
     private static string Label(SaveLoadState.Item it) => it.Label.Length > 0 ? it.Label : it.Slot;
 
-    /// <summary>A piece of the movie (a class or a sprite at a label) as a texture, cached.</summary>
-    private ImageTexture? Art(string movie, string key, int id, int frame, float scale)
+    private int _artVersion = -1;
+
+    /// <summary>The art drawn last, by its id (for tests: replaced or classic).</summary>
+    public Dictionary<string, bool> Drawn { get; } = new();
+
+    /// <summary>
+    /// A piece of the movie as a texture: a replacement for its art id (R7b, <see cref="Remaster.UiArt"/>:
+    /// the class name, <c>@label</c> for a sprite's frame) drawn at the classic piece's size, else the
+    /// piece drawn from the player's movie (a class or a sprite at a label), cached.
+    /// </summary>
+    private Texture2D? Art(string movie, string key, string artId, int id, int frame, float scale)
     {
+        var classic = Classic(movie, key, id, frame, scale);
+        if (Remaster.UiArt.Replacement(movie, artId) is { } r)
+        {
+            Drawn[artId] = true;
+            return r;
+        }
+        Drawn[artId] = false;
+        return classic;
+    }
+
+    /// <summary>The classic piece's size (a replacement is drawn at it), by its key.</summary>
+    private readonly Dictionary<string, Vector2> _classicSize = new();
+
+    private Vector2 SizeOf(string key, Texture2D t) => _classicSize.TryGetValue(key, out var s) ? s : t.GetSize();
+
+    private ImageTexture? Classic(string movie, string key, int id, int frame, float scale)
+    {
+        if (_artVersion != Remaster.UiArt.Version)
+        {
+            _artVersion = Remaster.UiArt.Version;
+            Drawn.Clear();
+        }
         if (_art.TryGetValue(key, out var t))
             return t;
         t = null;
@@ -108,42 +139,56 @@ public partial class SaveLoadView : Control
                 t = ImageTexture.CreateFromImage(img);
         }
         _art[key] = t;
+        if (t != null)
+            _classicSize[key] = t.GetSize();
         return t;
     }
 
     private string Movie => FlashScreens.SaveLoad.Movie.Length > 0 ? FlashScreens.SaveLoad.Movie : "saveload_jp.swf";
 
-    private ImageTexture? Thumbnail(string name)
+    private Texture2D? Thumbnail(string name)
     {
         var game = GameHost.Instance?.Game;
         if (game == null || name.Length == 0)
             return null;
-        if (!_art.ContainsKey("m:" + name))
-            return Art(Movie, "m:" + name, game.FlashClass(Movie, name), 1, 1f);
-        return _art["m:" + name];
+        return Art(Movie, "m:" + name, name, ClassId(game, name), 1, 1f);
     }
 
-    private ImageTexture? Face(string label)
+    public const string FaceClass = "saveload_jp_fla.face_565", ArrowClass = "saveload_jp_fla.arrow_21";
+
+    private Texture2D? Face(string label)
     {
         var game = GameHost.Instance?.Game;
         if (game == null || label.Length == 0 || label == "_0")
             return null;
-        if (!_art.ContainsKey("f:" + label))
-        {
-            var face = game.FlashClass(Movie, "saveload_jp_fla.face_565");
-            return Art(Movie, "f:" + label, face, face >= 0 ? game.FlashLabel(Movie, face, label) : -1, 0.5f);
-        }
-        return _art["f:" + label];
+        var face = ClassId(game, FaceClass);
+        return Art(Movie, "f:" + label, Remaster.UiArt.ArtId(FaceClass, label), face, face >= 0 ? LabelOf(game, face, label) : -1, 0.5f);
     }
 
-    private ImageTexture? Arrow()
+    private Texture2D? Arrow()
     {
         var game = GameHost.Instance?.Game;
         if (game == null)
             return null;
-        if (!_art.ContainsKey("arrow"))
-            return Art(Movie, "arrow", game.FlashClass(Movie, "saveload_jp_fla.arrow_21"), 1, 1f);
-        return _art["arrow"];
+        return Art(Movie, "arrow", ArrowClass, ClassId(game, ArrowClass), 1, 1f);
+    }
+
+    private readonly Dictionary<string, int> _ids = new();
+
+    private int ClassId(FfxGame game, string name)
+    {
+        var k = Movie + "|" + name;
+        if (!_ids.TryGetValue(k, out var id))
+            _ids[k] = id = game.FlashClass(Movie, name);
+        return id;
+    }
+
+    private int LabelOf(FfxGame game, int id, string label)
+    {
+        var k = Movie + "|" + id + "@" + label;
+        if (!_ids.TryGetValue(k, out var f))
+            _ids[k] = f = game.FlashLabel(Movie, id, label);
+        return f;
     }
 
     private static readonly Color Ink = new(0.96f, 0.97f, 1f);
@@ -174,7 +219,7 @@ public partial class SaveLoadView : Control
         float bob = (float)(Mathf.Sin(_time * 6) * 2);
         if (Arrow() is { } a)
         {
-            var size = a.GetSize() * 0.85f;
+            var size = SizeOf("arrow", a) * 0.85f;
             DrawTextureRect(a, new Rect2(tip + new Vector2(-size.X + bob, -size.Y / 2), size), false);
         }
         else

@@ -267,7 +267,10 @@ public partial class StateView3D : Node3D
         UpdateMap(host.Classic, view.Current);
         UpdateRenderPath(view);
         _prefetch.Tick(host.Classic, host.Game, view.Current, _mapLevel, _parked?.Level ?? "", ObjectIndex);
+        UpdateRoom(host.Game, view.Current);
         _layers.Tick(view.Current, view.Current?.World.Map ?? -1, _camera.Far, cam);
+        if (_room is { Built: true } builtRoom && IsInstanceValid(builtRoom))
+            RoomShown = builtRoom.Tick(_layers.State.Scene, _layerShown ??= _layers.IsShown);
         Perf.End(Perf.Section.View3D, t0);
         t0 = Perf.Start();
         bool capture = CaptureDue(view, delta);
@@ -331,6 +334,78 @@ public partial class StateView3D : Node3D
             env.SetGlowLevel(i, i == 0 ? 1f : 0f);
     }
 
+    // ---- a rebuilt 2D room (R7b) ---------------------------------------------------------
+
+    /// <summary>The shown map's rebuilt 2D room (a remade scene whose root is a <see cref="Remaster.RebuiltRoom"/>; null: none).</summary>
+    private Remaster.RebuiltRoom? _room;
+    private System.Func<int, int, bool>? _layerShown;
+
+    public Remaster.RebuiltRoom? Room => _room;
+
+    /// <summary>Whether the rebuilt room draws the map now (else its classic layers: F7, the render path classic).</summary>
+    public bool RebuiltShown { get; private set; }
+
+    /// <summary>The rebuilt room's proxies shown this frame (for the checks).</summary>
+    public int RoomShown { get; private set; }
+
+    /// <summary>
+    /// A rebuilt 2D room (docs/remake.md, "Rebuilt 2D rooms"): built once its level's 2D layers are
+    /// loaded (their pictures, the map's game data, the camera's far plane and the map's term of the
+    /// 2D window), then drawn instead of the classic layers unless the render path is classic (F7
+    /// toggles between the two); the game's camera and its window draw it, the characters as on any
+    /// map.
+    /// </summary>
+    private void UpdateRoom(FfxGame? game, Snapshot? s)
+    {
+        if (_room != null && !IsInstanceValid(_room))
+            _room = null;
+        if (_room == null)
+        {
+            _layers.Hidden = false;
+            RebuiltShown = false;
+            return;
+        }
+        if (!_room.Built && _layers.Level == _mapLevel && _layers.Model is { } model)
+        {
+            var data = game != null ? Remaster.MapGameData.Read(game, _mapLevel) : null;
+            float mapPan = s?.Camera is { Valid: true } c ? c.MapPan : 0f;
+            _room.Build(model, data, _camera.Far, mapPan, _layers.Atc);
+            if (System.Math.Abs(mapPan) > 1e-6f)
+                GD.Print($"ffx: rebuilt room {Remaster.PartIds.LevelKey(_mapLevel)}: the map's term of the 2D window {mapPan:F4} taken into its planes");
+        }
+        bool drawn = _room.Built && Remaster.RenderPaths.Choice != "classic";
+        if (drawn != RebuiltShown)
+            GD.Print($"ffx: map {_mapLevel} drawn {(drawn ? "rebuilt in 3D" : "with its classic 2D layers")}");
+        RebuiltShown = drawn;
+        if (_map != null && _map.Visible != drawn)
+            _map.Visible = drawn;
+        _layers.Hidden = drawn;
+    }
+
+    /// <summary>
+    /// Takes the shown map down so the next frame loads it again through the registry (a check that
+    /// registers a remade scene for the map it is on).
+    /// </summary>
+    public void ReloadMap()
+    {
+        if (_parked is { } p && p.Level == _mapLevel)
+        {
+            p.Node?.QueueFree();
+            _parked = null;
+        }
+        if (_map != null)
+        {
+            RemoveChild(_map);
+            _map.QueueFree();
+        }
+        _map = null;
+        _room = null;
+        _objectNodes = null;
+        _morphs = [];
+        _overrides = null;
+        _mapLevel = "";
+    }
+
     // ---- the render path ----------------------------------------------------------
 
     private string _pathLevel = "\0";
@@ -380,7 +455,14 @@ public partial class StateView3D : Node3D
         if (e is InputEventKey { Pressed: true, Echo: false } k && k.PhysicalKeycode == GameHost.RemasterKey
             && GameHost.Instance?.Captured != true && _mapLevel.Length > 0)
         {
-            Remaster.RenderPaths.Toggle(_mapLevel);
+            // a rebuilt 2D room: between it and the classic layers
+            if (_room is { Built: true } && IsInstanceValid(_room))
+            {
+                Remaster.RenderPaths.Set(RebuiltShown ? "classic" : "map");
+                GD.Print($"ffx: render path {Remaster.RenderPaths.Choice} (toggled on the rebuilt room {Remaster.PartIds.LevelKey(_mapLevel)})");
+            }
+            else
+                Remaster.RenderPaths.Toggle(_mapLevel);
             GetViewport().SetInputAsHandled();
         }
         // R7: remade effects, replaced audio and movies on or off (everything classic)
@@ -807,6 +889,7 @@ public partial class StateView3D : Node3D
             _morphs = parked.Morphs;
             _overrides = parked.Overrides;
             _mapLevel = level;
+            _room = Remaster.RebuiltRoom.In(_map);
             if (_map != null)
                 AddChild(_map);
             _mapSource = "kept";
@@ -842,6 +925,7 @@ public partial class StateView3D : Node3D
         _mapSource = content.Remade ? "remade" : ahead ? "loaded ahead" : "loaded then";
         if (map == null)
             return;
+        _room = content.Remade ? Remaster.RebuiltRoom.In(map) : null;
         map.Name = content.Remade ? "RemadeMap" : "ClassicMap";
         map.Scale = Vector3.One * content.MapScale;
         AddChild(map);
@@ -869,6 +953,7 @@ public partial class StateView3D : Node3D
         else
             _map?.QueueFree();
         _map = null;
+        _room = null;
         _objectNodes = null;
         _morphs = [];
         _overrides = null;

@@ -70,6 +70,7 @@ public partial class FfxGame : RefCounted
         public static readonly StringName flash_calls_pending = "flash_calls_pending";
         public static readonly StringName flash_calls = "flash_calls";
         public static readonly StringName flash_info = "flash_info";
+        public static readonly StringName flash_symbols = "flash_symbols";
         public static readonly StringName flash_render = "flash_render";
         public static readonly StringName flash_bounds = "flash_bounds";
         public static readonly StringName flash_class = "flash_class";
@@ -318,6 +319,28 @@ public partial class FfxGame : RefCounted
     {
         var rgba = Node.Call(M.flash_render, movie, id, frame, origin.X, origin.Y, width, height, scale).AsByteArray();
         return rgba.Length == width * height * 4 ? Image.CreateFromData(width, height, false, Image.Format.Rgba8, rgba) : null;
+    }
+
+    /// <summary>One character of a Flash movie (<see cref="FlashSymbols"/>): id, kind (<c>shape</c>, <c>morph</c>, <c>sprite</c>, <c>bitmap</c>), class name ("" none), frames, frame labels.</summary>
+    public sealed record FlashSymbol(int Id, string Kind, string Class, int Frames, (string Label, int Frame)[] Labels);
+
+    /// <summary>Every character a Flash movie defines (the UI art browser); empty without the movie.</summary>
+    public System.Collections.Generic.List<FlashSymbol> FlashSymbols(string movie)
+    {
+        var list = new System.Collections.Generic.List<FlashSymbol>();
+        foreach (var line in Node.Call(M.flash_symbols, movie).AsStringArray())
+        {
+            var f = line.Split('\u001f');
+            if (f.Length < 5 || !int.TryParse(f[0], out var id))
+                continue;
+            var labels = f[4].Length == 0 ? [] : System.Array.ConvertAll(f[4].Split(','), l =>
+            {
+                int eq = l.LastIndexOf('=');
+                return eq > 0 && int.TryParse(l[(eq + 1)..], out var fr) ? (l[..eq], fr) : (l, 1);
+            });
+            list.Add(new FlashSymbol(id, f[1], f[2], int.TryParse(f[3], out var n) ? n : 1, labels));
+        }
+        return list;
     }
 
     /// <summary>Where a Flash movie's character draws at a frame (stage pixels); empty when nothing.</summary>

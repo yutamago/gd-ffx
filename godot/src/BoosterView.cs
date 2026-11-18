@@ -50,9 +50,11 @@ public partial class BoosterView : Control
         AddChild(_toast);
     }
 
-    /// <summary>A movie's icon (its first bitmap), cached.</summary>
-    private ImageTexture? Icon(FfxGame game, string movie)
+    /// <summary>A movie's icon (its first bitmap, art id <c>#1</c>; or its replacement, R7b's <see cref="Remaster.UiArt"/>), cached.</summary>
+    private Texture2D? Icon(FfxGame game, string movie)
     {
+        if (Remaster.UiArt.Replacement(movie, IconArt) is { } r)
+            return r;
         if (!_icons.TryGetValue(movie, out var t))
         {
             t = game.FlashBitmap(movie, 1) is { } img ? ImageTexture.CreateFromImage(img) : null;
@@ -60,6 +62,9 @@ public partial class BoosterView : Control
         }
         return t;
     }
+
+    /// <summary>The badges' icon: each booster movie's bitmap 1.</summary>
+    public const string IconArt = "#1";
 
     public override void _Process(double delta)
     {

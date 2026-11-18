@@ -580,13 +580,76 @@ void fragment() {
 
     /// <summary>The variant's switches (the import's <c>extras.ffx_switches</c>).</summary>
     private static bool Switch(MaterialExtras extras, string name) => extras.Switches.Contains(name);
+    private static readonly string[] LayerModes =
+    [
+        "unshaded, cull_disabled, blend_mix, depth_draw_always, shadows_disabled",
+        "unshaded, cull_disabled, blend_mix, depth_draw_never, shadows_disabled",
+        "unshaded, cull_disabled, blend_add, depth_draw_always, shadows_disabled",
+        "unshaded, cull_disabled, blend_add, depth_draw_never, shadows_disabled",
+    ];
     private static readonly Shader[] LayerShaders =
     [
-        MakeShader("unshaded, cull_disabled, blend_mix, depth_draw_always, shadows_disabled", LayerBody),
-        MakeShader("unshaded, cull_disabled, blend_mix, depth_draw_never, shadows_disabled", LayerBody),
-        MakeShader("unshaded, cull_disabled, blend_add, depth_draw_always, shadows_disabled", LayerBody),
-        MakeShader("unshaded, cull_disabled, blend_add, depth_draw_never, shadows_disabled", LayerBody),
+        MakeShader(LayerModes[0], LayerBody),
+        MakeShader(LayerModes[1], LayerBody),
+        MakeShader(LayerModes[2], LayerBody),
+        MakeShader(LayerModes[3], LayerBody),
     ];
+
+    // A 2D layer's picture projected from its scene's fixed camera onto any geometry in render
+    // space (R7b, a rebuilt room's proxies: RebuiltRoom). A point's place in the scene camera's view
+    // (scene_view) is turned into the PS2 screen pixel the layer camera puts there (the camera's
+    // 4/3 perspective, scene_tan its half-angles' tangents; map_pan_y the main camera's clip y
+    // above the layer camera's, 1.5 map_pan), then into the layer's UV over its pixel rectangle
+    // (layer_rect, layer_uv at its corners); outside the rectangle nothing is drawn. The colour, the
+    // cut and the output are the layer shader's (vertex_colour the layer's vertex colour).
+    private const string ProjectedBody = @"
+uniform sampler2D tex : filter_linear_mipmap, repeat_disable;
+uniform vec4 material_colour = vec4(1.0);
+uniform vec4 vertex_colour = vec4(1.0);
+uniform float cut_alpha = 0.5;
+uniform mat4 scene_view;
+uniform vec2 scene_tan = vec2(0.5, 0.375);
+uniform float map_pan_y = 0.0;
+uniform vec4 layer_rect = vec4(0.0, 0.0, 512.0, 448.0);
+uniform vec4 layer_uv = vec4(0.0, 0.0, 1.0, 1.0);
+varying vec3 world_pos;
+void vertex() {
+	world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+}
+void fragment() {
+	vec3 v = (scene_view * vec4(world_pos, 1.0)).xyz;
+	if (v.z > -0.001) { discard; }
+	vec2 ndc = v.xy / (-v.z * scene_tan);
+	ndc.y -= map_pan_y;
+	vec2 px = vec2(256.0 + 256.0 * ndc.x, 224.0 - 224.0 * ndc.y);
+	vec2 t = (px - layer_rect.xy) / max(layer_rect.zw - layer_rect.xy, vec2(0.001));
+	if (t.x < 0.0 || t.y < 0.0 || t.x > 1.0 || t.y > 1.0) { discard; }
+	vec4 c = texture(tex, mix(layer_uv.xy, layer_uv.zw, t)) * material_colour * vertex_colour;
+	if (c.a < cut_alpha) { discard; }
+	ALBEDO = ffx_out(c.rgb);
+	ALPHA = c.a;
+}
+";
+
+    private static readonly Shader?[] ProjectedShaders = new Shader?[4];
+
+    /// <summary>
+    /// The projected-layer shader (R7b: <c>Remaster.RebuiltRoom</c>) with the blend and depth write
+    /// of layer shader <paramref name="layer"/> (a layer's material's), or with depth written
+    /// <paramref name="depthWrite"/> overriding it (the floor: never). Null: not a layer shader.
+    /// </summary>
+    public static Shader? ProjectedLayerShader(Shader? layer, bool? depthWrite = null)
+    {
+        int i = System.Array.IndexOf(LayerShaders, layer);
+        if (i < 0)
+            return null;
+        if (depthWrite is { } w)
+            i = (i & 2) | (w ? 0 : 1);
+        return ProjectedShaders[i] ??= MakeShader(LayerModes[i], ProjectedBody);
+    }
+
+    /// <summary>Whether layer shader <paramref name="layer"/> writes depth (no <c>MASK_DEPTH</c>).</summary>
+    public static bool LayerWritesDepth(Shader? layer) => layer == LayerShaders[0] || layer == LayerShaders[2];
 
     /// <summary>The effect variant switches the layers' look depends on.</summary>
     private static readonly string[] LayerSwitches = ["MASK_DEPTH", "ADDITIVE_BLENDING"];

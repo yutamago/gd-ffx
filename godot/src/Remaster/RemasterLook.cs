@@ -233,6 +233,11 @@ void fragment() {
     /// <summary>Lit materials made so far (for tests and the log): with a PBR material, from a colour texture only.</summary>
     public static (int Pbr, int Plain) Count;
 
+    /// <summary>Materials drawn from their albedo alone because their maps did not load (for tests).</summary>
+    public static int Fallbacks;
+
+    private static readonly HashSet<Material> FallbackLogged = new(ReferenceEqualityComparer.Instance);
+
     /// <summary>
     /// The lit material for classic map material <paramref name="classic"/> (null: not a map
     /// material: water, a 2D layer, a character, which keep theirs). Main thread.
@@ -279,7 +284,20 @@ void fragment() {
             return copy;
         }
         var std = pbr as BaseMaterial3D;
-        Texture2D? albedo = std?.AlbedoTexture;
+        // a material whose maps did not load (a file gone, not imported, a broken path) would draw
+        // as plain metal (an ORM material's metallic multiplier with no ORM map): drawn from its
+        // albedo alone instead (the classic colour texture when that did not load either), logged once
+        Texture2D? fallbackAlbedo = null;
+        if (std != null && live == null && RemasterTextures.MissingMaps(std) is { Count: > 0 } missing)
+        {
+            if (FallbackLogged.Add(std))
+                GD.PrintErr($"ffx: materials: {id}: {std.ResourcePath} has maps that did not load ({string.Join(", ", missing)}): "
+                    + $"drawn from {(std.AlbedoTexture != null ? "its albedo" : "the classic colour texture")} only");
+            fallbackAlbedo = std.AlbedoTexture;
+            std = null;
+            Fallbacks++;
+        }
+        Texture2D? albedo = std?.AlbedoTexture ?? fallbackAlbedo;
         if (albedo == null)
         {
             using var v = classic.GetShaderParameter(Variants.Name("tex"));
@@ -468,18 +486,18 @@ public sealed class MapLook
 
     private void Collect(Node map, Transform3D world)
     {
-        var meshes = new List<(MeshInstance3D Mesh, Aabb Box)>();
+        var meshes = new List<(MeshInstance3D Mesh, Aabb Box, Transform3D World)>();
         void Walk(Node n, Transform3D t)
         {
             if (n is MeshInstance3D { Mesh: { } mesh } mi)
-                meshes.Add((mi, t * mesh.GetAabb()));
+                meshes.Add((mi, t * mesh.GetAabb(), t));
             for (int i = 0, k = n.GetChildCount(); i < k; i++)
                 if (n.GetChild(i) is Node c)
                     Walk(c, c is Node3D c3 ? t * c3.Transform : t);
         }
         Walk(map, world);
         var sky = FindSky(meshes);
-        foreach (var (mi, _) in meshes)
+        foreach (var (mi, _, _) in meshes)
         {
             Meshes.Add(mi);
             if (sky.Contains(mi))
@@ -501,14 +519,20 @@ public sealed class MapLook
     /// whose group reaches 1,000 render units from the vertical axis, is centred on it (its
     /// middle within a third of that), rises above the ground by 5 % of its reach, spans 10 % of
     /// it in height, and reaches at least 0.6 of the farthest such group (Besaid's four
-    /// scrolling cloud quarters, not marked as a dome).
+    /// scrolling cloud quarters, not marked as a dome), and goes round the axis: its vertices in at
+    /// least 6 of the 8 sectors around it (<see cref="Sectors"/>). Without that last test Luca's
+    /// promenade (<c>lchb00_brickground_07</c>, partly under the walk mesh: 15 % of the map's
+    /// walkable ground) passed, reaching 1,021 units from the axis along one side of the harbour
+    /// (R7b's follow-up; the meshes' normals do not tell: Luca's sky dome has all of them up).
     /// </summary>
-    public static HashSet<MeshInstance3D> FindSky(List<(MeshInstance3D Mesh, Aabb Box)> meshes)
+    public static HashSet<MeshInstance3D> FindSky(List<(MeshInstance3D Mesh, Aabb Box, Transform3D World)> meshes)
     {
         var sky = new HashSet<MeshInstance3D>(ReferenceEqualityComparer.Instance);
         var groups = new Dictionary<string, (Aabb Box, List<MeshInstance3D> Members)>();
-        foreach (var (mi, box) in meshes)
+        var worlds = new Dictionary<MeshInstance3D, Transform3D>(ReferenceEqualityComparer.Instance);
+        foreach (var (mi, box, world) in meshes)
         {
+            worlds[mi] = world;
             if (MeshExtras.Of(mi.Mesh).DobjKind == 1)
             {
                 sky.Add(mi);
@@ -534,7 +558,8 @@ public sealed class MapLook
         {
             float reach = Reach(box);
             var c = box.GetCenter();
-            if (reach >= 1000f && new Vector2(c.X, c.Z).Length() < reach / 3f && box.End.Y > 0.05f * reach && box.Size.Y >= 0.1f * reach)
+            if (reach >= 1000f && new Vector2(c.X, c.Z).Length() < reach / 3f && box.End.Y > 0.05f * reach && box.Size.Y >= 0.1f * reach
+                && Sectors(members, worlds, reach) >= 6)
                 candidates.Add((reach, members));
         }
         float far = candidates.Count > 0 ? candidates.Max(x => x.Reach) : 0;
@@ -542,6 +567,33 @@ public sealed class MapLook
             if (reach >= 0.6f * far)
                 sky.UnionWith(members);
         return sky;
+    }
+
+    /// <summary>
+    /// In how many of the 8 sectors around the vertical axis (45° each) the meshes' vertices lie
+    /// (render space; vertices within 5 % of <paramref name="reach"/> of the axis left out).
+    /// </summary>
+    public static int Sectors(List<MeshInstance3D> members, Dictionary<MeshInstance3D, Transform3D> worlds, float reach)
+    {
+        int mask = 0;
+        foreach (var mi in members)
+        {
+            var t = worlds.TryGetValue(mi, out var w) ? w : mi.Transform;
+            var mesh = mi.Mesh;
+            for (int s = 0; s < mesh.GetSurfaceCount() && mask != 0xff; s++)
+                foreach (var v in mesh.SurfaceGetArrays(s)[(int)Mesh.ArrayType.Vertex].AsVector3Array())
+                {
+                    var p = t * v;
+                    if (new Vector2(p.X, p.Z).Length() < 0.05f * reach)
+                        continue;
+                    int k = (int)Mathf.Floor(Mathf.PosMod(Mathf.Atan2(p.Z, p.X), Mathf.Tau) / (Mathf.Tau / 8f)) & 7;
+                    mask |= 1 << k;
+                }
+        }
+        int n = 0;
+        for (int k = 0; k < 8; k++)
+            n += (mask >> k) & 1;
+        return n;
     }
 
     /// <summary>Whether its blended parts draw lit too (<see cref="MapLighting.BlendedParts"/>).</summary>

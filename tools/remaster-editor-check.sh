@@ -45,6 +45,14 @@
 #  6. R7: the game's effect recordings, then the Media dock (--remaster-editor-media: the Effects,
 #     Audio and Movies tabs: list, open, assign, undo/redo, read back; into OUT_DIR/media), then the
 #     game with the editor's effect scene, sounds and movie (see step 6 below).
+#  8. R7b: 2D rooms and UI art (--remaster-editor-rooms: Rebuild in 3D on the 2D-layer map ptkl14, the
+#     scene written with references only, R5's alignment check on it, opened and built: a projected
+#     plane a layer, the floor on the walk mesh, the scene camera against the file's and the game's
+#     capture, the guides, a user's mesh tagged with a layer, saved without planes, pictures or
+#     materials; the UI Art dock: the movies, the save screen's art with thumbnails, a cursor and a
+#     portrait assigned, undo/redo, the preview), then the game with what it saved: the rebuilt room on
+#     developer save 14 (--selftest-rebuild --rebuild-scene), the UI art on the save screen
+#     (--selftest-ui-art --ui-art-file, F8).
 #  7. R4: the remaster wizard (tools/remaster-wizard-check.sh OUT_DIR: Besaid beach's pass staged,
 #     reviewed, accepted, undone and redone in the editor under Xvfb; the game with it; a batch paused
 #     and resumed across editor sessions; the classifier's accuracy on its labelled set).
@@ -183,6 +191,27 @@ mmv=$?
 rm -rf "$out/docs"
 grep -E '^ffx selftest: (PASS|FAIL)' "$out/media-movie.log" | tail -1 | cut -c1-300 || echo "ffx selftest: no result (exit $mmv, see $out/media-movie.log)"
 [[ $mmv -eq 0 ]] || exit 1
+# 8. R7b: the rebuilt room and the UI art in the editor (into godot/remaster/check/rooms, in the project
+#    so the editor opens it, removed at the end; and OUT_DIR/ui), then the game with them
+mkdir -p "$out/ui"
+rargs=(--path . -- --remaster-editor-rooms --remaster-rooms=res://remaster/check/rooms --remaster-ui-art="$out/ui/ui.tres"
+    --remaster-captures="$out/captures" --editor-test-timeout=400)
+timeout 500 "$repo/tools/capped.sh" "$godot" --headless --editor "${rargs[@]}" >"$out/rooms.log" 2>&1
+rooms=$?
+grep -E '^ffx editortest: (PASS|FAIL)' "$out/rooms.log" | tail -1 | cut -c1-300 || echo "ffx editortest: no result (exit $rooms, see $out/rooms.log)"
+[[ $rooms -eq 0 ]] || exit 1
+timeout 300 "$repo/tools/capped.sh" "$godot" --headless --path . -- --selftest-rebuild --rebuild-scene=res://remaster/check/rooms/ptkl14.tscn \
+    --devsave=14 --documents="$out/docs" --selftest-timeout=150 >"$out/rooms-game.log" 2>&1
+rg=$?
+rm -rf "$out/docs"
+grep -E '^ffx selftest: (PASS|FAIL)' "$out/rooms-game.log" | tail -1 | cut -c1-300 || echo "ffx selftest: no result (exit $rg, see $out/rooms-game.log)"
+[[ $rg -eq 0 ]] || exit 1
+timeout 300 "$repo/tools/capped.sh" "$godot" --headless --path . -- --selftest-ui-art --ui-art-file="$out/ui/ui.tres" --ui-art-expect="$out/ui/expect.txt" \
+    --devsave=7 --documents="$out/docs" --selftest-timeout=150 >"$out/ui-art-game.log" 2>&1
+ug=$?
+rm -rf "$out/docs"
+grep -E '^ffx selftest: (PASS|FAIL)' "$out/ui-art-game.log" | tail -1 | cut -c1-300 || echo "ffx selftest: no result (exit $ug, see $out/ui-art-game.log)"
+[[ $ug -eq 0 ]] || exit 1
 # 7. R4: the remaster wizard (tools/remaster-wizard-check.sh: the editor under Xvfb, the game with what
 #    it accepted, a batch paused and resumed across editor sessions, the classifier's accuracy)
 "$repo/tools/remaster-wizard-check.sh" "$out" || exit 1

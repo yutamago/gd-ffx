@@ -30,6 +30,9 @@ public partial class OpeningView : Control
     private bool _finished, _done;
     private float[] _logoAlpha = [], _coverAlpha = [];
     private ImageTexture? _logo;
+
+    /// <summary>The logo's art id (the main timeline at frame 34).</summary>
+    public const string LogoArt = "#0@34";
     private Rect2 _logoRect;
     private readonly List<ImageTexture> _bird = new();
     private Rect2 _birdRect;
@@ -172,9 +175,11 @@ public partial class OpeningView : Control
         if (Frame < 156)
         {
             var a = At(_logoAlpha, Frame);
-            if (_logo != null && a > 0)
+            // the logo, or its replacement (R7b: art id #0@34, the main timeline's frame) at its place
+            var logo = Remaster.UiArt.Replacement(Movie, LogoArt) ?? _logo;
+            if (logo != null && a > 0)
             {
-                DrawTextureRect(_logo, _logoRect, false, new Color(1, 1, 1, a));
+                DrawTextureRect(logo, _logoRect, false, new Color(1, 1, 1, a));
                 LogoShown = true;
             }
             return;
