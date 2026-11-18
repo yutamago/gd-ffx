@@ -76,7 +76,11 @@ public sealed class UiArtTest(double timeout, string? shotDir) : ScriptedTest<Ui
             {
                 Shot("classic");
                 var replaced = sv.Drawn.Where(d => d.Value).Select(d => d.Key).ToList();
-                Ok(replaced.Count == 0 && sv.Drawn.Count > 0, $"the save screen ({st.Movie}) drawn classic first: {sv.Drawn.Count} piece(s) of the movie's art");
+                // the editor's file is a layer from the start (the command line): its classic look is F8's
+                if (GameSettings.Arg("ui-art-file") != null)
+                    Ok(sv.Drawn.Count > 0, $"the save screen ({st.Movie}) drawn with the editor's layer from the start: {sv.Drawn.Count} piece(s) of the movie's art, {replaced.Count} replaced");
+                else
+                    Ok(replaced.Count == 0 && sv.Drawn.Count > 0, $"the save screen ({st.Movie}) drawn classic first: {sv.Drawn.Count} piece(s) of the movie's art");
                 Next(Stage.Replace);
                 break;
             }

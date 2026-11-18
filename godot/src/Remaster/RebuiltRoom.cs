@@ -73,8 +73,11 @@ public partial class RebuiltRoom : Node3D
 
     public override void _Ready()
     {
-        if (Engine.IsEditorHint())
-            SetProcess(true);
+        if (!Engine.IsEditorHint())
+            return;
+        SetProcess(true);
+        // at once when the pictures are at hand (a scene placed for the alignment check is checked in the same frame)
+        _Process(0);
     }
 
     public override void _Process(double delta)

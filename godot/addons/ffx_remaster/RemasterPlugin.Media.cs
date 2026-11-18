@@ -148,6 +148,12 @@ public partial class RemasterPlugin
     public void SetFileText(string path, string text)
     {
         MediaStore.WriteText(path, text == NoFile ? null : text);
+        if (path == UiArtFile)
+        {
+            UiArt.Invalidate();
+            _uiArt?.Refresh();
+            return;
+        }
         CurrentEffect?.BuildRemake();
         _media?.Refresh();
     }

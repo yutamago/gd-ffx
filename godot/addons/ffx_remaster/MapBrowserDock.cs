@@ -225,6 +225,11 @@ public partial class MapBrowserDock : EditorDock
         var checkScene = new Button { Text = "Check scene...", TooltipText = "The same with a remade map's scene placed at the map's root (not kept)" };
         checkScene.Pressed += ChooseScene;
         row.AddChild(checkScene);
+        // R7b: a 2D-layer map rebuilt as a 3D scene (the remade map's scene: its layers as projected proxies)
+        var rebuild = new Button { Text = "Rebuild in 3D", TooltipText = "A 2D-layer map: make its remade map scene (res://remake/map/<map>.tscn) with the game's scene camera, "
+            + "the walk mesh as the floor, each layer a plane at its depth with its picture projected from the camera (references only: the pictures are the player's), then open it" };
+        rebuild.Pressed += () => Say(_plugin.RebuildRoom() ?? "rebuilt: the scene is open (modelling starts from the layers as they look from the game's camera)");
+        row.AddChild(rebuild);
         _issues = new Tree { Columns = 3, HideRoot = true, CustomMinimumSize = new Vector2(0, 120) };
         _issues.SetColumnExpand(0, false);
         _issues.SetColumnCustomMinimumWidth(0, 70);
