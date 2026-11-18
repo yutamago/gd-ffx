@@ -130,6 +130,25 @@ public static class MaterialProfiles
     public static bool Stale(RemasterTexture? t) =>
         t is { Profile.Length: > 0, Material.Length: > 0 } && Load(t.Profile) is { } p && Hash(p) != t.ProfileHash;
 
+    /// <summary>
+    /// The profiles of <paramref name="t"/> that changed since it was made: its own (as
+    /// <see cref="Stale"/>) and its regions' (R2b phase 6: each region keeps its profile's hash).
+    /// </summary>
+    public static List<string> StaleNames(RemasterTexture? t)
+    {
+        var r = new List<string>();
+        if (t is not { Material.Length: > 0 })
+            return r;
+        if (Stale(t))
+            r.Add(t.Profile);
+        foreach (var v in t.Regions)
+            if (v.VariantType == Variant.Type.Dictionary && v.AsGodotDictionary() is var d
+                && d.TryGetValue("profile", out var p) && p.AsString() is { Length: > 0 } name && Load(name) is { } prof
+                && Hash(prof) != (d.TryGetValue("profile_hash", out var h) ? h.AsString() : "") && !r.Contains(name))
+                r.Add(name);
+        return r;
+    }
+
     /// <summary>Whether <paramref name="t"/> names a profile no layer has.</summary>
     public static bool Missing(RemasterTexture? t) => t is { Profile.Length: > 0 } && Find(t.Profile) == null;
 

@@ -104,7 +104,7 @@ public sealed partial class GpuBackend : Node, IMaterializeBackend
             return hit.Tex;
         var tex = ImageTexture.CreateFromImage(Image.CreateFromData(image.Width, image.Height, false, Image.Format.Rgba8, image.Rgba));
         var t = new GpuTex { Slot = "in:" + key, Sig = SigHash.Of("in:" + key), W = image.Width, H = image.Height, Hdr = false, Channels = 4, Texture = tex };
-        if (_inputs.Count > 12)
+        if (_inputs.Count > 32)
             _inputs.Clear();
         _inputs[key] = (tex, t);
         return t;

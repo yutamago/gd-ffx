@@ -151,7 +151,7 @@ public sealed class CpuBackend : IMaterializeBackend
         for (int i = 0; i < d.Length; i++)
             d[i] = image.Rgba[i] / 255f;
         t = new CpuTex { Slot = "in:" + key, Sig = SigHash.Of("in:" + key), W = image.Width, H = image.Height, Hdr = false, Channels = 4, Data = d };
-        if (_inputs.Count > 8)
+        if (_inputs.Count > 32)
             _inputs.Clear();
         return _inputs[key] = t;
     }
@@ -724,10 +724,10 @@ public sealed class CpuBackend : IMaterializeBackend
             }
             case "rough":
             {
-                var (alb, lumA, variance, hp, metal, curv) = (In(0), In(1), In(2), In(3), In(4), In(5));
+                var (alb, lumA, variance, hp, metal, curv, ai) = (In(0), In(1), In(2), In(3), In(4), In(5), In(6));
                 float bse = u.F("base"), range = u.F("range"), dw = u.F("dw"), metalR = u.F("metal_r"), contrast = u.F("contrast"),
                     bias = u.F("bias"), overlay = u.F("overlay"), wear = u.F("wear");
-                bool invert = u.B("invert");
+                bool invert = u.B("invert"), useAi = u.B("ai");
                 var smp = new[] { u.V("s1"), u.V("s2"), u.V("s3") };
                 var val = new[] { u.F("v1"), u.F("v2"), u.F("v3") };
                 float mh = u.F("mh"), ms = u.F("ms"), ml = u.F("ml"), lo = u.F("lo"), hi = u.F("hi");
@@ -737,7 +737,7 @@ public sealed class CpuBackend : IMaterializeBackend
                     float l = lumA.Fet(x, y).X, var = MathF.Max(0, variance.Bil(uu, vv).X);
                     float detail = var < 1e-6f ? 0 : MathF.Min(1, MathF.Sqrt(var) * 4);
                     float t = (1 - dw) * (1 - l) + dw * detail;
-                    float r = Math.Clamp(bse + range * (t - 0.5f), 0, 1);
+                    float r = useAi ? ai.Fet(x, y).X : Math.Clamp(bse + range * (t - 0.5f), 0, 1);
                     if (invert) r = 1 - r;
                     var c = Xyz(alb.Fet(x, y));
                     for (int i = 0; i < 3; i++)
@@ -1009,6 +1009,70 @@ public sealed class CpuBackend : IMaterializeBackend
                     float th = thick == 0 ? ht.Fet(x, y).X : thick == 1 ? la.Fet(x, y).X : 0.5f;
                     float thin = invert ? th : 1 - th;
                     return new Vector4(tint, Math.Clamp((thin - 0.5f) * contrast + 0.5f + bias, 0, 1));
+                });
+                break;
+            }
+            // R2b phase 6: regions and AI estimates
+            case "rmask":
+            {
+                var t = In(0);
+                Each(o, (x, y) => new Vector4(Math.Clamp(t.Bil(Ux(x), Uy(y)).X, 0, 1), 0, 0, 1));
+                break;
+            }
+            case "rg_hstat":
+            {
+                var (a, b, m) = (In(0), In(1), In(2));
+                Each(o, (x, y) =>
+                {
+                    float mm = Math.Clamp(m.Fet(x, y).X, 0, 1);
+                    return new Vector4(a.Fet(x, y).X, b.Fet(x, y).X, 0, 4 * mm * (1 - mm));
+                });
+                break;
+            }
+            case "rcomp":
+            {
+                var (a, b, m, st) = (In(0), In(1), In(2), In(3));
+                int mode = u.I("mode");
+                bool match = u.B("match");
+                float off = 0;
+                if (mode == 2 && match)
+                {
+                    var sv = st.Fet(0, 0);
+                    off = sv.W > 1e-6f ? sv.X - sv.Y : 0;
+                }
+                Each(o, (x, y) =>
+                {
+                    var va = a.Fet(x, y);
+                    var vb = b.Fet(x, y);
+                    float mm = Math.Clamp(m.Fet(x, y).X, 0, 1);
+                    if (mode == 1)
+                    {
+                        var na = new Vector3(va.X * 2 - 1, va.Y * 2 - 1, va.Z * 2 - 1);
+                        var nb = new Vector3(vb.X * 2 - 1, vb.Y * 2 - 1, vb.Z * 2 - 1);
+                        var da = new Vector2(na.X, na.Y) / MathF.Max(na.Z, 0.05f);
+                        var db = new Vector2(nb.X, nb.Y) / MathF.Max(nb.Z, 0.05f);
+                        var d = Vector2.Lerp(da, db, mm);
+                        var n = Vector3.Normalize(new Vector3(d, 1));
+                        return new Vector4(n * 0.5f + new Vector3(0.5f), va.W + (vb.W - va.W) * mm);
+                    }
+                    if (mode == 2)
+                    {
+                        float h = va.X + (Math.Clamp(vb.X + off, 0, 1) - va.X) * mm;
+                        return new Vector4(h, h, h, 1);
+                    }
+                    return Vector4.Lerp(va, vb, mm);
+                });
+                break;
+            }
+            case "n_from_map":
+            {
+                var t = In(0);
+                float k = u.F("k");
+                Each(o, (x, y) =>
+                {
+                    var c = t.Fet(x, y);
+                    float nx = c.X * 2 - 1, ny = c.Y * 2 - 1, nz = MathF.Max(c.Z * 2 - 1, 0.05f);
+                    return new Vector4(-nx / nz * k, ny / nz * k, 0, 1);
                 });
                 break;
             }

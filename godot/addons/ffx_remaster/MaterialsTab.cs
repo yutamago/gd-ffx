@@ -135,6 +135,7 @@ public partial class MaterialsTab : VBoxContainer
         SizeFlagsHorizontal = SizeFlags.ExpandFill;
         SizeFlagsVertical = SizeFlags.ExpandFill;
         Build();
+        WireRegionTools();
         if (GpuBackend.Available && UseGpuSetting())
             _gpu = new GpuPipeline(this);
     }
@@ -358,6 +359,8 @@ public partial class MaterialsTab : VBoxContainer
         _mode.AddItem("Generate");
         _mode.AddItem("Import");
         _mode.AddItem("Skip");
+        _mode.AddItem("AI");
+        _mode.SetItemTooltip(3, "Estimated by an AI workflow on your own ComfyUI server (albedo, height, normal, roughness; the editor settings ffx_remaster/ai_<map>_workflow and _licence); this step's settings on top");
         _mode.ItemSelected += i =>
         {
             if ((StepMode)(int)i == StepMode.Import)
@@ -551,6 +554,7 @@ public partial class MaterialsTab : VBoxContainer
             if (MaterialProfiles.Stale(own)) marks.Add($"⟳ {MaterialProfiles.Find(own!.Profile)?.Title ?? own.Profile} changed");
             else if (own is { Profile.Length: > 0, Material.Length: > 0 }) marks.Add(own.Profile);
             if (MaterialProfiles.Missing(own)) marks.Add($"{own!.Profile}: no such profile");
+            if (RegionsOf(id).Count is > 0 and var nr) marks.Add($"{nr} region{(nr == 1 ? "" : "s")}");
             if (RemasterTextures.For(id)?.Replaced == true) marks.Add("replaced");
             int pinned = _exceptions.TryGetValue(id, out var ex) ? ex.Count : own is { Profile.Length: > 0 } ? own.Exceptions.Count : 0;
             if (pinned > 0) marks.Add($"● {pinned}");
@@ -584,8 +588,9 @@ public partial class MaterialsTab : VBoxContainer
             return "no pixels";
         }
         Current = id;
-        Recompute();
+        Region = -1;
         _original = PbrBuilder.From(img);
+        Recompute();
         _alpha = !_original.HasAlpha ? 0 : _original.HasOnlyBinaryAlpha ? 1 : 2;
         _sourceTex.SetImage(PbrBuilder.ToImage(_original));
         foreach (var t in _cpuTex.Values)
@@ -602,6 +607,7 @@ public partial class MaterialsTab : VBoxContainer
         UpdateLight();
         Remake();
         UpdateMaterials();
+        RefreshOverlay();
         Say($"{RemasterTextures.ShortName(id)}: {_original.Width}×{_original.Height}{(_alpha == 1 ? ", cut-out" : _alpha == 2 ? ", blended alpha" : "")}");
         return null;
     }
@@ -772,11 +778,17 @@ public partial class MaterialsTab : VBoxContainer
 
     private void RebuildSettings()
     {
-        _stepTitle.Text = $"{Mathf.Max(0, StripSteps().IndexOf(Step))} · {Label(Step)}";
+        _stepTitle.Text = $"{Mathf.Max(0, StripSteps().IndexOf(Step))} · {Label(Step)}" + (Region >= 0 ? $" · region {RegionName(Region)}" : "");
         _stepNote.Text = Notes[Step];
         foreach (var c in _settingsBox.GetChildren())
             c.QueueFree();
         _controls.Clear();
+        // R2b phase 6: the regions (the box in the Source step, the picker atop every step), the AI row
+        BuildRegionPicker();
+        if (Step == MaterialStep.Source)
+            BuildRegionBox();
+        if (MaterialPipeline.ModeOf(Recipe, Step) == StepMode.Ai)
+            BuildAiRow();
         var list = MaterialPipeline.Settings[Step];
         for (int i = 0; i < list.Length; i++)
         {
@@ -1057,6 +1069,7 @@ public partial class MaterialsTab : VBoxContainer
         var mode = MaterialPipeline.ModeOf(Recipe, Step);
         _mode.Selected = (int)mode;
         _mode.SetItemDisabled((int)StepMode.Skip, Step == MaterialStep.Source);
+        _mode.SetItemDisabled((int)StepMode.Ai, !MaterialPipeline.AiSteps.Contains(Step));
         var file = MaterialPipeline.FileOf(Recipe, Step);
         _importButton.Text = mode == StepMode.Import && file.Length > 0 ? $"Import... ({file.GetFile()})" : "Import...";
         RefreshStrip();
@@ -1190,7 +1203,14 @@ public partial class MaterialsTab : VBoxContainer
     }
 
     /// <summary><see cref="Recipe"/> made again: the queue's settings with the current texture's exceptions over them.</summary>
-    private void Recompute() => Recipe = Compose(QueueSettings, Current != null ? ExceptionsOf(Current) : null);
+    private void Recompute()
+    {
+        BaseRecipe = Compose(QueueSettings, Current != null ? ExceptionsOf(Current) : null);
+        if (Region >= Regions.Count)
+            Region = -1;
+        // a region's settings (R2b phase 6): its profile with its exceptions, the shared ones the texture's
+        Recipe = EditedRegion is { } d ? MaterialRegions.WithShared(MaterialRegionStore.Recipe(d), BaseRecipe) : BaseRecipe;
+    }
 
     /// <summary><paramref name="queue"/>'s settings (all of them, its files too) with <paramref name="exceptions"/> over them.</summary>
     public static PbrRecipe Compose(PbrRecipe queue, Godot.Collections.Dictionary? exceptions)
@@ -1215,7 +1235,17 @@ public partial class MaterialsTab : VBoxContainer
     }
 
     /// <summary>Whether <paramref name="prop"/> is pinned to the current texture.</summary>
-    public bool Pinned(string prop) => Current != null && ExceptionsOf(Current).ContainsKey(prop);
+    public bool Pinned(string prop) => Region >= 0 && !SharedProp(prop) ? EditedRegion is { } d && MaterialRegionStore.ExceptionsOf(d).ContainsKey(prop)
+        : Current != null && ExceptionsOf(Current).ContainsKey(prop);
+
+    /// <summary>The exceptions of region <see cref="Region"/> in <paramref name="regions"/> (made when missing).</summary>
+    private Godot.Collections.Dictionary RegionExceptions(Godot.Collections.Array regions)
+    {
+        var d = regions[Region].AsGodotDictionary();
+        if (!d.TryGetValue(MaterialRegionStore.Exceptions, out var v) || v.VariantType != Variant.Type.Dictionary)
+            d[MaterialRegionStore.Exceptions] = v = new Godot.Collections.Dictionary();
+        return v.AsGodotDictionary();
+    }
 
     /// <summary>
     /// One undo step that sets <paramref name="after"/> (the old values from the settings):
@@ -1228,10 +1258,20 @@ public partial class MaterialsTab : VBoxContainer
         var qAfter = new Godot.Collections.Dictionary();
         var qBefore = new Godot.Collections.Dictionary();
         Godot.Collections.Dictionary? exAfter = null, exBefore = null;
+        Godot.Collections.Array? regAfter = null, regBefore = null;
         foreach (var (k, v) in after)
         {
             var name = k.AsString();
             var old = before.TryGetValue(k, out var b) ? b : name == ProfileKey ? ProfileName : queueOnly ? QueueSettings.Get(name) : Recipe.Get(name);
+            // a region's own setting (R2b phase 6): its exceptions
+            if (name != ProfileKey && !queueOnly && Region >= 0 && EditedRegion != null && !SharedProp(name))
+            {
+                regAfter ??= MaterialRegionStore.Copy(Regions);
+                regBefore ??= MaterialRegionStore.Copy(Regions);
+                RegionExceptions(regAfter)[name] = v;
+                RegionExceptions(regBefore)[name] = old;
+                continue;
+            }
             if (name != ProfileKey && !queueOnly && Pinned(name))
             {
                 exAfter ??= TextureStore.Sorted(ExceptionsOf(Current!));
@@ -1256,13 +1296,20 @@ public partial class MaterialsTab : VBoxContainer
             Undo.AddDoMethod(this, MethodName.ApplyExceptions, Current!, exAfter);
             Undo.AddUndoMethod(this, MethodName.ApplyExceptions, Current!, exBefore!);
         }
+        if (regAfter != null)
+        {
+            Undo.AddDoMethod(this, MethodName.ApplyRegions, Current!, regAfter, Region);
+            Undo.AddUndoMethod(this, MethodName.ApplyRegions, Current!, regBefore!, Region);
+        }
         Undo.CommitAction(execute);
     }
 
     /// <summary>A setting changed live (a drag, a pick): the queue's or, pinned, the texture's exception; the undo step comes at its end.</summary>
     private void SetLive(string prop, Variant value)
     {
-        if (Pinned(prop))
+        if (Region >= 0 && !SharedProp(prop) && EditedRegion != null)
+            RegionExceptions(Regions)[prop] = value;
+        else if (Pinned(prop))
             ExceptionsOf(Current!)[prop] = value;
         else
             QueueSettings.Set(prop, value);
@@ -1439,7 +1486,7 @@ public partial class MaterialsTab : VBoxContainer
     private void Changed(IReadOnlyCollection<string> props)
     {
         // an added or removed map, or the detail's source: the panel's rows change
-        if (props.Any(p => p.EndsWith("On", System.StringComparison.Ordinal) || p is nameof(PbrRecipe.DetailFrom) or nameof(PbrRecipe.DetailTexture)
+        if (props.Any(p => p.EndsWith("On", System.StringComparison.Ordinal) || p.EndsWith("Mode", System.StringComparison.Ordinal) || p is nameof(PbrRecipe.DetailFrom) or nameof(PbrRecipe.DetailTexture)
             or nameof(PbrRecipe.DetailAlbedoFile) or nameof(PbrRecipe.DetailNormalFile) or nameof(PbrRecipe.Upscaler)))
             RebuildSettings();
         RefreshControls();
@@ -1465,15 +1512,20 @@ public partial class MaterialsTab : VBoxContainer
     {
         if (Current == null || _original == null)
             return;
-        var snap = (PbrRecipe)Recipe.Duplicate();
-        foreach (var f in MaterialPipeline.Files(snap))
+        var snap = (PbrRecipe)BaseRecipe.Duplicate();
+        // the regions (R2b phase 6), each by its own settings
+        var regions = RegionInputs();
+        foreach (var f in MaterialPipeline.Files(snap).Concat(regions.SelectMany(x => MaterialPipeline.Files(x.Recipe))))
             LoadImport(f);
         // ComfyUI's upscale as the source when it is cached (else asked for; Lanczos meanwhile)
         ComfyPrepare(snap);
+        // AI estimates as the steps' inputs when cached (else asked for; generated meanwhile)
+        AiPrepare(snap, regions);
+        var union = MaterialRegions.Union(snap, regions.Select(x => x.Recipe));
         // the maps taken out of the material: off it at once
         bool removed = false;
         foreach (var s in MaterialPipeline.Extras)
-            if (!MaterialPipeline.On(snap, s))
+            if (!MaterialPipeline.On(union, s))
             {
                 removed |= _maps.Remove(s);
                 _pixels.Remove(s);
@@ -1481,7 +1533,7 @@ public partial class MaterialsTab : VBoxContainer
             }
         if (removed)
             UpdateMaterials();
-        var inputs = new MaterialPipeline.Inputs(Current, _original, snap, new Dictionary<string, RgbaImage>(_imports));
+        var inputs = new MaterialPipeline.Inputs(Current, _original, snap, new Dictionary<string, RgbaImage>(_imports), regions);
         var (w, h, _) = MaterialPipeline.Size(inputs, Mathf.Max(MaterialPipeline.SmallSide, snap.WorkingSide));
         _workingSide = Mathf.Max(w, h);
         _requestUsec = Time.GetTicksUsec();
@@ -1492,6 +1544,7 @@ public partial class MaterialsTab : VBoxContainer
         if (_gpu != null)
         {
             _gpu.Isolate = _isolate;
+            _gpu.Focus = regions.Count > 0 ? Region : -1;
             _gpu.Update(inputs, snap.WorkingSide);
             _gpuPixels.Clear();
             foreach (var s in MaterialPipeline.Steps)
@@ -1509,6 +1562,7 @@ public partial class MaterialsTab : VBoxContainer
         int small = Mathf.Max(sw, sh);
         int[] sides = small < _workingSide ? [MaterialPipeline.SmallSide, snap.WorkingSide] : [snap.WorkingSide];
         _pipe.Isolate = _isolate;
+        _pipe.Focus = regions.Count > 0 ? Region : -1;
         _run = _pipe.Request(inputs, Step, sides);
         _sides = sides;
     }
@@ -1520,6 +1574,7 @@ public partial class MaterialsTab : VBoxContainer
         if (_gpu != null)
             TickGpu();
         TickComfy();
+        TickAi();
         if (!Saving && _bakeRun == null)
             BakeBackends.Trim();
         int shown = 0;
@@ -1682,7 +1737,8 @@ public partial class MaterialsTab : VBoxContainer
 
     private void UpdateMaterials()
     {
-        var r = Recipe;
+        // the texture's material: every map a region makes on (R2b phase 6)
+        var r = Current != null ? MaterialRecipe(BaseRecipe, Regions) : Recipe;
         // the In map view draws the game's UVs as they are
         bool inMap = _shape.Selected == MaterialPreview.InMap;
         float t = inMap ? 1f : (float)_tile.Value;
@@ -1848,6 +1904,8 @@ public partial class MaterialsTab : VBoxContainer
     {
         if (Current == null)
             return "no texture";
+        if (Region >= 0)
+            return $"region {RegionName(Region)}'s settings are its own: every change is its exception";
         var exBefore = TextureStore.Sorted(ExceptionsOf(Current));
         var exAfter = TextureStore.Sorted(ExceptionsOf(Current));
         var qAfter = new Godot.Collections.Dictionary();
@@ -1882,6 +1940,17 @@ public partial class MaterialsTab : VBoxContainer
     {
         if (Current == null)
             return "no texture";
+        if (Region >= 0 && EditedRegion != null)
+        {
+            // the region's exception dropped: its profile's value again
+            var regAfter = MaterialRegionStore.Copy(Regions);
+            var ex = RegionExceptions(regAfter);
+            int n = props.Count(p => ex.Remove(p));
+            if (n == 0)
+                return "not an exception of the region";
+            CommitRegions($"region {RegionName(Region)}: {LabelOf(props[0])}{(props.Length > 1 ? " ..." : "")} back to its profile", regAfter, Region);
+            return null;
+        }
         var before = TextureStore.Sorted(ExceptionsOf(Current));
         var after = TextureStore.Sorted(before);
         foreach (var p in props)
@@ -1990,7 +2059,7 @@ public partial class MaterialsTab : VBoxContainer
             return "a run is going";
         if (Queue.Count == 0)
             return "the queue is empty";
-        var jobs = Queue.Select(id => new QueueBake.Job(id, Compose(QueueSettings, ExceptionsOf(id)), ProfileName)).ToList();
+        var jobs = Queue.Select(id => new QueueBake.Job(id, Compose(QueueSettings, ExceptionsOf(id)), ProfileName, MaterialRegionStore.Copy(RegionsOf(id)))).ToList();
         var title = ProfileName.Length > 0 ? MaterialProfiles.Find(ProfileName)?.Title ?? ProfileName : "";
         Start(jobs, $"Apply to queue: {jobs.Count} material(s){(title.Length > 0 ? $" ({title})" : "")}");
         return null;
@@ -2007,12 +2076,15 @@ public partial class MaterialsTab : VBoxContainer
             return "a run is going";
         var stale = ProfileStore.Stale();
         var jobs = new List<QueueBake.Job>();
-        foreach (var (name, ids) in stale)
+        foreach (var id in stale.Where(kv => profile == null || kv.Key == profile).SelectMany(kv => kv.Value).Distinct())
         {
-            if (profile != null && name != profile || MaterialProfiles.Load(name) is not { } p)
+            // the texture's own settings by its profile as it is now (else as baked), its regions by theirs
+            if (TextureStore.Find(id) is not { } e)
                 continue;
-            foreach (var id in ids)
-                jobs.Add(new QueueBake.Job(id, MaterialProfiles.Effective(p, TextureStore.Find(id)?.Exceptions), name));
+            var own = MaterialProfiles.Load(e.Profile) is { } p ? MaterialProfiles.Effective(p, e.Exceptions) : e.Recipe != null ? (PbrRecipe)e.Recipe.Duplicate() : null;
+            if (own == null)
+                continue;
+            jobs.Add(new QueueBake.Job(id, own, MaterialProfiles.Find(e.Profile) != null ? e.Profile : "", MaterialRegionStore.Copy(e.Regions)));
         }
         if (jobs.Count == 0)
             return "no texture's profile changed";
@@ -2032,7 +2104,8 @@ public partial class MaterialsTab : VBoxContainer
         if (MaterialProfiles.Load(profile) is not { } p)
             return $"no profile {profile}";
         var jobs = ids.Select(id => id.ToLowerInvariant()).Distinct()
-            .Select(id => new QueueBake.Job(id, MaterialProfiles.Effective(p, TextureStore.Find(id) is { Profile.Length: > 0 } e && e.Profile == profile ? e.Exceptions : null), profile)).ToList();
+            .Select(id => new QueueBake.Job(id, MaterialProfiles.Effective(p, TextureStore.Find(id) is { Profile.Length: > 0 } e && e.Profile == profile ? e.Exceptions : null), profile,
+                MaterialRegionStore.Copy(TextureStore.Find(id)?.Regions))).ToList();
         if (jobs.Count == 0)
             return "no textures";
         Start(jobs, $"Make with {p.Title}: {jobs.Count} material(s)");
@@ -2051,7 +2124,7 @@ public partial class MaterialsTab : VBoxContainer
     private void Start(List<QueueBake.Job> jobs, string action)
     {
         BakeResult = null;
-        _bakeRun = new QueueBake(this, jobs, _gpu != null, LoadImport, FinishJob, action) { Upscaled = UpscaledFor };
+        _bakeRun = new QueueBake(this, jobs, _gpu != null, LoadImport, FinishJob, action) { Upscaled = UpscaledFor, Ai = AiCached };
         Say($"{action}: making {jobs.Count} on the {(_gpu != null ? "GPU" : "CPU")}...");
         FillQueue();
         RefreshProfileBox();
@@ -2090,8 +2163,9 @@ public partial class MaterialsTab : VBoxContainer
     private RemasterTexture FinishJob(QueueBake.Job job, BakedMaps baked)
     {
         var r = (PbrRecipe)job.Recipe.Duplicate();
-        var entry = MakeEntry(job.Id, baked, r, job.Profile);
+        var entry = MakeEntry(job.Id, baked, r, job.Profile, job.Regions);
         SetMaterialSourceNote(entry, UpscaleNote(r, _bakeRun?.ComfyUsed.Contains(job.Id) == true));
+        SetAiNotes(entry, _bakeRun?.AiUsed.GetValueOrDefault(job.Id) ?? new Dictionary<MaterialStep, string>());
         var thumb = PbrBuilder.ToImage(baked.Maps[MaterialStep.Albedo]);
         thumb.Resize(48, Mathf.Max(1, 48 * thumb.GetHeight() / Mathf.Max(1, thumb.GetWidth())), Image.Interpolation.Bilinear);
         _thumbs[job.Id] = ImageTexture.CreateFromImage(thumb);
@@ -2103,17 +2177,28 @@ public partial class MaterialsTab : VBoxContainer
     /// copied beside it first) and returns its entry, linked to <paramref name="profile"/> (its
     /// hash now, the settings that differ from it as exceptions; none: unlinked).
     /// </summary>
-    private RemasterTexture MakeEntry(string id, BakedMaps baked, PbrRecipe r, string profile)
+    private RemasterTexture MakeEntry(string id, BakedMaps baked, PbrRecipe r, string profile, Godot.Collections.Array? regions = null)
     {
         StoreImports(id, r);
-        var maps = MaterialBaker.Images(baked, r);
+        // the regions' own imported files kept too, their settings as baked (R2b phase 6)
+        var regionRecipes = new List<PbrRecipe>();
+        foreach (var v in regions ?? new Godot.Collections.Array())
+            if (v.VariantType == Variant.Type.Dictionary)
+            {
+                var rr = MaterialRegionStore.Recipe(v.AsGodotDictionary());
+                StoreImports(id, rr);
+                regionRecipes.Add(rr);
+            }
+        var maps = MaterialBaker.Images(baked, MaterialRegions.Union(r, regionRecipes));
         string hash = "";
         Godot.Collections.Dictionary? ex = null;
         if (profile.Length > 0 && MaterialProfiles.Load(profile) is { } p)
             (hash, ex) = (MaterialProfiles.Hash(p), MaterialProfiles.Differences(r, p));
         else
             profile = "";
-        return TextureActions.WithMaterial(id, maps, r, profile, hash, ex);
+        var entry = TextureActions.WithMaterial(id, maps, r, profile, hash, ex);
+        entry.Regions = regions is { Count: > 0 } ? MaterialRegionStore.Baked(id, regions, regionRecipes) : new Godot.Collections.Array();
+        return entry;
     }
 
     /// <summary>The steps' imported files of <paramref name="r"/> kept beside <paramref name="id"/>'s maps (content-named), <paramref name="r"/> naming them relative to the store.</summary>
@@ -2155,6 +2240,10 @@ public partial class MaterialsTab : VBoxContainer
     private GpuBake? _bake;
     /// <summary>Whether the save's source is ComfyUI's upscale (its Source note).</summary>
     private bool _saveComfy;
+    /// <summary>The save's regions, the material's recipe with their maps (R2b phase 6), its AI estimates' notes.</summary>
+    private Godot.Collections.Array? _saveRegions;
+    private PbrRecipe? _saveUnion;
+    private Dictionary<MaterialStep, string>? _saveAi;
 
     /// <summary>Whether a save is going; the last save's outcome (null: none yet).</summary>
     public bool Saving => _saveRun >= 0 || _bake != null;
@@ -2176,8 +2265,12 @@ public partial class MaterialsTab : VBoxContainer
             return "nothing to save: add a texture to the queue";
         if (Saving)
             return "a save is going";
-        _saveRecipe = (PbrRecipe)Recipe.Duplicate();
+        _saveRecipe = (PbrRecipe)BaseRecipe.Duplicate();
         _saveRecipe.Version = 3;
+        _saveRegions = MaterialRegionStore.Copy(Regions);
+        var saveRegions = RegionInputs();
+        _saveUnion = MaterialRegions.Union(_saveRecipe, saveRegions.Select(x => x.Recipe));
+        _saveAi = AiUsedNow();
         _saveId = Current;
         _saveComfy = ComfySourceInUse;
         _saveMaps.Clear();
@@ -2185,7 +2278,7 @@ public partial class MaterialsTab : VBoxContainer
         (_saveOrm, _saveHeight) = (null, null);
         SaveResult = null;
         _saveClock = System.Diagnostics.Stopwatch.StartNew();
-        var inputs = new MaterialPipeline.Inputs(Current, _original, _saveRecipe, new Dictionary<string, RgbaImage>(_imports));
+        var inputs = new MaterialPipeline.Inputs(Current, _original, _saveRecipe, new Dictionary<string, RgbaImage>(_imports), saveRegions);
         _save.Disabled = true;
         if (_gpu != null)
         {
@@ -2202,7 +2295,7 @@ public partial class MaterialsTab : VBoxContainer
 
     private void FinishBake()
     {
-        var (baked, _) = _bake!.Finish(recipe: _saveRecipe);
+        var (baked, _) = _bake!.Finish(recipe: _saveUnion);
         BakeBackends.Return(_bake.Backend);
         _bake = null;
         foreach (var (s, img) in baked.Maps)
@@ -2241,7 +2334,7 @@ public partial class MaterialsTab : VBoxContainer
         _saveRun = -1;
         _save.Disabled = false;
         SaveMakeMs = _saveClock.Elapsed.TotalMilliseconds;
-        SaveResult = _saveOrm != null && _saveMaps.Count == MaterialPipeline.Active(_saveRecipe!).Count ? Write() : $"the save failed: {_pipe.Error}";
+        SaveResult = _saveOrm != null && _saveMaps.Count == MaterialPipeline.Active(_saveUnion!).Count ? Write() : $"the save failed: {_pipe.Error}";
         Say(SaveResult);
         Remake();
     }
@@ -2253,14 +2346,16 @@ public partial class MaterialsTab : VBoxContainer
         // the height in 16 bits (half floats: an EXR), so parallax shows no terraces
         var baked = new BakedMaps(new Dictionary<MaterialStep, RgbaImage>(_saveMaps), _saveOrm!, _saveHeight ?? PbrBuilder.ToImage(_saveMaps[MaterialStep.Height]),
             new Dictionary<string, RgbaImage>(_saveAux));
-        var entry = MakeEntry(id, baked, r, ProfileName);
+        var entry = MakeEntry(id, baked, r, ProfileName, _saveRegions);
         SetMaterialSourceNote(entry, UpscaleNote(r, _saveComfy));
+        SetAiNotes(entry, _saveAi ?? new Dictionary<MaterialStep, string>());
         _plugin.SetTexture(id, entry, $"Save the material of {RemasterTextures.ShortName(id)}");
         _savedHere.Add(id);
         FillQueue();
         var albedo = TextureStore.Absolute(entry.Material);
         return $"{RemasterTextures.ShortName(id)}: saved ({_saveMaps[MaterialStep.Albedo].Width}×{_saveMaps[MaterialStep.Albedo].Height} maps, {albedo.GetFile()}"
-            + (entry.Profile.Length > 0 ? $", profile {entry.Profile}{(entry.Exceptions.Count > 0 ? $" with {entry.Exceptions.Count} exception(s)" : "")})" : ")");
+            + (entry.Profile.Length > 0 ? $", profile {entry.Profile}{(entry.Exceptions.Count > 0 ? $" with {entry.Exceptions.Count} exception(s)" : "")}" : "")
+            + (entry.Regions.Count > 0 ? $", {entry.Regions.Count} region(s))" : ")");
     }
 }
 #endif

@@ -64,6 +64,17 @@ public partial class RemasterTexture : Resource
     /// <summary>The texture's own settings over the profile's (setting → value; only those pinned to it, its imported files among them).</summary>
     [Export] public Godot.Collections.Dictionary Exceptions { get; set; } = new();
 
+    /// <summary>
+    /// The texture's regions (R2b phase 6; docs/remaster-materials.md, "Phase 6: what there is"),
+    /// in their order (a later one over an earlier), each a dictionary: <c>name</c>, <c>colour</c>
+    /// (the overlay's), <c>profile</c>, <c>profile_hash</c> (at bake time), <c>exceptions</c> (its
+    /// settings over the profile's), <c>settings</c> (every setting as baked that differs from the
+    /// defaults: made again without its profile), <c>mask</c> (store-relative, content-named:
+    /// <c>region-mask.&lt;hash&gt;.png</c>), <c>feather</c> (classic texels), <c>origin</c> (how it
+    /// was found). Empty: the whole texture by its own settings.
+    /// </summary>
+    [Export] public Godot.Collections.Array Regions { get; set; } = new();
+
     /// <summary>Where the replacement comes from: made by hand, upscaled (and how), the tool, model and licence of an AI step.</summary>
     [Export(PropertyHint.MultilineText)] public string Source { get; set; } = "";
 
