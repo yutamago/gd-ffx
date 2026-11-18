@@ -78,6 +78,8 @@ public partial class ModLoader : Node
             ModSelfTest.Run(this);
         else if (GameSettings.Flag("selftest-saves"))
             SaveFilesSelfTest.Run(this);
+        else if (GameSettings.Flag("selftest-materialize") && GameSettings.Flag("no-game"))
+            Remaster.Materialize.MaterializeTest.RunAlone(this);
     }
 
     /// <summary>Mounts the enabled packs of every folder of <see cref="Dirs"/>, once.</summary>

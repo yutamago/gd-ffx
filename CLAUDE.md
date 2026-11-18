@@ -8,7 +8,8 @@ here: `docs/architecture.md`, `docs/building.md`, `docs/running.md`,
 `godot/addons/ffx_remaster`; R2's textures, materials and render path;
 R5's game data: walk mesh, triggers, cameras, the alignment check),
 `docs/remaster-materials.md` (R2b, the material workbench: phase 1, the
-Materials tab, done; phases 2 to 6 planned).
+Materials tab, and phase 2, the GPU pipeline and Materialize's concepts,
+done; phases 3 to 6 planned).
 
 ## Rules
 
@@ -52,6 +53,8 @@ FFX_GAME_DIR=~/steam-games/FFX-X2-HD tools/bench.sh [besaid besaid-walk lchb bat
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-remake-map --devsave=7)  # G6: the remade Besaid beach example
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-overrides --devsave=7)  # R1: Besaid's example overrides (remove, hide, move, replace, add) in the running game; the catalogue entry
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-materials --devsave=7)  # R2: a replaced texture drawn classic, a PBR material remastered, F7, a live replacement (--shot=F.png under Xvfb: F.png, F-remastered.png)
+(cd godot && godot --headless --path . -- --selftest-materialize --no-game)   # R2b phase 2: the material pipeline on a synthetic texture: the CPU only headless; under Xvfb the GPU's parity with it and its times
+FFX_GAME_DIR=... FFX_SHOT_TEST="--selftest-materialize --selftest-timeout=600" tools/compare-shot-win.sh - OUT_DIR  # R2b: on a Besaid texture on the GPU (Windows export, Vulkan): parity, a slider's time, band rebuilds, bakes at 1024/2048/4096; godot.png the maps
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-lighting --devsave=7)  # R3: the remastered lighting on Besaid (defaults from the game's look, a lighting file, a volume, VoxelGI, quality, F7); the colour check needs a renderer:
 FFX_GAME_DIR=... FFX_SHOT_TEST="--selftest-lighting --selftest-timeout=400" tools/compare-shot.sh - OUT_DIR  # R3: the colour check, classic against remastered (Compatibility; compare-shot-win.sh: the GPU)
 (cd godot && FFX_GAME_DIR=... godot --headless --path . -- --selftest-alignment --devsave=7)  # R5: the game's data (walk mesh, triggers, entrances) against the running game, the capture for the editor, the alignment check (an aligned patch, a sunken one, a misplaced box)

@@ -286,17 +286,24 @@ place (set the entry's `Material`).
 
 ### The Materials tab
 
-The material workbench (R2b, docs/remaster-materials.md; phase 1): a main
-screen **Materials** beside 2D, 3D, Script and Game (the plugin's main
+The material workbench (R2b, docs/remaster-materials.md; phases 1 and 2): a
+main screen **Materials** beside 2D, 3D, Script and Game (the plugin's main
 screen, so the plugin is named "Materials" there). Textures come from the
 Textures dock's **Materialize** (several selected), the part inspector's
 **Materialize** beside each of the part's textures, or the tab's **+ Open
 map**; a big lit preview with a compare wipe, one step per map (source,
 albedo, height, normal, roughness, metallic, occlusion, emission: generate,
-import a file, or skip), only the maps after a change made again, 256 px
-first and then the working size, off the main thread; **Save** writes the
-maps and the `ORMMaterial3D` into the files below as one undo step, the
-settings as the entry's `PbrRecipe` (`Version` 2). Every setting change is
+import a file, or skip), only the passes after a change made again: on the
+GPU (phase 2: every map as shader passes, a change drawn in the next frame,
+the occlusion settling over a few frames; the editor setting
+`ffx_remaster/materials_gpu`, on by default) or, without a renderer, on the
+CPU (256 px first, then the working size, off the main thread); the band
+equalisers, colour samples (picked in the 2D view or on the object; their
+masks isolated), the painted light's arrow, the colour check against the
+classic texture. **Save** makes every map at the full size (on the GPU in
+one frame) and writes the maps and the `ORMMaterial3D` into the files below
+as one undo step (the height as a half-float `height.<hash>.exr`), the
+settings as the entry's `PbrRecipe` (`Version` 3). Every setting change is
 one step of the global undo history (a slider drag: one). The HDRIs of its
 preview are four CC0 ones from Poly Haven in
 `godot/addons/ffx_remaster/hdri/` (editor only, out of exports with the
@@ -718,6 +725,21 @@ FFX_EDITOR_SHOT=1 FFX_GAME_DIR=<game> tools/remaster-editor-check.sh [OUT_DIR]  
    recipe with a store-relative import path, the ORM's occlusion white), the
    open map's textures added; with `--editor-shot`: `materials-studio.png`,
    `materials-hdri.png`, `materials-object.png` beside it.
+   Phase 2 (before the save; on the GPU under a renderer, else the CPU): the
+   Details band preset changes the height (one undo step), a colour picked in
+   the 2D view (as Pick does) with its roughness changes the roughness and its
+   mask shows isolated, shape from shading on and the painted light turned
+   (a drag, one undo step) change the normal and the arrow follows, the
+   occlusion settles in stages (its first directions, then all), the 3D
+   preview's pick finds the sphere's UV, the colour check; the save's height
+   is a half-float EXR imported as a float texture. Under a renderer the raw
+   texture and the default material lit by the studio on three textures
+   (the mean OKLab lightness and chroma of the sphere, the line `materials
+   lit`), and `materials-isolate.png`, `materials-normal-light.png`,
+   `materials-occlusion.png`, `materials-defaults.png`, `materials-bands.png`,
+   `materials-lit-raw.png`, `materials-lit-material.png`. With
+   `--materials-only` the editor runs only the map's opening, the where-used
+   index and this part (working on the tab).
    Then R3 (`--remaster-looks=DIR/looks`: a stand-in look of Besaid beach
    written there, the editor runs no game): the lighting nodes tagged by ID,
    the key light where the look puts it, the facets at the defaults; the key
@@ -899,7 +921,7 @@ export that holds either (`project.godot` still names the plugin's
 | `TextureStore.cs` | the project's texture index and files, the import |
 | `MaterialsTab.cs` | the Materials tab (R2b): the queue, the steps and their settings, undo, the pipeline's results, save |
 | `MaterialPreview.cs` | the tab's 3D preview: the objects, the camera, the compare wipe, studio, HDRI and the map's light |
-| `MapView2D.cs` | the tab's map in 2D (zoom, pan, 2x2, the split) |
+| `MapView2D.cs` | the tab's map in 2D (zoom, pan, 2x2, the split, picking, the painted light's arrow) |
 | `PreviewObject.cs` | the game piece that draws a texture, as one mesh |
 | `hdri/` | the preview's HDRIs (CC0, Poly Haven; README) |
 | `WhereUsed.cs` | the where-used index and its cache |
@@ -913,8 +935,11 @@ export that holds either (`project.godot` still names the plugin's
 Game side (R2): `RemasterTexture`, `RemasterTextureSet`, `PbrRecipe` (the
 resources), `RemasterTextures` (the layers, the merge, the images and
 materials, the binding on the classic materials), `PbrBuilder` and
-`Texturing/` (the generators), `MaterialPipeline` (R2b: the steps, the
-graph, the runs off the main thread), `RemasterLook` and `MapLook` (the lit
+`Texturing/` (the generators), `MaterialPipeline` (R2b: the steps, their
+settings, the CPU's runs off the main thread), `Materialize/` (R2b phase 2:
+`MaterializeGraph` the passes of every map, `CpuBackend` and `Kernels` the
+CPU's kernels, `GpuBackend`, `GpuKernels` and `GpuPipeline` the GPU's,
+`MaterializeCheck` the parity and speed check, `--selftest-materialize`), `RemasterLook` and `MapLook` (the lit
 materials, the swap), `RemasterLighting` and `RenderPaths` (the rig, the
 choice), `MaterialsTest`; `ClassicMaterials` binds the replacements and
 notes each map material's modes and defines (`ffx_map_shader`).

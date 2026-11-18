@@ -8,6 +8,9 @@ namespace GdFfx.RemasterEditor;
 /// kept to its shape, zoomed with the wheel and panned by dragging (a double click: back to the
 /// whole map), tiled 2x2 to show seams, and a before/after split (the source colour texture left
 /// of it, the map right of it; the split follows the mouse while Shift is held, else its slider).
+/// R2b phase 2: a click picks a colour (<see cref="Picking"/>: the point's UV goes to
+/// <see cref="Picked"/>), and in the normal step an arrow shows the painted light's direction
+/// (<see cref="Arrow"/>; drag its head to turn it).
 /// </summary>
 [Tool]
 public partial class MapView2D : ColorRect
@@ -37,6 +40,50 @@ void fragment() {
     private float _zoom = 1;
     private Vector2 _pan;
     private bool _dragging;
+    private bool _arrowDrag;
+    private readonly ArrowOverlay _overlay;
+
+    /// <summary>The next left click picks (the map's UV, 0-1, to <see cref="Picked"/>) instead of panning.</summary>
+    public bool Picking { get; set; }
+
+    public event System.Action<Vector2>? Picked;
+
+    /// <summary>The painted light's angle (degrees anticlockwise from the right; null: no arrow).</summary>
+    public float? Arrow
+    {
+        get => _overlay.Angle;
+        set
+        {
+            _overlay.Angle = value;
+            _overlay.QueueRedraw();
+        }
+    }
+
+    /// <summary>The arrow dragged (live) and let go (the angle).</summary>
+    public event System.Action<float>? ArrowMoved, ArrowReleased;
+
+    /// <summary>Draws the light's arrow over the map (its own canvas item: the map's shader does not touch it).</summary>
+    private sealed partial class ArrowOverlay : Control
+    {
+        public float? Angle;
+
+        public Vector2 Tip => Size / 2 + Dir * Radius;
+        public Vector2 Dir => Angle is { } a ? new Vector2(Mathf.Cos(Mathf.DegToRad(a)), -Mathf.Sin(Mathf.DegToRad(a))) : Vector2.Zero;
+        public float Radius => Mathf.Min(Size.X, Size.Y) * 0.36f;
+
+        public override void _Draw()
+        {
+            if (Angle == null)
+                return;
+            var c = Size / 2;
+            var col = new Color(1, 0.85f, 0.2f);
+            DrawLine(c - Dir * Radius * 0.3f, Tip, col, 3, true);
+            var side = new Vector2(-Dir.Y, Dir.X);
+            DrawColoredPolygon([Tip + Dir * 4, Tip - Dir * 14 + side * 8, Tip - Dir * 14 - side * 8], col);
+            DrawCircle(Tip, 9, new Color(col, 0.35f));
+            DrawString(ThemeDB.FallbackFont, Tip + Dir * 14 - new Vector2(16, -6), "light", HorizontalAlignment.Left, -1, 13, col);
+        }
+    }
 
     public MapView2D()
     {
@@ -46,6 +93,21 @@ void fragment() {
         MouseFilter = MouseFilterEnum.Stop;
         Resized += Fit;
         Split = -1;
+        _overlay = new ArrowOverlay { MouseFilter = MouseFilterEnum.Ignore };
+        _overlay.SetAnchorsPreset(LayoutPreset.FullRect);
+        AddChild(_overlay);
+    }
+
+    /// <summary>The map's UV (0-1) under a point of the view (null: outside the map).</summary>
+    public Vector2? UvAt(Vector2 pos)
+    {
+        var fit = _mat.GetShaderParameter("fit").AsVector2();
+        var v = pos / Size;
+        var uv = (v - new Vector2(0.5f, 0.5f)) / fit / _zoom + new Vector2(0.5f, 0.5f) + _pan;
+        if (uv.X < 0 || uv.Y < 0 || uv.X > 1 || uv.Y > 1)
+            return null;
+        var t = uv * (Tiled ? 2f : 1f);
+        return new Vector2(t.X - Mathf.Floor(t.X), t.Y - Mathf.Floor(t.Y));
     }
 
     /// <summary>Tiled 2x2 (seams show).</summary>
@@ -111,6 +173,25 @@ void fragment() {
             case InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.WheelDown }:
                 _zoom = Mathf.Max(_zoom / 1.15f, 0.25f);
                 Apply();
+                AcceptEvent();
+                break;
+            case InputEventMouseButton { ButtonIndex: MouseButton.Left, Pressed: true } pick when Picking:
+                Picking = false;
+                if (UvAt(pick.Position) is { } puv)
+                    Picked?.Invoke(puv);
+                AcceptEvent();
+                break;
+            case InputEventMouseButton { ButtonIndex: MouseButton.Left } ab when Arrow != null && (_arrowDrag || (ab.Pressed && ab.Position.DistanceTo(_overlay.Tip) < 16)):
+                _arrowDrag = ab.Pressed;
+                if (!ab.Pressed)
+                    ArrowReleased?.Invoke(Arrow.Value);
+                AcceptEvent();
+                break;
+            case InputEventMouseMotion am when _arrowDrag:
+                var d = am.Position - Size / 2;
+                float angle = Mathf.PosMod(Mathf.RadToDeg(Mathf.Atan2(-d.Y, d.X)), 360f);
+                Arrow = Mathf.Round(angle);
+                ArrowMoved?.Invoke(Arrow.Value);
                 AcceptEvent();
                 break;
             case InputEventMouseButton { ButtonIndex: MouseButton.Left or MouseButton.Middle } b:

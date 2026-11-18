@@ -192,7 +192,8 @@ public sealed class EditorSelfTest
                 }
                 if (CheckBuilt(root) is { } bad)
                     return bad;
-                Next(Phase.Edit);
+                // --materials-only: the where-used index, then straight to the Materials tab (a quicker run while working on it)
+                Next(GameSettings.Flag("materials-only") ? Phase.Uses : Phase.Edit);
                 return null;
             }
             case Phase.Edit:
@@ -233,7 +234,7 @@ public sealed class EditorSelfTest
                     return _phaseT > 200 ? $"the where-used index is not ready ({_plugin.Uses.Progress.Done} / {_plugin.Uses.Progress.Total} maps)" : null;
                 if (CheckUses() is { } usesFail)
                     return usesFail;
-                Next(Phase.Textures);
+                Next(GameSettings.Flag("materials-only") ? Phase.Materials : Phase.Textures);
                 return null;
             case Phase.Textures:
                 if (_frames < 2)
@@ -290,7 +291,7 @@ public sealed class EditorSelfTest
                 _matFlow ??= MaterialsFlow(_plugin.Current!);
                 if (_matFlow.MoveNext())
                     return _matFlow.Current;
-                Next(Phase.MaterialsImported);
+                Next(GameSettings.Flag("materials-only") ? Phase.Done : Phase.MaterialsImported);
                 return null;
             }
             case Phase.MaterialsImported:
@@ -1256,7 +1257,10 @@ public sealed class EditorSelfTest
         }
         // three of Besaid's textures (not the ones R2's check edited), the most drawn first
         var onMap = TextureActions.OnMap(root);
+        bool only = GameSettings.Flag("materials-only");
         var ids = _plugin.Uses.ByLevel[Key].Where(onMap.ContainsKey).Where(id => id != _replaced && id != _material)
+            // alone, R2's two are not taken first: opaque textures as the full run gets
+            .Where(id => !only || TextureActions.Source(id) is not { } img || !PbrBuilder.From(img).HasAlpha)
             .OrderByDescending(id => onMap[id]).ThenBy(id => id, System.StringComparer.Ordinal).Take(3).ToList();
         if (ids.Count < 3)
         {
@@ -1322,6 +1326,7 @@ public sealed class EditorSelfTest
         Image? p0 = null;
         if (shots)
         {
+            _plugin.ShowMaterials();
             for (int i = 0; i < 12; i++) yield return null;
             p0 = tab.Preview.CaptureMaterial();
         }
@@ -1341,7 +1346,8 @@ public sealed class EditorSelfTest
             yield return "the drag did not change the height and the normal map";
             yield break;
         }
-        if (!ReferenceEquals(tab.Pixels(MaterialStep.Albedo), a0))
+        if (tab.Gpu is { } dragGpu ? dragGpu.Backend.DrawnSince("albedo", dragGpu.UpdateMark) || !tab.Pixels(MaterialStep.Albedo)!.Rgba.SequenceEqual(a0.Rgba)
+            : !ReferenceEquals(tab.Pixels(MaterialStep.Albedo), a0))
         {
             yield return "the drag made the albedo again (it is upstream of the height)";
             yield break;
@@ -1349,11 +1355,15 @@ public sealed class EditorSelfTest
         string previewNote = "no renderer: the preview's pixels not checked";
         if (shots)
         {
+            _plugin.ShowMaterials();
             for (int i = 0; i < 12; i++) yield return null;
             var p1 = tab.Preview.CaptureMaterial();
             double d = p0 != null && p1 != null ? MeanDiff(p0, p1) : -1;
             if (d < 0.2)
             {
+                p0?.SavePng($"{shotDir}/materials-fail-before.png");
+                p1?.SavePng($"{shotDir}/materials-fail-after.png");
+                Window($"{shotDir}/materials-fail-window.png");
                 yield return $"the preview's pixels did not change with the setting (mean difference {d:0.###})";
                 yield break;
             }
@@ -1463,6 +1473,11 @@ public sealed class EditorSelfTest
             yield return "switch: the albedo was not made for the next texture";
             yield break;
         }
+        // R2b phase 2: the band equaliser, a colour sample, the painted light, the occlusion settling
+        string? p2fail = null;
+        foreach (var w in Phase2(tab, global, shots, shotDir, f => p2fail = f)) yield return w;
+        if (p2fail != null) { yield return p2fail; yield break; }
+
         // shots of the tab (the height step, the studio; an HDRI; the game piece in the map's light, classic on the left)
         if (shots)
         {
@@ -1502,11 +1517,32 @@ public sealed class EditorSelfTest
             yield break;
         }
         var matText = FileAccess.GetFileAsString(TextureStore.Absolute(entry.Material));
-        if (saved.Version != 2 || !Mathf.IsEqualApprox(saved.HeightContrast, 2.2f) || saved.Upscale != 2 || saved.OcclusionMode != StepMode.Skip || saved.RoughnessMode != StepMode.Import
+        if (saved.Version != 3 || !Mathf.IsEqualApprox(saved.HeightContrast, 2.2f) || saved.Upscale != 2 || saved.OcclusionMode != StepMode.Skip || saved.RoughnessMode != StepMode.Import
             || !saved.RoughnessFile.Contains("import-roughness") || saved.RoughnessFile.StartsWith('/') || saved.RoughnessFile.Contains(':')
             || !matText.Contains("orm_texture = ExtResource") || !matText.Contains("albedo_texture = ExtResource"))
         {
             yield return $"saved: version {saved.Version}, contrast {saved.HeightContrast}, occlusion {saved.OcclusionMode}, roughness {saved.RoughnessMode} '{saved.RoughnessFile}'";
+            yield break;
+        }
+        // the height in 16 bits: a half-float OpenEXR, imported as a float texture
+        var heightLine = matText.Split('\n').FirstOrDefault(l => l.Contains("id=\"height\""));
+        var heightPath = heightLine?.Split("path=\"")[1].Split('"')[0];
+        if (heightPath == null || !heightPath.EndsWith(".exr", System.StringComparison.Ordinal))
+        {
+            yield return $"the saved height is not 16-bit (a half-float EXR): {heightPath}";
+            yield break;
+        }
+        double tImp = _t;
+        while (ResourceLoader.Load(heightPath, "", ResourceLoader.CacheMode.Ignore) is not CompressedTexture2D)
+        {
+            if (_t - tImp > 30) { yield return $"the saved height {heightPath} was not imported"; yield break; }
+            yield return null;
+        }
+        var heightTex = ResourceLoader.Load<CompressedTexture2D>(heightPath, "", ResourceLoader.CacheMode.Ignore);
+        var heightFormat = heightTex.GetImage()?.GetFormat() ?? Image.Format.Max;
+        if (heightFormat is not (Image.Format.Rh or Image.Format.Rf or Image.Format.Rgbah or Image.Format.Rgbaf or Image.Format.Rgbh or Image.Format.Rgh or Image.Format.BptcRgbf or Image.Format.BptcRgbfu))
+        {
+            yield return $"the saved height imports as {heightFormat}, not 16 bits";
             yield break;
         }
         var ormFile = matText.Split('\n').FirstOrDefault(l => l.Contains("id=\"orm\""));
@@ -1542,11 +1578,259 @@ public sealed class EditorSelfTest
             + $"at {side1k} px (median of {lats1k.Count}): {Median(lats1k.Select(l => l.S)):0}/{Median(lats1k.Select(l => l.R)):0}/{Median(lats1k.Select(l => l.A)):0}; save {_saveMs:0} ms";
         GD.Print($"ffx editortest: materials {summary}; each at {side0} px: {string.Join("; ", lat)}; at {side1k} px: {string.Join("; ", lat1k)}");
         _seen.Add($"materials: a drag one undo step (height and normal made again, albedo kept; {previewNote}); {summary}; "
-            + $"undo/redo; roughness imported, occlusion skipped; switched texture, settings kept; saved {ormImg.GetWidth()} px maps "
+            + $"undo/redo; roughness imported, occlusion skipped; switched texture, settings kept; saved {ormImg.GetWidth()} px maps in {tab.SaveMakeMs:0} ms, the height as {heightPath.GetFile()} ({heightFormat}) "
             + $"({entry.Material.GetFile()}, one undo step, undone, redone); +{more} from the open map");
         // the 3D view again for the pictures after
         EditorInterface.Singleton.SetMainScreenEditor("3D");
         yield return null;
+    }
+
+    /// <summary>
+    /// R2b phase 2 in the tab (docs/remaster-materials.md, phase 2): a band equaliser preset
+    /// changes the height (one undo step), a colour sample picked in the 2D view changes the
+    /// roughness and its mask shows isolated, the painted light's angle changes the normal (with
+    /// shape from shading on), the occlusion settles in stages (its first directions, then all),
+    /// the colour check; under a renderer the raw texture lit against the material lit (mean
+    /// OKLab lightness and chroma) and pictures.
+    /// </summary>
+    private IEnumerable<string?> Phase2(MaterialsTab tab, UndoRedo global, bool shots, string shotDir, System.Action<string> fail)
+    {
+        string? f = null;
+        IEnumerable<string?> Idle(string what)
+        {
+            double t0 = _t;
+            while (!tab.Idle)
+            {
+                if (_t - t0 > 120) { f = $"{what}: the maps were not made in 120 s"; yield break; }
+                yield return null;
+            }
+        }
+        static double D(GdFfx.Remaster.Texturing.RgbaImage a, GdFfx.Remaster.Texturing.RgbaImage b)
+        {
+            if (a.Width != b.Width || a.Height != b.Height) return 999;
+            long sum = 0;
+            for (int i = 0; i < a.Rgba.Length; i++)
+                if (i % 4 != 3) sum += System.Math.Abs(a.Rgba[i] - b.Rgba[i]);
+            return sum / (a.Rgba.Length * 0.75);
+        }
+        var notes = new List<string> { tab.UsingGpu ? $"GPU ({RenderingServer.GetCurrentRenderingMethod()})" : "CPU (no renderer)" };
+        // the band equaliser: the Details preset, one undo step
+        tab.SelectStep(MaterialStep.Height);
+        foreach (var w in Idle("height")) yield return w;
+        if (f != null) { fail(f); yield break; }
+        var h0 = tab.Pixels(MaterialStep.Height)!;
+        var v = global.GetVersion();
+        var props = Enumerable.Range(0, 7).Select(k => $"HeightBand{k}").ToArray();
+        tab.ApplyBands("Band weights: Details", props, [0.7f, 0.4f, 0.3f, 0.5f, 0.8f, 0.9f, 0.7f]);
+        foreach (var w in Idle("the band preset")) yield return w;
+        if (f != null) { fail(f); yield break; }
+        double dh = D(h0, tab.Pixels(MaterialStep.Height)!);
+        if (global.GetVersion() != v + 1 || !Mathf.IsEqualApprox(tab.Recipe.HeightBand0, 0.7f) || dh < 0.3)
+        {
+            fail($"band weights: {global.GetVersion() - v} undo step(s), band 0 {tab.Recipe.HeightBand0}, the height changed by {dh:0.###}");
+            yield break;
+        }
+        var bandLat = tab.Latency;
+        notes.Add($"band weights changed the height ({dh:0.0} of 255; {bandLat.Refined:0}/{bandLat.All:0} ms)");
+        // a colour sample picked in the 2D view changes the roughness; its mask isolated
+        // (imported by the flow before: generated for this, imported again at the end)
+        tab.SetMode(MaterialStep.Roughness, StepMode.Generate);
+        tab.SelectStep(MaterialStep.Roughness);
+        foreach (var w in Idle("roughness")) yield return w;
+        if (f != null) { fail(f); yield break; }
+        var r0 = tab.Pixels(MaterialStep.Roughness)!;
+        v = global.GetVersion();
+        var picked = tab.PickColour("RoughnessSample1", new Vector2(0.37f, 0.61f));
+        tab.SetSetting("RoughnessSampleValue1", 0.05f);
+        foreach (var w in Idle("the colour sample")) yield return w;
+        if (f != null) { fail(f); yield break; }
+        double dr = D(r0, tab.Pixels(MaterialStep.Roughness)!);
+        if (picked == null || global.GetVersion() != v + 2 || dr < 0.3)
+        {
+            fail($"colour sample: picked {picked}, {global.GetVersion() - v} undo step(s), the roughness changed by {dr:0.###}");
+            yield break;
+        }
+        tab.SetIsolate((MaterialStep.Roughness, 1));
+        foreach (var w in Idle("the isolate view")) yield return w;
+        if (f != null) { fail(f); yield break; }
+        var mask = tab.MaskPixels();
+        int on = mask == null ? 0 : Enumerable.Range(0, mask.Width * mask.Height).Count(i => mask.Rgba[i * 4] > 128);
+        if (!tab.MaskShown || mask == null || on == 0 || on == mask.Width * mask.Height)
+        {
+            fail($"isolate: shown {tab.MaskShown}, {on} pixel(s) on");
+            yield break;
+        }
+        if (shots)
+        {
+            for (int i = 0; i < 10; i++) yield return null;
+            Window($"{shotDir}/materials-isolate.png");
+        }
+        tab.SetIsolate(null);
+        notes.Add($"a picked colour (#{picked!.Value.ToHtml(false)}) changed the roughness ({dr:0.0}), its mask {100.0 * on / (mask.Width * mask.Height):0}% of the map");
+        // the painted light: shape from shading on, then the light turned
+        tab.SelectStep(MaterialStep.Normal);
+        tab.SetSetting("NormalShape", 0.6f);
+        foreach (var w in Idle("shape from shading")) yield return w;
+        if (f != null) { fail(f); yield break; }
+        var n1 = tab.Pixels(MaterialStep.Normal)!;
+        v = global.GetVersion();
+        tab.Drag("NormalLightAngle", 200, 260, 315);
+        foreach (var w in Idle("the painted light")) yield return w;
+        if (f != null) { fail(f); yield break; }
+        double dn = D(n1, tab.Pixels(MaterialStep.Normal)!);
+        if (global.GetVersion() != v + 1 || !Mathf.IsEqualApprox(tab.Recipe.NormalLightAngle, 315) || dn < 0.2 || tab.Map2D.Arrow is not { } arrow || !Mathf.IsEqualApprox(arrow, 315))
+        {
+            fail($"painted light: {global.GetVersion() - v} undo step(s), angle {tab.Recipe.NormalLightAngle} (arrow {tab.Map2D.Arrow}), the normal changed by {dn:0.###}");
+            yield break;
+        }
+        notes.Add($"the painted light turned changed the normal ({dn:0.0}; the arrow at {arrow:0}°)");
+        if (shots)
+        {
+            for (int i = 0; i < 10; i++) yield return null;
+            Window($"{shotDir}/materials-normal-light.png");
+        }
+        // the occlusion settles: its first directions, then all
+        tab.SelectStep(MaterialStep.Occlusion);
+        tab.SetMode(MaterialStep.Occlusion, StepMode.Generate);
+        foreach (var w in Idle("occlusion")) yield return w;
+        if (f != null) { fail(f); yield break; }
+        tab.RecordStages = true;
+        tab.Drag("OcclusionRadius", 10);
+        GdFfx.Remaster.Texturing.RgbaImage? firstAo = null;
+        int frames = 0;
+        if (tab.Gpu != null)
+        {
+            double t0 = _t;
+            while (!tab.Idle) { frames++; if (_t - t0 > 60) break; yield return null; }
+            firstAo = tab.OcclusionStages.Count > 0 ? tab.OcclusionStages[0] : null;
+            tab.RecordStages = false;
+        }
+        else
+        {
+            foreach (var w in Idle("the occlusion")) yield return w;
+            if (f != null) { fail(f); yield break; }
+            firstAo = tab.OcclusionStages.Count > 1 ? tab.OcclusionStages[0] : null;
+            frames = tab.OcclusionStages.Count;
+        }
+        var lastAo = tab.Pixels(MaterialStep.Occlusion);
+        double da = firstAo != null && lastAo != null ? D(firstAo, lastAo) : 0;
+        if (firstAo == null || lastAo == null || da < 0.05)
+        {
+            fail($"the occlusion did not settle in stages (first {(firstAo != null)}, change {da:0.###})");
+            yield break;
+        }
+        notes.Add(tab.UsingGpu ? $"the occlusion settled over {frames} frame(s) ({da:0.00} of 255 from its first directions; {tab.Latency.Refined:0} ms drawn, {tab.Latency.All:0} ms settled)"
+            : $"the occlusion came in {frames} stages ({da:0.00} of 255 apart)");
+        if (shots)
+        {
+            for (int i = 0; i < 10; i++) yield return null;
+            Window($"{shotDir}/materials-occlusion.png");
+        }
+        // a colour picked on the object in the 3D preview: the ray finds its UV
+        tab.SetShapeForCheck(MaterialPreview.Sphere);
+        var pv = tab.Preview.UvAt(tab.Preview.Size / 2);
+        if (pv == null)
+        {
+            fail($"the preview's pick found no UV at the sphere's centre (view {tab.Preview.Size})");
+            yield break;
+        }
+        notes.Add($"the preview's pick at the sphere's centre: UV {pv.Value.X:0.00}, {pv.Value.Y:0.00}");
+        // the colour check
+        tab.SelectStep(MaterialStep.Albedo);
+        foreach (var w in Idle("albedo")) yield return w;
+        if (f != null) { fail(f); yield break; }
+        if (tab.Check is not { } check)
+        {
+            fail("no colour check for the albedo");
+            yield break;
+        }
+        notes.Add($"colour check {check}");
+        // the raw texture lit against the material lit (the studio, the sphere), every setting at its default
+        // (the upscale kept): mean OKLab lightness and chroma of the object; then the flow's settings back (undo)
+        if (shots)
+        {
+            _plugin.ShowMaterials();
+            tab.SetShapeForCheck(MaterialPreview.Sphere);
+            tab.SetCompareForCheck(0);
+            tab.SetLightForCheck(PreviewLight.Studio, 0);
+            var lits = new List<string>();
+            int queued = tab.Queue.Count;
+            for (int q = 0; q < System.Math.Min(3, queued); q++)
+            {
+                tab.Next(1);
+                tab.SetRecipe(new PbrRecipe { Version = 3, Upscale = tab.Recipe.Upscale }, "Materials: every setting to its default (check)");
+                foreach (var w in Idle("the defaults")) yield return w;
+                if (f != null) { fail(f); yield break; }
+                for (int i = 0; i < 20; i++) yield return null;
+                var raw = tab.Preview.CaptureCompare();
+                var mat = tab.Preview.CaptureMaterial();
+                if (raw != null && mat != null)
+                {
+                    var (rl, rc, ml, mc) = LitMeans(raw, mat);
+                    lits.Add($"{RemasterTextures.ShortName(tab.Current!)}: raw L {rl:0.000} C {rc:0.000}, material L {ml:0.000} C {mc:0.000} "
+                        + $"({(ml / System.Math.Max(1e-4, rl) - 1) * 100:+0;-0;0}% L, {(mc / System.Math.Max(1e-4, rc) - 1) * 100:+0;-0;0}% C)");
+                    if (q == 0)
+                    {
+                        // the same raw material on both sides: the two views must agree
+                        var same = new StandardMaterial3D { AlbedoTexture = tab.SourceTexture, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                        tab.Preview.SetMaterials(same, same);
+                        for (int i = 0; i < 20; i++) yield return null;
+                        if (tab.Preview.CaptureCompare() is { } sl && tab.Preview.CaptureMaterial() is { } sr)
+                        {
+                            var (al, ac, bl, bc) = LitMeans(sl, sr);
+                            lits.Add($"(the raw material on both sides: left L {al:0.000} C {ac:0.000}, right L {bl:0.000} C {bc:0.000})");
+                        }
+                        tab.SetCompareForCheck(0);
+                        raw.SavePng($"{shotDir}/materials-lit-raw.png");
+                        mat.SavePng($"{shotDir}/materials-lit-material.png");
+                        Window($"{shotDir}/materials-defaults.png");
+                    }
+                }
+                global.Undo();
+            }
+            // back to the texture the flow was on
+            for (int q = 0; q < queued - System.Math.Min(3, queued); q++)
+                tab.Next(1);
+            foreach (var w in Idle("the flow's settings")) yield return w;
+            if (f != null) { fail(f); yield break; }
+            var line = "studio sphere, defaults: " + string.Join("; ", lits);
+            GD.Print($"ffx editortest: materials lit {line}");
+            notes.Add(line);
+            tab.SelectStep(MaterialStep.Height);
+            for (int i = 0; i < 20; i++) yield return null;
+            Window($"{shotDir}/materials-bands.png");
+        }
+        // back to the flow's modes (the save checks them)
+        tab.SetMode(MaterialStep.Roughness, StepMode.Import);
+        tab.SetMode(MaterialStep.Occlusion, StepMode.Skip);
+        foreach (var w in Idle("the modes back")) yield return w;
+        if (f != null) { fail(f); yield break; }
+        GD.Print($"ffx editortest: materials phase 2: {string.Join("; ", notes)}");
+        _seen.Add("materials phase 2: " + string.Join("; ", notes));
+    }
+
+    /// <summary>The mean OKLab lightness and chroma of the object's pixels (those not the background) in two captures of the same view.</summary>
+    private static (double RawL, double RawC, double MatL, double MatC) LitMeans(Image raw, Image mat)
+    {
+        raw.Convert(Image.Format.Rgba8);
+        mat.Convert(Image.Format.Rgba8);
+        var bg = raw.GetPixel(2, 2);
+        double rl = 0, rc = 0, ml = 0, mc = 0;
+        int n = 0;
+        for (int y = 0; y < raw.GetHeight(); y += 2)
+            for (int x = 0; x < raw.GetWidth(); x += 2)
+            {
+                var a = raw.GetPixel(x, y);
+                var b = mat.GetPixel(x, y);
+                if (System.Math.Abs(a.R - bg.R) + System.Math.Abs(a.G - bg.G) + System.Math.Abs(a.B - bg.B) < 0.06f)
+                    continue;
+                var la = GdFfx.Remaster.Materialize.Kernels.OkLab(GdFfx.Remaster.Materialize.Kernels.Lin(new System.Numerics.Vector3(a.R, a.G, a.B)));
+                var lb = GdFfx.Remaster.Materialize.Kernels.OkLab(GdFfx.Remaster.Materialize.Kernels.Lin(new System.Numerics.Vector3(b.R, b.G, b.B)));
+                rl += la.X; rc += System.MathF.Sqrt(la.Y * la.Y + la.Z * la.Z);
+                ml += lb.X; mc += System.MathF.Sqrt(lb.Y * lb.Y + lb.Z * lb.Z);
+                n++;
+            }
+        return n == 0 ? (0, 0, 0, 0) : (rl / n, rc / n, ml / n, mc / n);
     }
 
     private static void Window(string path)
