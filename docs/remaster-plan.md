@@ -194,8 +194,9 @@ Open after R2:
 
 ## R3 in detail
 
-R3, lighting and atmosphere, is done but for the GPU check (2026-11-17;
-docs/remaster-editor.md, "Lighting" to "The colour check"):
+R3, lighting and atmosphere, is done (2026-11-17; the GPU check passed on
+Vulkan 2026-11-18, D3D12 below; docs/remaster-editor.md, "Lighting" to "The
+colour check"):
 
 - **R2's grey remaster fixed, and measured.** The colour check
   (`ColourBalance`, `tools/compare/colour.py`): mean OKLab lightness, chroma
