@@ -7,8 +7,8 @@ R2b replaces that with a view built for the job: one texture, one map at a
 time, a big lit preview that changes while a slider moves, and profiles that
 carry the settings over to the next texture.
 
-Status: phase 1 implemented (2026-11-18, "Phase 1: what there is"); phases
-2 to 6 planned. Decisions taken with the user are marked as such; the ones
+Status: phases 1 and 2 implemented (2026-11-18, "Phase 1: what there is",
+"Phase 2: what there is"); phases 3 to 6 planned. Decisions taken with the user are marked as such; the ones
 taken while implementing are in "Decisions".
 
 ## What it reuses and what it learns from
@@ -371,7 +371,218 @@ Not in phase 1 (planned later): profiles, Apply to queue, the band
 equaliser, colour masks, progressive AO, the GPU pipeline, 16-bit height,
 the other maps, the seam tool, In map, colour picking, keyboard steps.
 
+## Phase 2: what there is
+
+**One graph, two backends** (`godot/src/Remaster/Materialize/`). Every map is
+made by a graph of small passes (`MaterializeGraph`): a pass is a kernel over
+images with its settings. The graph is built the same way for the GPU
+(`GpuBackend`: each pass a `SubViewport` drawing one rectangle with the
+kernel's canvas shader into its own offscreen target, `GpuKernels`) and for
+the CPU (`CpuBackend`: the same kernels in C#, `Kernels` for the shared
+math), so the two run the same algorithm pass for pass. A pass is named by a
+stable slot and carries a signature (its kernel, size, settings and its
+inputs' signatures): a build runs only the passes whose signature changed,
+on the GPU in the next frame (Godot draws sibling viewports in the order
+they entered the tree, so the passes, put in the graph's order, all draw in
+one frame, inputs first, and before the preview's views), on the CPU when a
+map is read.
+
+- **Precision.** Measured first (2026-11-18): offscreen canvas targets with
+  `use_hdr_2d` are 32-bit floats under Compatibility (the WSL editor, Mesa)
+  and half floats under Forward+ (Vulkan); negative values and values above
+  1 survive. So Compatibility bakes on the GPU too (the plan's fallback to
+  the CPU is not needed). The maps as saved (albedo, normal, ORM, emission,
+  the masks) are 8-bit targets, the height and every intermediate float.
+- **Blurs** are a Gaussian pyramid: the image halved (a 1 3 3 1 kernel) to the
+  level where the radius is 2 to 4 of its pixels, a separable Gaussian there
+  (integer taps, at most ±8), read back bilinearly by the pass that uses it.
+  A radius of 64 px costs about what one of 4 px does; pyramids are shared
+  (the seven bands of an image use one).
+- **Cheap and expensive.** Band weights and contrasts, the final contrast,
+  bias and gain, strengths, the occlusion's strength, bias and power, the
+  roughness's and metallic's contrast, bias and overlay are settings of the
+  combining passes only: a change draws those and what follows (a height
+  band's weight: 31 of 147 passes at 1024 px; the roughness's contrast: the
+  roughness, the ORM). Radii, the upscale, the source and the colour samples
+  of the height change the bands (a band rebuild: about 50 passes).
+- **Progressive occlusion.** In the preview the occlusion comes in chunks of
+  four directions, one chunk a frame (eight chunks at most), each its own
+  pass, their mean in a last pass; the bake takes every direction in one
+  pass. The CPU's preview posts the first chunk, then all.
+- **The preview** samples the passes' targets directly (no copy): the albedo
+  and emission targets are 8-bit with sRGB values, which Godot's material
+  decodes as it does an imported texture (measured, both renderers); the
+  height target is float.
+- **The bake** (Save) builds the same graph at the full size in one frame
+  (no progressive part) and reads every map back; the height is saved as a
+  half-float OpenEXR (`height.<hash>.exr`, single channel), imported by
+  Godot as a float texture (`Rgbh`), the parallax's heightmap without 8-bit
+  terraces; ORM packed as `ORMMaterial3D` reads it (R occlusion, G
+  roughness, B metallic).
+- **Headless** (the checks, `--headless`): the CPU backend, the same graph.
+  The editor setting `ffx_remaster/materials_gpu` (default on) chooses the GPU
+  when there is a renderer.
+
+**The steps, with Materialize's concepts** (concepts only, our own code):
+
+- **Source**: the upscale as a GPU pass too (Lanczos-3, separable, linear light,
+  premultiplied, as `Lanczos.Resize`).
+- **Albedo**: R2's de-lighting on the GPU (the log luminance; its light from a
+  blur, or mixed with a self-guided filter whose variance is the blurred
+  squared residual; occlusion and cavities from a quick height; highlights
+  and, new, dark spots evened, each with a soft knee; slow colour casts
+  flattened; the mean kept), then **the colour check**: the mean OKLab
+  lightness and chroma of the classic texture and of the albedo, shown in
+  the step panel, and **Match classic** (default 1) pulls the albedo's means
+  to the classic's.
+- **Height**: the input's perceptual luminance; up to three **colour samples**
+  (a colour picked in the 2D view or on the object, a height each, a pull);
+  smoothing; **the band equaliser**: seven bands, the image blurred by 0,
+  0.5, 1, 2, 4, 8 and 16 classic texels, each measured against a wide
+  average (32 texels), a weight and a contrast each (a negative contrast
+  inverts the band), presets Default, Details, Shapes and Flat, Cracks, Fine
+  only; the weighted sum x 2.5 around mid grey, then the final contrast,
+  bias and an S-curve (Schlick's gain); invert.
+- **Normal**: the slope of the smoothed height (Sobel or Scharr); **shape from
+  shading**: the source's high-pass (its luminance less its blur by the
+  shading size) read as slope along **the painted light** (an angle, set by
+  dragging the arrow on the 2D view or its slider), the slope across the
+  light kept, mixed by an amount; **the band equaliser over the slopes**
+  (presets Crisp, Mids, Smooth); **angularity** (each slope pulled to the
+  same tilt in its own direction: bevels); the final contrast (the tilt
+  scaled, z raised to it, renormalised). OpenGL convention. Made in floats
+  and saved in 8 bits; the curvature and the occlusion read the floats.
+- **Curvature** (internal, the "edge" map): the divergence of the normals,
+  for **edge wear** in the roughness.
+- **Roughness**: R2's brightness and local contrast (the local variance now the
+  blurred squared residual); up to three colour samples with a roughness
+  each; the metallic parts' own roughness; contrast, bias; **fine detail**
+  (x (1 + high-pass x amount)); edge wear.
+- **Metallic**: a constant (Skip), the brightness mask (R2's), or a **colour
+  mask** (the metal's colour) on a pre-blurred copy; contrast, bias, fine
+  detail.
+- **Occlusion**: per pixel, directions spread evenly from a per-pixel random
+  start, twelve steps out to the radius each from a per-pixel random offset
+  (an integer hash, the same on both backends); the horizon's sine from the
+  height (x the depth) and the tilt of the normal against the direction,
+  mixed by **From the normals**; their mean; strength, power, bias.
+- **Colour masks** (`Kernels.ColourMask`): hue (circular), saturation and
+  lightness closeness weighted (defaults 1, 0.5, 0.5; the hue counts only as
+  far as both colours are saturated: grey has no hue), through a soft
+  threshold (0.88 to 0.97). **Isolate** shows a sample's mask in the 2D view.
+
+**The step panel**: the band equalisers as seven small vertical sliders with
+their presets (one undo step each; a drag one step), colour samples as a
+swatch, **Pick** (the next click in the 2D view or on the object in the 3D
+preview: a ray against the object's triangles gives the UV), **Isolate** and
+clear; the painted light's arrow on the 2D view in the normal step; the
+colour check under the 2D view in the albedo step. Generate, Import, Skip,
+Reset and undo as in phase 1.
+
+**The preview's compare** was lit by the ambient light only in phase 1 (Godot
+culls lights by a camera's cull mask, and the lights were on the material's
+layer): the raw side looked dark and the material "far brighter". With the
+lights on both layers, the default material and the raw texture lit by the
+studio agree on Besaid's textures within 1 % of lightness and 5 % of chroma
+(the editor check's `materials lit` line: e.g. raw L 0.841 C 0.025, material
+L 0.835 C 0.025), so the defaults stay as they are.
+
+**The parity check** (`--selftest-materialize`, and its no-game form on a
+synthetic texture): every feature on, the CPU's maps against the GPU's bake
+at 1024 px. Limits: an 8-bit map's mean difference at most 2 of 255 and its
+99th percentile at most 12; the height's (floats) 0.004 and 0.03. On a failure
+it lists the passes furthest apart. Measured (2026-11-18, the synthetic
+bricks, Mesa llvmpipe; mean/p99/max of 255): source 0.54/1/1, albedo
+0.08/1/1, normal 0.32/1/2, roughness 1.14/8/18, metallic 0.13/0/49 (a few
+pixels at a colour mask's edge), occlusion 0.31/1/3, emission 0/0/0, ORM
+0.53/7/49; height 0.0008/0.0017; the same under Compatibility and Forward+.
+On the Arc 140T (Vulkan, half floats) with Besaid's texture: source 0.59/1/1,
+albedo 0.19/1/1, normal 0.56/2/2, roughness 0.35/2/3, metallic 0/0/0,
+occlusion 0.40/1/2, emission 0/0/10, ORM 0.25/1/3; height 0.0019/0.0027. The
+check also fails on any pass that reads a pass drawn after it (the GPU
+backend checks the order at every structural change): the parity check found
+one such bug (a blur asked for twice in one build moved behind its first
+reader).
+
+**Speed** (`--selftest-materialize`, 2026-11-18). Besaid beach's most used
+opaque colour texture (512 px, upscaled x2 to 1024 px), every feature on; a
+change is timed from the settings to its passes drawn and the GPU finished (a
+one-pixel read back), so it includes waiting for the frame:
+
+| | Intel Arc 140T, Vulkan (Windows export) | Mesa llvmpipe, Compatibility (Xvfb) | Mesa lavapipe, Forward+ (Xvfb, synthetic) | Target |
+|---|---|---|---|---|
+| a cheap change at 1024 px (a height band's weight: 31 of 137 passes) | **15 ms** | 190 ms | 122 ms | 33 ms |
+| the roughness's contrast (the roughness and the ORM) | 11 ms | 69 ms | 38 ms | |
+| a band rebuild (the height's smoothing: 52 passes) | 20 ms | 283 ms | 177 ms | |
+| the occlusion settled (16 directions) | 4 frames | 4 frames | 4 frames | |
+| building the graph (the CPU's part of a change) | 0.8 ms | 1.1 ms | 1.3 ms | |
+| bake, every map read back, 1024 px | 143 ms | 1.0 s | 0.55 s | |
+| bake, 2048 px | **460 ms** | 2.9 s | 1.6 s | 1 s |
+| bake, 4096 px | **2.5 s** | 12.0 s | 6.0 s | 4 s |
+| the CPU's bake at 1024 px (the same graph) | 1.3 s | 4.0 s | 3.6 s | |
+
+On the GPU every target is met; the software renderers (the WSL editor)
+are 5 to 10 times slower and still interactive (a slider in a tenth to a
+fifth of a second). The first build of a session costs more: the kernels'
+shaders are compiled on first use (the first bake at 1024 px took 1.4 s on
+the Arc against 0.14 s after, 4.6 s under llvmpipe). In the editor under Xvfb (llvmpipe) the tab's own
+latency: a change drawn in 120 to 270 ms at 512 to 1024 px, the occlusion
+settled in 0.4 to 0.7 s, Save at 1024 px 0.7 to 1.4 s; headless (the CPU) 0.1
+to 0.7 s drawn, 2.3 s with every map at 1024 px (phase 1's CPU path: 0.65 s;
+the 16-direction occlusion is most of it).
+
+Not in phase 2: the seam tool, profiles and the queue's apply (phase 3), the
+other maps (phase 4), height from a normal map and the bent normal (they come
+with phase 4's maps).
+
 ## Decisions
+
+Taken while implementing phase 2 (2026-11-18):
+
+- **Canvas passes in SubViewports, both renderers.** Not RenderingDevice
+  compute: Compatibility (the WSL editor) has none, and its offscreen float
+  targets are 32-bit (measured), so one implementation serves both.
+- **One graph for both backends** (`MaterializeGraph`), each kernel written
+  twice (C# and GLSL) and held together by the parity check, rather than two
+  separate pipelines.
+- **Pass signatures, not step signatures.** The dependency graph is at pass
+  granularity: a cheap setting draws the combining pass and what reads it.
+- **The blur is a Gaussian pyramid** (halving, then a Gaussian of 2 to 4 level
+  pixels, read bilinearly), on both backends, instead of R2's three box
+  blurs: every radius costs the same, and the band equaliser's seven bands
+  share one pyramid.
+- **Bands in classic texels** (0, 0.5, 1, 2, 4, 8, 16; the wide average 32),
+  scaled with the upscale, not in fractions of the image as Materialize
+  does: FFX's detail lives at the classic texel's scale, whatever the
+  texture's size.
+- **The local variance** (the de-lighting's guided filter, the roughness's
+  detail) is the blurred squared residual from the local mean, not
+  mean-of-squares minus square-of-mean: the latter cancels catastrophically
+  in half floats.
+- **The height** is the band sum x 2.5 (`MaterializeGraph.HeightBandGain`) around
+  mid grey, so the final contrast's default (1) gives a usable range; no
+  gamma on the bands (our luminance is perceptual already).
+- **The hue counts as far as both colours are saturated** in a colour mask
+  (Materialize weighs it fully): grey's hue is noise.
+- **The mask defaults** (lightness weight 0.5, threshold 0.88 to 0.97) were
+  tightened on Besaid's sandy textures, where the looser ones selected all.
+- **Normals in floats** for the curvature and the occlusion: the curvature
+  from the 8-bit normal turned one step of rounding into 8 of 255.
+- **Progressive occlusion** in chunks of four directions (one pass each, a
+  mean pass after), not a ping-pong accumulation: the chunks' signatures make
+  "start again" automatic when the height or normal changes.
+- **Matching the classic colour** (OKLab means of lightness and chroma) is on
+  by default; it only corrects what the de-lighting moved.
+- **16-bit height as a half-float OpenEXR**: Godot's PNG loader takes 8 bits
+  of a 16-bit PNG; a single-channel half EXR imports as a float texture
+  (`Rgbh`) the heightmap reads as it is.
+- **`OcclusionSamples` defaults to 16** (8 in phase 1), four a frame in the
+  preview; `Version` 3 marks a recipe made with phase 2's algorithms (2 loads
+  unchanged).
+- **The preview's lights on both views' layers** (the compare side was lit
+  by the ambient light only).
+- **R2's dock and batch** (`PbrBuilder.Make`) keep R2's generators until
+  phase 3 removes them.
 
 Taken while implementing phase 1 (2026-11-18):
 
@@ -427,9 +638,22 @@ Taken while implementing phase 1 (2026-11-18):
   parts without profiles and the queue's apply (docs/remaster-editor.md,
   "Checks").
 - **A game-side check** on the GPU (`--selftest-materialize`, the Windows
-  export through `tools/compare-shot-win.sh`): the pipeline's time per
-  slider change and per bake against the targets, and the GPU maps against
-  the CPU maps (parity).
+  export through `tools/compare-shot-win.sh`; `--no-game`: a synthetic
+  texture): the pipeline's time per slider change, per band rebuild and per
+  bake at 1024, 2048 and 4096 px, the occlusion settling, and the GPU maps
+  against the CPU maps (parity). Phase 2's part of the editor check: a band
+  preset changes the height, a picked colour the roughness (its mask
+  isolated), the painted light the normal, the occlusion settles in stages,
+  the preview's pick finds a UV, the colour check, the save writes a 16-bit
+  height; under a renderer the raw texture and the default material lit,
+  measured (`--materials-only`: the tab's part alone, for working on it).
+  The game-side check's own options: `--materialize-parity-only` (stop after
+  the parity), `--materialize-texture=NAME` (another texture, by a part of its
+  short name, whatever its alpha and size), `--materialize-size=WxH` (the
+  synthetic texture's size, without the game), `--materialize-probe=X,Y[,slot...]`
+  (one pixel of passes from both backends), `--materialize-cpu-2048` (the CPU's
+  bake at 2048 px too), `--shot=FILE.png` (the GPU's maps side by side, and
+  the maps that miss the parity beside it).
 - **The materials and lighting checks** (`--selftest-materials`,
   `--selftest-lighting`) with a material made by a profile.
 - The quick sweep (`tools/sweep-devsaves.sh`) for anything that touches the
@@ -438,10 +662,9 @@ Taken while implementing phase 1 (2026-11-18):
 ## Risks
 
 - **Precision in the Compatibility renderer.** The band pyramid and the
-  height want float render targets. If the WSL editor's Compatibility
-  renderer gives only 8-bit offscreen targets, it previews at lower precision
-  and its bakes go through the CPU generators instead; the Windows editor
-  (Vulkan) has float targets. Phase 2 measures this first.
+  height want float render targets. Measured in phase 2: Compatibility's
+  offscreen canvas targets with `use_hdr_2d` are 32-bit floats (Forward+'s
+  half floats), so both bake on the GPU.
 - **The speed targets** come from Materialize's experience (full-size blits
   are fast; band rebuilds on big textures are not) and Godot's offscreen
   passes; phase 2 measures them on the GPU before the CPU generators are

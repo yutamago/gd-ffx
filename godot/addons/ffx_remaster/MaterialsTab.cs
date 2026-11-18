@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using GdFfx.Remaster;
+using GdFfx.Remaster.Materialize;
 using GdFfx.Remaster.Texturing;
 using Godot;
 
@@ -13,9 +14,11 @@ namespace GdFfx.RemasterEditor;
 /// a click switch texture and keep the settings), the big 3D preview (centre:
 /// <see cref="MaterialPreview"/>), the current step's map in 2D and only that step's settings
 /// (right: <see cref="MapView2D"/>), the strip of every step's map (bottom) and Save.
-/// <para>The maps are made by <see cref="MaterialPipeline"/> off the main thread: a change asks
-/// for every map at 256 px, then at the working size; only the maps downstream of the change are
-/// made again. Settings live in a <see cref="PbrRecipe"/> (<see cref="Recipe"/>); every change is
+/// <para>The maps are made on the GPU (<see cref="GpuPipeline"/>, R2b phase 2: the passes'
+/// targets are the preview's textures; a change draws the passes it touches in the next frame,
+/// the occlusion settles over a few frames) when there is a renderer, else on the CPU
+/// (<see cref="MaterialPipeline"/> off the main thread: a change asks for every map at 256 px,
+/// then at the working size); only the passes downstream of the change run again. Settings live in a <see cref="PbrRecipe"/> (<see cref="Recipe"/>); every change is
 /// one step of the editor's global undo history (a slider drag: one step). Save writes the maps
 /// and the material into R2's storage (<see cref="TextureStore"/>: content-named files) as one
 /// undo step, the settings on the texture's entry.</para>
@@ -35,7 +38,7 @@ public partial class MaterialsTab : VBoxContainer
     private SpinBox _tile = null!;
     private HSlider _wipe = null!;
     // the step panel
-    private Label _stepTitle = null!, _stepNote = null!;
+    private Label _stepTitle = null!, _stepNote = null!, _checkLabel = null!;
     private MapView2D _map2d = null!;
     private CheckBox _tiled = null!, _split = null!;
     private OptionButton _mode = null!;
@@ -57,19 +60,32 @@ public partial class MaterialsTab : VBoxContainer
     public MaterialStep Step { get; private set; } = MaterialStep.Albedo;
 
     /// <summary>The current settings (kept when the texture changes).</summary>
-    public PbrRecipe Recipe { get; private set; } = new() { Version = 2 };
+    public PbrRecipe Recipe { get; private set; } = new() { Version = 3 };
 
     public MaterialPreview Preview => _preview;
+
+    /// <summary>The source colour texture as it is (the raw side of the compare).</summary>
+    public Texture2D SourceTexture => _sourceTex;
 
     private RgbaImage? _original;
     private readonly ImageTexture _sourceTex = new();
     private readonly MaterialPipeline _pipe = new();
+    /// <summary>The GPU's pipeline (null: no renderer, or the editor setting <see cref="GpuSetting"/> off).</summary>
+    private GpuPipeline? _gpu;
     private int _run = -1;
-    private readonly Dictionary<MaterialStep, ImageTexture> _maps = new();
+    private readonly Dictionary<MaterialStep, Texture2D> _maps = new();
+    private readonly Dictionary<MaterialStep, ImageTexture> _cpuTex = new();
     private readonly Dictionary<MaterialStep, RgbaImage> _pixels = new();
     private readonly Dictionary<MaterialStep, int> _shownSide = new();
     private readonly ImageTexture _orm = new();
+    private readonly ImageTexture _maskCpu = new();
     private RgbaImage? _ormPixels;
+    private float[]? _heightFloat;
+    /// <summary>The colour sample shown as a mask in the 2D view (the isolate view), or null.</summary>
+    private (MaterialStep Step, int Sample)? _isolate;
+    private bool _maskShown;
+    /// <summary>The colour setting the next click in the 2D view picks.</summary>
+    private string? _pickFor;
     private readonly Dictionary<string, RgbaImage> _imports = new();
     private readonly HashSet<string> _savedHere = new();
     private int _alpha; // 0 opaque, 1 cut-out, 2 blended
@@ -83,7 +99,7 @@ public partial class MaterialsTab : VBoxContainer
     public (double Small, double Refined, double All) Latency { get; private set; }
 
     /// <summary>Whether the maps asked for last are all shown.</summary>
-    public bool Idle => _runDone && !_pipe.Busy && _pipe.Results.IsEmpty && _saveRun < 0;
+    public bool Idle => _runDone && !_pipe.Busy && _pipe.Results.IsEmpty && _saveRun < 0 && _bake == null;
 
     /// <summary>The order the last run's maps arrived in (side, step): the checks see small before refined.</summary>
     public List<(int Side, MaterialStep? Step)> Arrivals { get; } = new();
@@ -95,6 +111,31 @@ public partial class MaterialsTab : VBoxContainer
         SizeFlagsHorizontal = SizeFlags.ExpandFill;
         SizeFlagsVertical = SizeFlags.ExpandFill;
         Build();
+        if (GpuBackend.Available && UseGpuSetting())
+            _gpu = new GpuPipeline(this);
+    }
+
+    /// <summary>Whether the maps are made on the GPU (else the CPU).</summary>
+    public bool UsingGpu => _gpu != null;
+
+    /// <summary>The GPU's pipeline (the checks), null on the CPU.</summary>
+    public GpuPipeline? Gpu => _gpu;
+
+    /// <summary>Makes the maps on the CPU from now on (the checks compare), or on the GPU again.</summary>
+    public void UseGpu(bool on)
+    {
+        if (on && _gpu == null && GpuBackend.Available)
+            _gpu = new GpuPipeline(this);
+        else if (!on && _gpu != null)
+        {
+            _gpu.Backend.Clear();
+            _gpu.Backend.QueueFree();
+            _gpu = null;
+        }
+        _maps.Clear();
+        _pixels.Clear();
+        _shownSide.Clear();
+        Remake();
     }
 
     public MaterialsTab() : this(null!) { }
@@ -140,6 +181,7 @@ public partial class MaterialsTab : VBoxContainer
     {
         var col = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill, SizeFlagsStretchRatio = 2.2f };
         _preview = new MaterialPreview();
+        _preview.Picked += PickedAt;
         col.AddChild(_preview);
         var row = new HBoxContainer();
         col.AddChild(row);
@@ -197,7 +239,12 @@ public partial class MaterialsTab : VBoxContainer
         _stepNote = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = new Color(1, 1, 1, 0.7f) };
         col.AddChild(_stepNote);
         _map2d = new MapView2D();
+        _map2d.Picked += PickedAt;
+        _map2d.ArrowMoved += a => LiveSet("NormalLightAngle", a);
+        _map2d.ArrowReleased += _ => EndDrag("NormalLightAngle");
         col.AddChild(_map2d);
+        _checkLabel = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = new Color(0.8f, 0.95f, 1f), Visible = false };
+        col.AddChild(_checkLabel);
         var row = new HBoxContainer();
         col.AddChild(row);
         _tiled = new CheckBox { Text = "2×2", TooltipText = "Tile the map 2×2: seams show" };
@@ -282,6 +329,15 @@ public partial class MaterialsTab : VBoxContainer
     public const string HdriDir = "res://addons/ffx_remaster/hdri";
     public const string HdriSetting = "ffx_remaster/hdri_dir";
 
+    /// <summary>The editor setting: make the maps on the GPU (default on; off: the CPU, as headless).</summary>
+    public const string GpuSetting = "ffx_remaster/materials_gpu";
+
+    private static bool UseGpuSetting()
+    {
+        var es = EditorInterface.Singleton.GetEditorSettings();
+        return !es.HasSetting(GpuSetting) || es.GetSetting(GpuSetting).AsBool();
+    }
+
     /// <summary>The editor setting for a folder of one's own HDRIs (registered once).</summary>
     public static void RegisterSettings()
     {
@@ -294,6 +350,9 @@ public partial class MaterialsTab : VBoxContainer
             ["type"] = (int)Variant.Type.String,
             ["hint"] = (int)PropertyHint.GlobalDir,
         });
+        if (!es.HasSetting(GpuSetting))
+            es.SetSetting(GpuSetting, true);
+        es.AddPropertyInfo(new Godot.Collections.Dictionary { ["name"] = GpuSetting, ["type"] = (int)Variant.Type.Bool });
     }
 
     /// <summary>The HDRIs: the plugin's (CC0, from Poly Haven), then the editor setting's folder's.</summary>
@@ -403,7 +462,7 @@ public partial class MaterialsTab : VBoxContainer
         _original = PbrBuilder.From(img);
         _alpha = !_original.HasAlpha ? 0 : _original.HasOnlyBinaryAlpha ? 1 : 2;
         _sourceTex.SetImage(PbrBuilder.ToImage(_original));
-        foreach (var t in _maps.Values)
+        foreach (var t in _cpuTex.Values)
             t.SetImage(Image.CreateEmpty(1, 1, false, Image.Format.Rgba8));
         _pixels.Clear();
         _shownSide.Clear();
@@ -429,6 +488,15 @@ public partial class MaterialsTab : VBoxContainer
         foreach (var name in RecipeProps())
             d[name] = copy.Get(name);
         Commit("Load the texture's saved settings", d);
+    }
+
+    /// <summary>Every setting the tab edits from <paramref name="r"/> (one undo step).</summary>
+    public void SetRecipe(PbrRecipe r, string action)
+    {
+        var d = new Godot.Collections.Dictionary();
+        foreach (var name in RecipeProps())
+            d[name] = r.Get(name);
+        Commit(action, d);
     }
 
     // ---- the game piece and the map's light ------------------------------------------------------
@@ -533,13 +601,23 @@ public partial class MaterialsTab : VBoxContainer
     private static readonly Dictionary<MaterialStep, string> Notes = new()
     {
         [MaterialStep.Source] = "The colour texture the maps start from (the replacement, else the classic one), upscaled; or an image of your own (Import).",
-        [MaterialStep.Albedo] = "R2's de-lighting: the painted light out of the colour. Skip: the source as it is.",
-        [MaterialStep.Height] = "From the albedo (or the source): blurred brightness. Skip: flat (no parallax).",
-        [MaterialStep.Normal] = "The height's slope, OpenGL convention (green up, as Godot reads it). Skip: flat.",
-        [MaterialStep.Roughness] = "From the albedo: darker and busier is rougher. Skip: the base value everywhere.",
-        [MaterialStep.Metallic] = "Most FFX textures skip it (the value everywhere). Generate: a mask from brightness.",
-        [MaterialStep.Occlusion] = "Horizon occlusion from the height. Skip: none (white).",
+        [MaterialStep.Albedo] = "R2's de-lighting: the painted light out of the colour, hot and dark spots evened, the colour checked against the classic texture. Skip: the source as it is.",
+        [MaterialStep.Height] = "From the albedo (or the source): seven bands of its brightness, fine to coarse, each a weight and a contrast; colour samples set their colour's height. Skip: flat (no parallax).",
+        [MaterialStep.Normal] = "The height's slope in seven bands (crisp to smooth), shape from the painted shading, angularity; OpenGL convention (green up, as Godot reads it). Skip: flat.",
+        [MaterialStep.Roughness] = "From the albedo: darker and busier is rougher; colour samples set their colour's roughness, metal its own, worn edges smoother. Skip: the base value everywhere.",
+        [MaterialStep.Metallic] = "Most FFX textures skip it (the value everywhere). Generate: a colour mask (pick the metal) or a mask from brightness.",
+        [MaterialStep.Occlusion] = "Horizon occlusion from the height and the normals over many directions (the preview adds four a frame). Skip: none (white).",
         [MaterialStep.Emission] = "Usually skipped. Generate: the albedo where its brightest channel passes the threshold.",
+    };
+
+    /// <summary>The band equalisers' presets (fine to coarse).</summary>
+    private static readonly Dictionary<string, (string Name, float[] Values)[]> Presets = new()
+    {
+        ["bands:weights"] = [("Default", [0.15f, 0.19f, 0.3f, 0.5f, 0.7f, 0.9f, 1f]), ("Details", [0.7f, 0.4f, 0.3f, 0.5f, 0.8f, 0.9f, 0.7f]),
+            ("Shapes", [0.02f, 0.03f, 0.1f, 0.35f, 0.7f, 0.9f, 1f])],
+        ["bands:contrast"] = [("Flat", [1f, 1f, 1f, 1f, 1f, 1f, 1f]), ("Cracks", [1f, 1f, 1f, 0.5f, -0.5f, -1f, -1f]), ("Fine only", [1.5f, 1.2f, 1f, 0.5f, 0f, 0f, 0f])],
+        ["bands:normal"] = [("Crisp", [1f, 0.7f, 0.5f, 0.35f, 0.25f, 0.15f, 0.1f]), ("Mids", [0.2f, 0.5f, 1f, 0.8f, 0.5f, 0.3f, 0.15f]),
+            ("Smooth", [0.05f, 0.1f, 0.3f, 0.6f, 1f, 0.8f, 0.5f])],
     };
 
     private void RebuildSettings()
@@ -549,12 +627,26 @@ public partial class MaterialsTab : VBoxContainer
         foreach (var c in _settingsBox.GetChildren())
             c.QueueFree();
         _controls.Clear();
-        foreach (var st in MaterialPipeline.Settings[Step])
+        var list = MaterialPipeline.Settings[Step];
+        for (int i = 0; i < list.Length; i++)
         {
+            var st = list[i];
+            if (st.Group is { } g && g.StartsWith("bands:", System.StringComparison.Ordinal))
+            {
+                var band = list.Skip(i).TakeWhile(x => x.Group == g).ToArray();
+                BuildEqualiser(g, band);
+                i += band.Length - 1;
+                continue;
+            }
+            var type = MaterialPipeline.Prop(st.Property).PropertyType;
+            if (type == typeof(Color))
+            {
+                BuildSample(st);
+                continue;
+            }
             var row = new HBoxContainer();
             _settingsBox.AddChild(row);
             row.AddChild(new Label { Text = st.Label, CustomMinimumSize = new Vector2(130, 0), TooltipText = st.Tip, MouseFilter = MouseFilterEnum.Pass });
-            var type = MaterialPipeline.Prop(st.Property).PropertyType;
             var prop = st.Property;
             Control ctl;
             if (type == typeof(bool))
@@ -568,7 +660,7 @@ public partial class MaterialsTab : VBoxContainer
                 var ob = new OptionButton { TooltipText = st.Tip, SizeFlagsHorizontal = SizeFlags.ExpandFill };
                 foreach (var n in System.Enum.GetNames(type))
                     ob.AddItem(n);
-                ob.ItemSelected += i => SetSetting(prop, (int)i);
+                ob.ItemSelected += i2 => SetSetting(prop, (int)i2);
                 ctl = ob;
             }
             else
@@ -585,11 +677,140 @@ public partial class MaterialsTab : VBoxContainer
             }
             row.AddChild(ctl);
             _controls[prop] = ctl;
-            var reset = new Button { Text = "↺", TooltipText = $"{st.Label} back to its default", Flat = true };
-            reset.Pressed += () => ResetSetting(prop);
-            row.AddChild(reset);
+            AddReset(row, prop, st.Label);
         }
+        _map2d.Arrow = Step == MaterialStep.Normal ? Recipe.NormalLightAngle : null;
+        _checkLabel.Visible = Step == MaterialStep.Albedo && _checkLabel.Text.Length > 0;
         RefreshControls();
+    }
+
+    private void AddReset(HBoxContainer row, string prop, string label)
+    {
+        var reset = new Button { Text = "↺", TooltipText = $"{label} back to its default", Flat = true };
+        reset.Pressed += () => ResetSetting(prop);
+        row.AddChild(reset);
+    }
+
+    /// <summary>A band equaliser: seven small vertical sliders, fine to coarse, and its presets (one undo step each).</summary>
+    private void BuildEqualiser(string group, StepSetting[] bands)
+    {
+        var head = new HBoxContainer();
+        _settingsBox.AddChild(head);
+        string title = bands[0].Label[..bands[0].Label.LastIndexOf(' ')];
+        head.AddChild(new Label { Text = title, TooltipText = bands[0].Tip, MouseFilter = MouseFilterEnum.Pass, SizeFlagsHorizontal = SizeFlags.ExpandFill });
+        foreach (var (name, values) in Presets.GetValueOrDefault(group) ?? [])
+        {
+            var b = new Button { Text = name, TooltipText = $"{title}: {string.Join(" ", values)} (fine to coarse)", Flat = false };
+            var props = bands.Select(x => x.Property).ToArray();
+            b.Pressed += () => ApplyBands(title + ": " + name, props, values);
+            head.AddChild(b);
+        }
+        var row = new HBoxContainer { Alignment = BoxContainer.AlignmentMode.Center };
+        _settingsBox.AddChild(row);
+        for (int k = 0; k < bands.Length; k++)
+        {
+            var st = bands[k];
+            var col = new VBoxContainer();
+            var sl = new VSlider
+            {
+                MinValue = st.Min, MaxValue = st.Max, Step = st.Step, CustomMinimumSize = new Vector2(30, 84),
+                TooltipText = $"{st.Label}: {(k == 0 ? "the finest" : k == bands.Length - 1 ? "the coarsest" : "")} band", SizeFlagsHorizontal = SizeFlags.ShrinkCenter,
+            };
+            var prop = st.Property;
+            sl.DragStarted += () => BeginDrag(prop);
+            sl.DragEnded += _ => EndDrag(prop);
+            sl.ValueChanged += v => SliderChanged(prop, v);
+            col.AddChild(sl);
+            col.AddChild(new Label { Text = k == 0 ? "fine" : k == bands.Length - 1 ? "wide" : k.ToString(), HorizontalAlignment = HorizontalAlignment.Center });
+            row.AddChild(col);
+            _controls[prop] = sl;
+        }
+        _settingsBox.AddChild(new HSeparator());
+    }
+
+    /// <summary>A band equaliser's preset (one undo step).</summary>
+    public void ApplyBands(string action, string[] props, float[] values)
+    {
+        var d = new Godot.Collections.Dictionary();
+        for (int i = 0; i < props.Length && i < values.Length; i++)
+            d[props[i]] = values[i];
+        Commit($"Materials: {action}", d);
+    }
+
+    /// <summary>A colour sample: its colour (a picker, or Pick: a click in the 2D map), the isolate view of its mask, clear.</summary>
+    private void BuildSample(StepSetting st)
+    {
+        var row = new HBoxContainer();
+        _settingsBox.AddChild(row);
+        row.AddChild(new Label { Text = st.Label, CustomMinimumSize = new Vector2(80, 0), TooltipText = st.Tip, MouseFilter = MouseFilterEnum.Pass });
+        var prop = st.Property;
+        var cp = new ColorPickerButton { EditAlpha = false, CustomMinimumSize = new Vector2(44, 0), TooltipText = "The colour (none: off)" };
+        cp.ColorChanged += c => LiveSet(prop, new Color(c, 1));
+        cp.PopupClosed += () => EndDrag(prop);
+        row.AddChild(cp);
+        _controls[prop] = cp;
+        var pick = new Button { Text = "Pick", TooltipText = "Click the colour in the 2D map or on the object in the preview", ToggleMode = true };
+        pick.Toggled += on =>
+        {
+            _pickFor = on ? prop : null;
+            _map2d.Picking = on;
+            _preview.Picking = on;
+            if (on)
+                Say("click the colour in the 2D map or on the object in the preview");
+        };
+        row.AddChild(pick);
+        int index = prop[^1] is >= '1' and <= '3' ? prop[^1] - '0' : 1;
+        var iso = new Button { Text = "Isolate", TooltipText = "Show this colour's mask in the 2D map", ToggleMode = true };
+        iso.SetPressedNoSignal(_isolate is { } cur && cur.Step == Step && cur.Sample == index);
+        iso.Toggled += on => SetIsolate(on ? (Step, index) : null);
+        row.AddChild(iso);
+        var clear = new Button { Text = "×", TooltipText = "No colour: the sample off", Flat = true };
+        clear.Pressed += () => SetSetting(prop, new Color(0, 0, 0, 0));
+        row.AddChild(clear);
+    }
+
+    /// <summary>Shows a colour sample's mask in the 2D view (null: the map).</summary>
+    public void SetIsolate((MaterialStep Step, int Sample)? isolate)
+    {
+        _isolate = isolate;
+        Remake();
+        ShowStep();
+    }
+
+    /// <summary>A setting changed live (a colour being picked, the arrow dragged): one undo step when it ends (<see cref="EndDrag"/>).</summary>
+    private void LiveSet(string prop, Variant value)
+    {
+        if (!_dragFrom.ContainsKey(prop))
+            BeginDrag(prop);
+        Recipe.Set(prop, value);
+        Changed([prop]);
+    }
+
+    /// <summary>The 2D view was clicked while picking: the colour there (of the step's input) becomes the setting's (one undo step).</summary>
+    private void PickedAt(Vector2 uv)
+    {
+        if (_pickFor is not { } prop)
+            return;
+        _pickFor = null;
+        _map2d.Picking = false;
+        _preview.Picking = false;
+        foreach (var b in _settingsBox.FindChildren("*", "Button", true, false).OfType<Button>().Where(b => b.ToggleMode && b.Text == "Pick"))
+            b.SetPressedNoSignal(false);
+        if (PickColour(prop, uv) is { } c)
+            Say($"{LabelOf(prop)}: picked #{c.ToHtml(false)}");
+    }
+
+    /// <summary>The colour of the step's input at <paramref name="uv"/> set as <paramref name="prop"/> (one undo step); the colour, or null.</summary>
+    public Color? PickColour(string prop, Vector2 uv)
+    {
+        var from = prop.StartsWith("Height", System.StringComparison.Ordinal) && Recipe.HeightFrom == HeightInput.Source ? MaterialStep.Source : MaterialStep.Albedo;
+        if (Pixels(from) is not { } img)
+            return null;
+        int x = Mathf.Clamp((int)(uv.X * img.Width), 0, img.Width - 1), y = Mathf.Clamp((int)(uv.Y * img.Height), 0, img.Height - 1);
+        int i = (y * img.Width + x) * 4;
+        var c = new Color(img.Rgba[i] / 255f, img.Rgba[i + 1] / 255f, img.Rgba[i + 2] / 255f, 1);
+        SetSetting(prop, c);
+        return c;
     }
 
     private void RefreshControls()
@@ -605,11 +826,17 @@ public partial class MaterialsTab : VBoxContainer
                 case OptionButton ob:
                     ob.Selected = v.AsInt32();
                     break;
+                case ColorPickerButton cp:
+                    cp.Color = v.AsColor();
+                    cp.Modulate = v.AsColor().A > 0 ? Colors.White : new Color(1, 1, 1, 0.35f);
+                    break;
                 case Range r:
                     r.SetValueNoSignal(v.AsDouble());
                     break;
             }
         }
+        if (Step == MaterialStep.Normal)
+            _map2d.Arrow = Recipe.NormalLightAngle;
         var mode = MaterialPipeline.ModeOf(Recipe, Step);
         _mode.Selected = (int)mode;
         _mode.SetItemDisabled((int)StepMode.Skip, Step == MaterialStep.Source);
@@ -633,10 +860,17 @@ public partial class MaterialsTab : VBoxContainer
 
     private void ShowStep()
     {
-        var map = Step == MaterialStep.Source ? _maps.GetValueOrDefault(Step) ?? _sourceTex : _maps.GetValueOrDefault(Step);
+        _maskShown = _isolate is { } iso && iso.Step == Step && MaskTexture() is not null;
+        var map = _maskShown ? MaskTexture() : Step == MaterialStep.Source ? _maps.GetValueOrDefault(Step) ?? _sourceTex : _maps.GetValueOrDefault(Step);
         _map2d.SetMaps(map, _sourceTex);
+        _checkLabel.Visible = Step == MaterialStep.Albedo && _checkLabel.Text.Length > 0;
         RefreshStrip();
     }
+
+    private Texture2D? MaskTexture() => _gpu != null ? _gpu.Mask : _maskCpu.GetWidth() > 1 ? _maskCpu : null;
+
+    /// <summary>Whether the 2D view shows a colour sample's mask (the isolate view).</summary>
+    public bool MaskShown => _maskShown;
 
     // ---- settings and undo ------------------------------------------------------------------------
 
@@ -816,8 +1050,14 @@ public partial class MaterialsTab : VBoxContainer
 
     private ulong _requestUsec;
     private bool _gotSmall, _gotRefined;
+    private readonly Dictionary<MaterialStep, RgbaImage> _gpuPixels = new();
+    private ColourCheck? _check;
 
-    /// <summary>Asks for every map with the current settings: 256 px first, then the working size (the run before cancelled).</summary>
+    /// <summary>
+    /// Asks for every map with the current settings: on the GPU, built now and drawn this frame
+    /// (only the passes whose settings or inputs changed); on the CPU, 256 px first, then the
+    /// working size (the run before cancelled).
+    /// </summary>
     public void Remake()
     {
         if (Current == null || _original == null)
@@ -829,13 +1069,32 @@ public partial class MaterialsTab : VBoxContainer
         var inputs = new MaterialPipeline.Inputs(Current, _original, snap, new Dictionary<string, RgbaImage>(_imports));
         var (w, h, _) = MaterialPipeline.Size(inputs, Mathf.Max(MaterialPipeline.SmallSide, snap.WorkingSide));
         _workingSide = Mathf.Max(w, h);
-        var (sw, sh, _) = MaterialPipeline.Size(inputs, MaterialPipeline.SmallSide);
-        int small = Mathf.Max(sw, sh);
-        int[] sides = small < _workingSide ? [MaterialPipeline.SmallSide, snap.WorkingSide] : [snap.WorkingSide];
-        _run = _pipe.Request(inputs, Step, sides);
         _requestUsec = Time.GetTicksUsec();
         (_gotSmall, _gotRefined, _runDone) = (false, false, false);
         Arrivals.Clear();
+        OcclusionStages.Clear();
+        _check = null;
+        if (_gpu != null)
+        {
+            _gpu.Isolate = _isolate;
+            _gpu.Update(inputs, snap.WorkingSide);
+            _gpuPixels.Clear();
+            foreach (var s in MaterialPipeline.Steps)
+                if (_gpu.Texture(s) is { } t)
+                {
+                    _maps[s] = t;
+                    _shownSide[s] = _workingSide;
+                }
+            _sides = [snap.WorkingSide];
+            UpdateMaterials();
+            ShowStep();
+            return;
+        }
+        var (sw, sh, _) = MaterialPipeline.Size(inputs, MaterialPipeline.SmallSide);
+        int small = Mathf.Max(sw, sh);
+        int[] sides = small < _workingSide ? [MaterialPipeline.SmallSide, snap.WorkingSide] : [snap.WorkingSide];
+        _pipe.Isolate = _isolate;
+        _run = _pipe.Request(inputs, Step, sides);
         _sides = sides;
     }
 
@@ -843,6 +1102,8 @@ public partial class MaterialsTab : VBoxContainer
 
     public void Tick(double delta)
     {
+        if (_gpu != null)
+            TickGpu();
         int shown = 0;
         while (shown < 6 && _pipe.Results.TryDequeue(out var r))
         {
@@ -851,27 +1112,81 @@ public partial class MaterialsTab : VBoxContainer
                 Collect(r);
                 continue;
             }
-            if (r.Run != _run)
+            if (r.Run != _run || _gpu != null)
                 continue;
             shown++;
             Show(r);
         }
+        if (_bake is { Done: true })
+            FinishBake();
         PollObject();
     }
 
+    private void TickGpu()
+    {
+        var gpu = _gpu!;
+        bool changed = gpu.Tick();
+        if (changed)
+            _gpuPixels.Clear();
+        if (!_gotRefined && gpu.DrawnMs >= 0)
+        {
+            _gotRefined = true;
+            if (RecordStages && Pixels(MaterialStep.Occlusion) is { } firstAo)
+                OcclusionStages.Add(firstAo);
+            Latency = (0, gpu.DrawnMs, Latency.All);
+            foreach (var s in MaterialPipeline.Steps)
+                Arrivals.Add((_workingSide, s));
+            Arrivals.Add((_workingSide, null));
+            UpdateMaterials();
+            ShowStep();
+        }
+        if (!_runDone && gpu.Settled && gpu.SettledMs >= 0)
+        {
+            _runDone = true;
+            Latency = (0, Latency.Refined, gpu.SettledMs);
+            _timing.Text = $"GPU: {Latency.Refined:0} ms drawn, occlusion settled {Latency.All:0} ms ({gpu.Backend.LastDraws} of {gpu.Backend.Count} passes last)";
+            _check = gpu.Check();
+            ShowCheck();
+        }
+    }
+
+    private void ShowCheck()
+    {
+        _checkLabel.Text = _check is { } c ? $"Colour check (OKLab means), classic → albedo: {c}" : "";
+        _checkLabel.Visible = Step == MaterialStep.Albedo && _checkLabel.Text.Length > 0;
+    }
+
+    /// <summary>The albedo's colour check against the classic texture (OKLab means).</summary>
+    public ColourCheck? Check => _check;
+
     private void Show(MaterialPipeline.Result r)
     {
-        Arrivals.Add((r.Side, r.Step));
         bool small = _sides.Length > 1 && r.Side == _sides[0];
-        if (r.Step is { } s)
+        if (r.Kind == ResultKind.Mask)
         {
-            if (!_maps.TryGetValue(s, out var tex))
-                _maps[s] = tex = new ImageTexture();
+            _maskCpu.SetImage(PbrBuilder.ToImage(r.Image));
+            ShowStep();
+        }
+        else if (r.Step is { } s)
+        {
+            Arrivals.Add((r.Side, r.Step));
+            if (!_cpuTex.TryGetValue(s, out var tex))
+                _cpuTex[s] = tex = new ImageTexture();
             var img = PbrBuilder.ToImage(r.Image);
             if (!small)
                 img.GenerateMipmaps();
             tex.SetImage(img);
+            _maps[s] = tex;
             _pixels[s] = r.Image;
+            if (s == MaterialStep.Occlusion && !small)
+                OcclusionStages.Add(r.Image);
+            if (r.Float != null)
+                _heightFloat = r.Float;
+            if (r.Check != null && !small)
+            {
+                _check = r.Check;
+                ShowCheck();
+            }
             _shownSide[s] = Mathf.Max(r.Image.Width, r.Image.Height);
             if (s == Step)
             {
@@ -884,6 +1199,7 @@ public partial class MaterialsTab : VBoxContainer
         }
         else
         {
+            Arrivals.Add((r.Side, r.Step));
             var img = PbrBuilder.ToImage(r.Image);
             if (!small)
                 img.GenerateMipmaps();
@@ -894,7 +1210,7 @@ public partial class MaterialsTab : VBoxContainer
         {
             _runDone = true;
             Latency = (_gotSmall ? Latency.Small : 0, Latency.Refined, r.Ms);
-            _timing.Text = $"{(_gotSmall ? $"{Latency.Small:0} ms small, " : "")}{Latency.Refined:0} ms refined, all {Latency.All:0} ms";
+            _timing.Text = $"CPU: {(_gotSmall ? $"{Latency.Small:0} ms small, " : "")}{Latency.Refined:0} ms refined, all {Latency.All:0} ms";
             if (_pipe.Error is { } err)
                 Say($"the pipeline failed: {err}");
         }
@@ -902,11 +1218,34 @@ public partial class MaterialsTab : VBoxContainer
         RefreshStrip();
     }
 
-    /// <summary>The pixels of <paramref name="s"/>'s map as shown (the checks).</summary>
-    public RgbaImage? Pixels(MaterialStep s) => _pixels.GetValueOrDefault(s);
+    /// <summary>The pixels of <paramref name="s"/>'s map as shown (the checks; on the GPU a read back).</summary>
+    public RgbaImage? Pixels(MaterialStep s)
+    {
+        if (_gpu == null)
+            return _pixels.GetValueOrDefault(s);
+        if (!_gpuPixels.TryGetValue(s, out var img) && _gpu.Pixels(s) is { } got)
+            _gpuPixels[s] = img = got;
+        return img;
+    }
+
+    /// <summary>Whether the GPU's first occlusion (its first directions) is kept in <see cref="OcclusionStages"/> (a read back each change: the checks).</summary>
+    public bool RecordStages { get; set; }
+
+    /// <summary>The occlusion maps posted at the working size since the last change (its first directions, then all; on the GPU the first only, with <see cref="RecordStages"/>).</summary>
+    public List<RgbaImage> OcclusionStages { get; } = new();
+
+    /// <summary>The isolated colour mask as shown (null: none).</summary>
+    public RgbaImage? MaskPixels()
+    {
+        if (!_maskShown)
+            return null;
+        if (_gpu != null)
+            return _gpu.Outputs?.Mask is { } m && _gpu.Backend.Drawn ? _gpu.Backend.Read(m) : null;
+        return _maskCpu.GetImage() is { } img && !img.IsEmpty() ? PbrBuilder.From(img) : null;
+    }
 
     /// <summary>The ORM pack as shown.</summary>
-    public RgbaImage? OrmPixels => _ormPixels;
+    public RgbaImage? OrmPixels => _gpu != null ? _gpu.OrmPixels : _ormPixels;
 
     /// <summary>The 2D view (the checks: its maps).</summary>
     public MapView2D Map2D => _map2d;
@@ -917,6 +1256,7 @@ public partial class MaterialsTab : VBoxContainer
     {
         var r = Recipe;
         float t = (float)_tile.Value;
+        _preview.Tiling = t;
         var uv = new Vector3(t, t, 1);
         foreach (var m in new BaseMaterial3D[] { _mat, _raw, _unshaded })
         {
@@ -936,8 +1276,9 @@ public partial class MaterialsTab : VBoxContainer
         _mat.AlbedoTexture = _maps.GetValueOrDefault(MaterialStep.Albedo) ?? (Texture2D)_sourceTex;
         _mat.NormalEnabled = _maps.ContainsKey(MaterialStep.Normal);
         _mat.NormalTexture = _maps.GetValueOrDefault(MaterialStep.Normal);
-        _mat.OrmTexture = _ormPixels != null ? _orm : null;
-        (_mat.Roughness, _mat.Metallic, _mat.MetallicSpecular) = _ormPixels != null ? (1f, 1f, 0.5f) : (0.85f, 0f, 0.5f);
+        var orm = _gpu != null ? _gpu.Orm : _ormPixels != null ? _orm : null;
+        _mat.OrmTexture = orm;
+        (_mat.Roughness, _mat.Metallic, _mat.MetallicSpecular) = orm != null ? (1f, 1f, 0.5f) : (0.85f, 0f, 0.5f);
         bool height = r.HeightScale > 0 && MaterialPipeline.ModeOf(r, MaterialStep.Height) != StepMode.Skip && _maps.ContainsKey(MaterialStep.Height);
         _mat.HeightmapEnabled = height;
         _mat.HeightmapTexture = height ? _maps[MaterialStep.Height] : null;
@@ -983,42 +1324,85 @@ public partial class MaterialsTab : VBoxContainer
     private PbrRecipe? _saveRecipe;
     private readonly Dictionary<MaterialStep, RgbaImage> _saveMaps = new();
     private RgbaImage? _saveOrm;
+    private Image? _saveHeight;
+    private GpuBake? _bake;
 
     /// <summary>Whether a save is going; the last save's outcome (null: none yet).</summary>
-    public bool Saving => _saveRun >= 0;
+    public bool Saving => _saveRun >= 0 || _bake != null;
     public string? SaveResult { get; private set; }
 
-    /// <summary>Makes every map at the full size (in the background; not cancelled by changes), then writes them and the material (one undo step). An error or null.</summary>
+    /// <summary>The last save's time (ms: every map at the full size, read back; the files not included).</summary>
+    public double SaveMakeMs { get; private set; }
+
+    private System.Diagnostics.Stopwatch _saveClock = new();
+
+    /// <summary>
+    /// Makes every map at the full size (on the GPU in one frame, else on the CPU in the
+    /// background; not cancelled by changes), then writes them and the material (one undo step).
+    /// An error or null.
+    /// </summary>
     public string? Save()
     {
         if (Current == null || _original == null)
             return "nothing to save: add a texture to the queue";
-        if (_saveRun >= 0)
+        if (Saving)
             return "a save is going";
         _saveRecipe = (PbrRecipe)Recipe.Duplicate();
-        _saveRecipe.Version = 2;
+        _saveRecipe.Version = 3;
         _saveId = Current;
         _saveMaps.Clear();
-        _saveOrm = null;
+        (_saveOrm, _saveHeight) = (null, null);
         SaveResult = null;
+        _saveClock = System.Diagnostics.Stopwatch.StartNew();
         var inputs = new MaterialPipeline.Inputs(Current, _original, _saveRecipe, new Dictionary<string, RgbaImage>(_imports));
+        _save.Disabled = true;
+        if (_gpu != null)
+        {
+            var (w, h, scale) = MaterialPipeline.Size(inputs, MaterialPipeline.FullSide);
+            _bake = new GpuBake(this, inputs, w, h, scale);
+            return null;
+        }
         _saveRun = _pipe.Request(inputs, Step, [MaterialPipeline.FullSide], keep: true);
         // the preview's run was cancelled by the save's turn: asked for again after it
         _run = -1;
-        _save.Disabled = true;
         return null;
+    }
+
+    private void FinishBake()
+    {
+        var (maps, orm, height, _) = _bake!.Finish();
+        _bake = null;
+        foreach (var (s, img) in maps)
+            _saveMaps[s] = img;
+        _saveOrm = orm;
+        height.Convert(Image.Format.Rh);
+        _saveHeight = height;
+        SaveMakeMs = _saveClock.Elapsed.TotalMilliseconds;
+        _save.Disabled = false;
+        SaveResult = Write();
+        Say(SaveResult);
     }
 
     private void Collect(MaterialPipeline.Result r)
     {
         if (r.Step is { } s)
+        {
             _saveMaps[s] = r.Image;
-        else if (r.Side != 0)
+            if (r.Float is { } f)
+            {
+                var bytes = new byte[f.Length * 4];
+                System.Buffer.BlockCopy(f, 0, bytes, 0, bytes.Length);
+                _saveHeight = Image.CreateFromData(r.Image.Width, r.Image.Height, false, Image.Format.Rf, bytes);
+                _saveHeight.Convert(Image.Format.Rh);
+            }
+        }
+        else if (r.Side != 0 && r.Kind == ResultKind.Orm)
             _saveOrm = r.Image;
         if (!r.Last)
             return;
         _saveRun = -1;
         _save.Disabled = false;
+        SaveMakeMs = _saveClock.Elapsed.TotalMilliseconds;
         SaveResult = _saveOrm != null && _saveMaps.Count == MaterialPipeline.Steps.Length ? Write() : $"the save failed: {_pipe.Error}";
         Say(SaveResult);
         Remake();
@@ -1042,8 +1426,9 @@ public partial class MaterialsTab : VBoxContainer
         }
         bool height = r.HeightScale > 0 && MaterialPipeline.ModeOf(r, MaterialStep.Height) != StepMode.Skip;
         bool emission = MaterialPipeline.ModeOf(r, MaterialStep.Emission) != StepMode.Skip && MaterialPipeline.AnyLight(_saveMaps[MaterialStep.Emission]);
+        // the height in 16 bits (half floats: an EXR), so parallax shows no terraces
         var maps = new PbrImages(PbrBuilder.ToImage(_saveMaps[MaterialStep.Albedo]), PbrBuilder.ToImage(_saveMaps[MaterialStep.Normal]),
-            PbrBuilder.ToImage(_saveOrm!), height ? PbrBuilder.ToImage(_saveMaps[MaterialStep.Height]) : null,
+            PbrBuilder.ToImage(_saveOrm!), height ? _saveHeight ?? PbrBuilder.ToImage(_saveMaps[MaterialStep.Height]) : null,
             emission ? PbrBuilder.ToImage(_saveMaps[MaterialStep.Emission]) : null);
         var entry = TextureActions.WithMaterial(id, maps, r);
         _plugin.SetTexture(id, entry, $"Save the material of {RemasterTextures.ShortName(id)}");

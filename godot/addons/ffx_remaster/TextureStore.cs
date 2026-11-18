@@ -193,13 +193,19 @@ public static class TextureStore
     {
         var folder = RemasterTextures.Folder(id, Dir);
         DirAccess.MakeDirRecursiveAbsolute(folder);
-        var file = $"{folder}/{role}.{PbrBuilder.Hash(img)}.png";
+        // float images (the 16-bit height: half floats) as OpenEXR, single channel; the rest as PNG
+        bool exr = img.GetFormat() is Image.Format.Rh or Image.Format.Rf or Image.Format.Rgh or Image.Format.Rgf
+            or Image.Format.Rgbh or Image.Format.Rgbf or Image.Format.Rgbah or Image.Format.Rgbaf;
+        var file = $"{folder}/{role}.{PbrBuilder.Hash(img)}.{(exr ? "exr" : "png")}";
         if (!FileAccess.FileExists(file))
         {
             var copy = (Image)img.Duplicate();
             if (copy.HasMipmaps())
                 copy.ClearMipmaps();
-            copy.SavePng(file);
+            if (exr)
+                copy.SaveExr(file, grayscale: copy.GetFormat() is Image.Format.Rh or Image.Format.Rf);
+            else
+                copy.SavePng(file);
         }
         if (InProject)
             Import(file, preset);

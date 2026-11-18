@@ -69,6 +69,74 @@ void fragment() {
     private Drag _drag;
 
     public int Shape { get; private set; } = Sphere;
+
+    /// <summary>The next left click picks the object's UV under the mouse (<see cref="Picked"/>) instead of orbiting.</summary>
+    public bool Picking { get; set; }
+
+    /// <summary>A click while <see cref="Picking"/>: the UV of the object under it (0-1, the tiling undone).</summary>
+    public event System.Action<Vector2>? Picked;
+
+    /// <summary>The UV tiling on the primitives (the pick undoes it).</summary>
+    public float Tiling { get; set; } = 1;
+
+    /// <summary>The UV of the object under a point of the view (a ray against its triangles), or null.</summary>
+    public Vector2? UvAt(Vector2 pos)
+    {
+        if (_objRight.Mesh is not { } mesh || Size.X < 1 || Size.Y < 1)
+            return null;
+        // the camera's ray, from the view's own projection (the SubViewport has the view's size)
+        var from = _camRight.ProjectRayOrigin(pos);
+        var dir = _camRight.ProjectRayNormal(pos);
+        var inv = _objRight.GlobalTransform.AffineInverse();
+        from = inv * from;
+        dir = (inv.Basis * dir).Normalized();
+        float best = float.MaxValue;
+        Vector2? uv = null;
+        for (int s = 0; s < mesh.GetSurfaceCount(); s++)
+        {
+            var arrays = mesh.SurfaceGetArrays(s);
+            if (arrays[(int)Mesh.ArrayType.TexUV].VariantType == Variant.Type.Nil)
+                continue;
+            var v = arrays[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+            var t = arrays[(int)Mesh.ArrayType.TexUV].AsVector2Array();
+            var idx = arrays[(int)Mesh.ArrayType.Index].VariantType == Variant.Type.Nil ? null : arrays[(int)Mesh.ArrayType.Index].AsInt32Array();
+            int n = idx?.Length ?? v.Length;
+            for (int i = 0; i + 2 < n; i += 3)
+            {
+                int a = idx?[i] ?? i, b = idx?[i + 1] ?? i + 1, c = idx?[i + 2] ?? i + 2;
+                if (Hit(from, dir, v[a], v[b], v[c]) is not { } hit || hit.T >= best)
+                    continue;
+                best = hit.T;
+                uv = t[a] * (1 - hit.U - hit.V) + t[b] * hit.U + t[c] * hit.V;
+            }
+        }
+        if (uv is not { } u)
+            return null;
+        var tiled = Shape == Object ? u : u * Tiling;
+        return new Vector2(tiled.X - Mathf.Floor(tiled.X), tiled.Y - Mathf.Floor(tiled.Y));
+    }
+
+    /// <summary>Möller-Trumbore: the ray's distance and the barycentric weights of <paramref name="b"/> and <paramref name="c"/>.</summary>
+    private static (float T, float U, float V)? Hit(Vector3 o, Vector3 d, Vector3 a, Vector3 b, Vector3 c)
+    {
+        var e1 = b - a;
+        var e2 = c - a;
+        var p = d.Cross(e2);
+        float det = e1.Dot(p);
+        if (Mathf.Abs(det) < 1e-9f)
+            return null;
+        float f = 1 / det;
+        var s = o - a;
+        float u = f * s.Dot(p);
+        if (u < 0 || u > 1)
+            return null;
+        var q = s.Cross(e1);
+        float v = f * d.Dot(q);
+        if (v < 0 || u + v > 1)
+            return null;
+        float t = f * e2.Dot(q);
+        return t > 1e-5f ? (t, u, v) : null;
+    }
     public PreviewLight Light { get; private set; } = PreviewLight.Studio;
     public string Hdri { get; private set; } = "";
     public MapLight? MapLighting { get; private set; }
@@ -96,6 +164,9 @@ void fragment() {
             vp.RenderTargetUpdateMode = SubViewport.UpdateMode.WhenParentVisible;
             AddChild(vp);
         }
+        // the lights on both views' layers: a camera culls lights by its cull mask too (phase 1 lit
+        // the compare side with the ambient light only, so the material looked far brighter than the raw texture)
+        _key.Layers = _fill.Layers = _rim.Layers = 1 | 2;
         _right.AddChild(_root);
         _root.AddChild(_objRight);
         _root.AddChild(_objLeft);
@@ -329,6 +400,12 @@ void fragment() {
                 UpdateCamera();
                 AcceptEvent();
                 break;
+            case InputEventMouseButton { ButtonIndex: MouseButton.Left, Pressed: true } pick when Picking:
+                Picking = false;
+                if (UvAt(pick.Position) is { } puv)
+                    Picked?.Invoke(puv);
+                AcceptEvent();
+                break;
             case InputEventMouseButton { ButtonIndex: MouseButton.Left } b:
                 _drag = !b.Pressed ? Drag.None
                     : Mathf.Abs(b.Position.X - Wipe * Size.X) < 6 ? Drag.Wipe
@@ -390,6 +467,15 @@ void fragment() {
         if (l.GetWidth() == w && l.GetHeight() == h && x0 > 0)
             r.BlitRect(l, new Rect2I(0, 0, Mathf.Min(x0, w), h), Vector2I.Zero);
         return r;
+    }
+
+    /// <summary>The left view alone (the compare: the raw texture lit, or the classic look), null without a renderer.</summary>
+    public Image? CaptureCompare()
+    {
+        if (DisplayServer.GetName() == "headless")
+            return null;
+        var l = _left.GetTexture().GetImage();
+        return l == null || l.IsEmpty() ? null : l;
     }
 
     /// <summary>The right view alone (the material), null without a renderer.</summary>

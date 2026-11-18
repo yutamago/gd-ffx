@@ -81,7 +81,7 @@ public partial class PbrRecipe : Resource
 
     // ---- R2b: the material workbench's steps (docs/remaster-materials.md) -----------------------
 
-    /// <summary>1: R2's recipe (the dock's Generate, the batch); 2: made in the Materials tab (the steps' modes are meant).</summary>
+    /// <summary>1: R2's recipe (the dock's Generate, the batch); 2: made in the Materials tab (the steps' modes are meant); 3: phase 2's algorithms (bands, colour samples, shape from shading).</summary>
     [Export] public int Version { get; set; } = 1;
 
     /// <summary>The preview's working size (the largest side); the save runs at the full size (<see cref="MaxSide"/>).</summary>
@@ -107,6 +107,10 @@ public partial class PbrRecipe : Resource
     [Export(PropertyHint.Range, "0,1,0.05")] public float AlbedoColourCast { get; set; } = 0.5f;
     /// <summary>The average colour pulled to grey (white balance).</summary>
     [Export(PropertyHint.Range, "0,1,0.05")] public float AlbedoNeutralise { get; set; }
+    /// <summary>Dark spots (well below their surroundings) lifted (R2b phase 2).</summary>
+    [Export(PropertyHint.Range, "0,1,0.05")] public float AlbedoDarkSpots { get; set; }
+    /// <summary>The albedo's mean lightness and chroma pulled to the classic texture's (OKLab), 0 (off) to 1.</summary>
+    [Export(PropertyHint.Range, "0,1,0.05")] public float AlbedoMatchClassic { get; set; } = 1f;
 
     [ExportGroup("Height", "Height")]
     [Export] public StepMode HeightMode { get; set; } = StepMode.Generate;
@@ -116,12 +120,63 @@ public partial class PbrRecipe : Resource
     [Export(PropertyHint.Range, "0,8,0.1")] public float HeightBlur { get; set; } = 1f;
     /// <summary>Dark is high.</summary>
     [Export] public bool HeightInvert { get; set; }
+    // the band equaliser (R2b phase 2): seven bands, fine (0) to coarse (6), each a weight and a contrast
+    [Export(PropertyHint.Range, "0,1,0.01")] public float HeightBand0 { get; set; } = 0.15f;
+    [Export(PropertyHint.Range, "0,1,0.01")] public float HeightBand1 { get; set; } = 0.19f;
+    [Export(PropertyHint.Range, "0,1,0.01")] public float HeightBand2 { get; set; } = 0.3f;
+    [Export(PropertyHint.Range, "0,1,0.01")] public float HeightBand3 { get; set; } = 0.5f;
+    [Export(PropertyHint.Range, "0,1,0.01")] public float HeightBand4 { get; set; } = 0.7f;
+    [Export(PropertyHint.Range, "0,1,0.01")] public float HeightBand5 { get; set; } = 0.9f;
+    [Export(PropertyHint.Range, "0,1,0.01")] public float HeightBand6 { get; set; } = 1f;
+    [Export(PropertyHint.Range, "-2,2,0.05")] public float HeightBandContrast0 { get; set; } = 1f;
+    [Export(PropertyHint.Range, "-2,2,0.05")] public float HeightBandContrast1 { get; set; } = 1f;
+    [Export(PropertyHint.Range, "-2,2,0.05")] public float HeightBandContrast2 { get; set; } = 1f;
+    [Export(PropertyHint.Range, "-2,2,0.05")] public float HeightBandContrast3 { get; set; } = 1f;
+    [Export(PropertyHint.Range, "-2,2,0.05")] public float HeightBandContrast4 { get; set; } = 1f;
+    [Export(PropertyHint.Range, "-2,2,0.05")] public float HeightBandContrast5 { get; set; } = 1f;
+    [Export(PropertyHint.Range, "-2,2,0.05")] public float HeightBandContrast6 { get; set; } = 1f;
+    /// <summary>Added after the contrast.</summary>
+    [Export(PropertyHint.Range, "-0.5,0.5,0.01")] public float HeightBias { get; set; }
+    /// <summary>An S-curve around mid grey (0: none; above: steeper; below: flatter).</summary>
+    [Export(PropertyHint.Range, "-1,1,0.05")] public float HeightGain { get; set; }
+    /// <summary>Colour samples (alpha 0: off): where the colour matches, the height is the sample's value.</summary>
+    [Export] public Color HeightSample1 { get; set; } = new(0, 0, 0, 0);
+    [Export] public Color HeightSample2 { get; set; } = new(0, 0, 0, 0);
+    [Export] public Color HeightSample3 { get; set; } = new(0, 0, 0, 0);
+    [Export(PropertyHint.Range, "0,1,0.01")] public float HeightSampleValue1 { get; set; } = 1f;
+    [Export(PropertyHint.Range, "0,1,0.01")] public float HeightSampleValue2 { get; set; }
+    [Export(PropertyHint.Range, "0,1,0.01")] public float HeightSampleValue3 { get; set; } = 0.5f;
+    /// <summary>How far the samples pull the height to their values.</summary>
+    [Export(PropertyHint.Range, "0,1,0.01")] public float HeightSampleBlend { get; set; } = 1f;
+    [Export(PropertyHint.Range, "0,1,0.05")] public float HeightMaskHue { get; set; } = 1f;
+    [Export(PropertyHint.Range, "0,1,0.05")] public float HeightMaskSat { get; set; } = 0.5f;
+    [Export(PropertyHint.Range, "0,1,0.05")] public float HeightMaskLum { get; set; } = 0.5f;
+    [Export(PropertyHint.Range, "0,1,0.01")] public float HeightMaskLow { get; set; } = 0.88f;
+    [Export(PropertyHint.Range, "0,1,0.01")] public float HeightMaskHigh { get; set; } = 0.97f;
 
     [ExportGroup("Normal", "Normal")]
     [Export] public StepMode NormalMode { get; set; } = StepMode.Generate;
     [Export(PropertyHint.File, "*.png,*.webp,*.jpg")] public string NormalFile { get; set; } = "";
     [Export] public GradientFilter NormalFilter { get; set; } = GradientFilter.Sobel;
     [Export] public bool NormalInvert { get; set; }
+    // the band equaliser over the slopes (R2b phase 2), fine (0) to coarse (6)
+    [Export(PropertyHint.Range, "0,1,0.01")] public float NormalBand0 { get; set; } = 1f;
+    [Export(PropertyHint.Range, "0,1,0.01")] public float NormalBand1 { get; set; } = 0.7f;
+    [Export(PropertyHint.Range, "0,1,0.01")] public float NormalBand2 { get; set; } = 0.5f;
+    [Export(PropertyHint.Range, "0,1,0.01")] public float NormalBand3 { get; set; } = 0.35f;
+    [Export(PropertyHint.Range, "0,1,0.01")] public float NormalBand4 { get; set; } = 0.25f;
+    [Export(PropertyHint.Range, "0,1,0.01")] public float NormalBand5 { get; set; } = 0.15f;
+    [Export(PropertyHint.Range, "0,1,0.01")] public float NormalBand6 { get; set; } = 0.1f;
+    /// <summary>Shape from shading: the painted light's direction in the texture (degrees, 0: from the right, 90: from the top).</summary>
+    [Export(PropertyHint.Range, "0,360,1")] public float NormalLightAngle { get; set; } = 135f;
+    /// <summary>How much of the slope along the painted light comes from the shading (0: none).</summary>
+    [Export(PropertyHint.Range, "0,1,0.05")] public float NormalShape { get; set; }
+    /// <summary>The shading's size: what is wider counts as paint (classic texels).</summary>
+    [Export(PropertyHint.Range, "0.5,32,0.5")] public float NormalShapeRadius { get; set; } = 4f;
+    /// <summary>A bevelled, faceted look: every slope pulled to the same tilt.</summary>
+    [Export(PropertyHint.Range, "0,1,0.05")] public float NormalAngularity { get; set; }
+    /// <summary>The final contrast (the tilt scaled, the normal renormalised).</summary>
+    [Export(PropertyHint.Range, "0,4,0.05")] public float NormalContrast { get; set; } = 1f;
 
     [ExportGroup("Roughness", "Roughness")]
     [Export] public StepMode RoughnessMode { get; set; } = StepMode.Generate;
@@ -131,6 +186,26 @@ public partial class PbrRecipe : Resource
     [Export(PropertyHint.Range, "0.5,16,0.5")] public float RoughnessDetailRadius { get; set; } = 2f;
     /// <summary>Brighter is rougher.</summary>
     [Export] public bool RoughnessInvert { get; set; }
+    /// <summary>Colour samples (alpha 0: off): where the colour matches, the roughness is the sample's value.</summary>
+    [Export] public Color RoughnessSample1 { get; set; } = new(0, 0, 0, 0);
+    [Export] public Color RoughnessSample2 { get; set; } = new(0, 0, 0, 0);
+    [Export] public Color RoughnessSample3 { get; set; } = new(0, 0, 0, 0);
+    [Export(PropertyHint.Range, "0,1,0.01")] public float RoughnessSampleValue1 { get; set; } = 0.3f;
+    [Export(PropertyHint.Range, "0,1,0.01")] public float RoughnessSampleValue2 { get; set; } = 0.9f;
+    [Export(PropertyHint.Range, "0,1,0.01")] public float RoughnessSampleValue3 { get; set; } = 0.6f;
+    [Export(PropertyHint.Range, "0,1,0.05")] public float RoughnessMaskHue { get; set; } = 1f;
+    [Export(PropertyHint.Range, "0,1,0.05")] public float RoughnessMaskSat { get; set; } = 0.5f;
+    [Export(PropertyHint.Range, "0,1,0.05")] public float RoughnessMaskLum { get; set; } = 0.5f;
+    [Export(PropertyHint.Range, "0,1,0.01")] public float RoughnessMaskLow { get; set; } = 0.88f;
+    [Export(PropertyHint.Range, "0,1,0.01")] public float RoughnessMaskHigh { get; set; } = 0.97f;
+    /// <summary>The metallic parts' roughness.</summary>
+    [Export(PropertyHint.Range, "0,1,0.01")] public float RoughnessMetal { get; set; } = 0.35f;
+    [Export(PropertyHint.Range, "0,4,0.05")] public float RoughnessContrast { get; set; } = 1f;
+    [Export(PropertyHint.Range, "-0.5,0.5,0.01")] public float RoughnessBias { get; set; }
+    /// <summary>Fine detail laid over (x (1 + high-pass x amount)).</summary>
+    [Export(PropertyHint.Range, "0,4,0.05")] public float RoughnessOverlay { get; set; }
+    /// <summary>Convex edges (the normals' curvature) made smoother: worn edges.</summary>
+    [Export(PropertyHint.Range, "0,1,0.05")] public float RoughnessEdgeWear { get; set; }
 
     [ExportGroup("Metallic", "Metallic")]
     [Export] public StepMode MetallicMode { get; set; } = StepMode.Skip;
@@ -139,13 +214,30 @@ public partial class PbrRecipe : Resource
     [Export(PropertyHint.Range, "0,1.01,0.01")] public float MetallicThreshold { get; set; } = 1.01f;
     [Export(PropertyHint.Range, "0,0.5,0.01")] public float MetallicSoftness { get; set; } = 0.05f;
     [Export] public bool MetallicInvert { get; set; }
+    /// <summary>The metal's colour (alpha 0: the brightness mask instead): a colour mask on a pre-blurred copy.</summary>
+    [Export] public Color MetallicColour { get; set; } = new(0, 0, 0, 0);
+    [Export(PropertyHint.Range, "0,1,0.05")] public float MetallicMaskHue { get; set; } = 1f;
+    [Export(PropertyHint.Range, "0,1,0.05")] public float MetallicMaskSat { get; set; } = 0.5f;
+    [Export(PropertyHint.Range, "0,1,0.05")] public float MetallicMaskLum { get; set; } = 0.5f;
+    [Export(PropertyHint.Range, "0,1,0.01")] public float MetallicMaskLow { get; set; } = 0.88f;
+    [Export(PropertyHint.Range, "0,1,0.01")] public float MetallicMaskHigh { get; set; } = 0.97f;
+    /// <summary>The copy the mask is read from is blurred first (classic texels).</summary>
+    [Export(PropertyHint.Range, "0,8,0.1")] public float MetallicBlur { get; set; } = 1f;
+    [Export(PropertyHint.Range, "0,4,0.05")] public float MetallicContrast { get; set; } = 1f;
+    [Export(PropertyHint.Range, "-0.5,0.5,0.01")] public float MetallicBias { get; set; }
+    [Export(PropertyHint.Range, "0,4,0.05")] public float MetallicOverlay { get; set; }
 
     [ExportGroup("Occlusion", "Occlusion")]
     [Export] public StepMode OcclusionMode { get; set; } = StepMode.Generate;
     [Export(PropertyHint.File, "*.png,*.webp,*.jpg")] public string OcclusionFile { get; set; } = "";
-    [Export(PropertyHint.Range, "4,32,1")] public int OcclusionSamples { get; set; } = 8;
+    /// <summary>Directions per pixel (the preview adds four a frame; the bake takes all at once).</summary>
+    [Export(PropertyHint.Range, "4,64,4")] public int OcclusionSamples { get; set; } = 16;
     /// <summary>How deep the relief is (the full height range, pixels of the classic texture).</summary>
     [Export(PropertyHint.Range, "1,64,0.5")] public float OcclusionDepth { get; set; } = 16f;
+    /// <summary>The normals' share of the occlusion (the surface's own tilt), against the height's horizon.</summary>
+    [Export(PropertyHint.Range, "0,1,0.05")] public float OcclusionNormalShare { get; set; } = 0.3f;
+    [Export(PropertyHint.Range, "-0.5,0.5,0.01")] public float OcclusionBias { get; set; }
+    [Export(PropertyHint.Range, "0.1,4,0.05")] public float OcclusionPower { get; set; } = 1f;
 
     [ExportGroup("Emission", "Emission")]
     [Export] public StepMode EmissionMode { get; set; } = StepMode.Skip;

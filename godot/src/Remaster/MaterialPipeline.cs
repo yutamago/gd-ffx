@@ -5,8 +5,10 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
+using GdFfx.Remaster.Materialize;
 using GdFfx.Remaster.Texturing;
 
 namespace GdFfx.Remaster;
@@ -24,8 +26,24 @@ public enum MaterialStep
     Emission,
 }
 
+/// <summary>What a pipeline result is: a step's map, the ORM pack, or the isolated colour mask.</summary>
+public enum ResultKind
+{
+    Map,
+    Orm,
+    Mask,
+}
+
+/// <summary>The colour check (OKLab means): the source's lightness and chroma, the albedo's.</summary>
+public sealed record ColourCheck(float SourceL, float SourceC, float AlbedoL, float AlbedoC)
+{
+    public override string ToString() =>
+        $"lightness {SourceL:0.000} → {AlbedoL:0.000} ({(AlbedoL - SourceL) * 100:+0.0;-0.0} %), chroma {SourceC:0.000} → {AlbedoC:0.000} ({(SourceC > 1e-4f ? (AlbedoC / SourceC - 1) * 100 : 0):+0;-0} %)";
+}
+
 /// <summary>A setting a step shows (a <see cref="PbrRecipe"/> property): its label, range, and whether only the material reads it (no map made again).</summary>
-public sealed record StepSetting(string Property, string Label, double Min, double Max, double Step, string Tip, bool MaterialOnly = false);
+/// <param name="Group">Settings shown together: a band equaliser ("bands:..."), or a colour sample with its value ("sample").</param>
+public sealed record StepSetting(string Property, string Label, double Min, double Max, double Step, string Tip, bool MaterialOnly = false, string? Group = null);
 
 /// <summary>
 /// The material workbench's pipeline (docs/remaster-materials.md, "The steps", "Speed"; phase 1):
@@ -57,8 +75,9 @@ public sealed class MaterialPipeline
     /// <param name="Imports">The imported files' pixels by path (as the recipe names them).</param>
     public sealed record Inputs(string Key, RgbaImage Original, PbrRecipe Recipe, IReadOnlyDictionary<string, RgbaImage> Imports);
 
-    /// <summary>A made map: the run, its size (the side asked for), the step (null: the ORM pack), the pixels, ms since the request.</summary>
-    public sealed record Result(int Run, int Side, MaterialStep? Step, RgbaImage Image, double Ms, bool Last);
+    /// <summary>A made map: the run, its size (the side asked for), the step (null: the ORM pack or the mask), the pixels, ms since the request; the height also as floats (the 16-bit save); the albedo's colour check.</summary>
+    public sealed record Result(int Run, int Side, MaterialStep? Step, RgbaImage Image, double Ms, bool Last, ResultKind Kind = ResultKind.Map,
+        float[]? Float = null, ColourCheck? Check = null);
 
     /// <summary>Each step's inputs.</summary>
     public static readonly IReadOnlyDictionary<MaterialStep, MaterialStep[]> Needs = new Dictionary<MaterialStep, MaterialStep[]>
@@ -68,7 +87,7 @@ public sealed class MaterialPipeline
         [MaterialStep.Height] = [MaterialStep.Albedo, MaterialStep.Source],
         [MaterialStep.Normal] = [MaterialStep.Height],
         [MaterialStep.Occlusion] = [MaterialStep.Height, MaterialStep.Normal],
-        [MaterialStep.Roughness] = [MaterialStep.Albedo],
+        [MaterialStep.Roughness] = [MaterialStep.Albedo, MaterialStep.Metallic, MaterialStep.Normal],
         [MaterialStep.Metallic] = [MaterialStep.Albedo],
         [MaterialStep.Emission] = [MaterialStep.Albedo],
     };
@@ -115,16 +134,25 @@ public sealed class MaterialPipeline
             new("AlbedoEdgeKeep", "Edge keeping", 0, 1, 0.05, "0: a blur estimates the light; 1: a guided filter that follows edges (no halos)"),
             new("AlbedoOcclusion", "Creases lifted", 0, 1, 0.05, "Dark creases and corners (occlusion from the height) brightened"),
             new("AlbedoCavity", "Cracks lifted", 0, 1, 0.05, "Small dark cavities brightened"),
-            new("AlbedoHighlights", "Highlights down", 0, 1, 0.05, "Painted highlights pressed down"),
+            new("AlbedoHighlights", "Hot spots down", 0, 1, 0.05, "Painted highlights (spots well above their surroundings) pressed down"),
+            new("AlbedoDarkSpots", "Dark spots up", 0, 1, 0.05, "Spots well below their surroundings lifted"),
             new("AlbedoColourCast", "Colour cast flat", 0, 1, 0.05, "Slow colour casts (coloured light) flattened"),
             new("AlbedoNeutralise", "White balance", 0, 1, 0.05, "The average colour pulled to grey"),
+            new("AlbedoMatchClassic", "Match classic", 0, 1, 0.05, "The albedo's mean lightness and chroma pulled to the classic texture's (the colour check)"),
         ],
         [MaterialStep.Height] =
         [
             new("HeightFrom", "From", 0, 1, 1, "The albedo (light out first) or the source as it is"),
-            new("HeightContrast", "Contrast", 0, 4, 0.05, "Around mid grey"),
-            new("HeightBlur", "Smoothing", 0, 8, 0.1, "Paint detail smoothed out first (pixels of the classic texture)"),
+            new("HeightBlur", "Smoothing", 0, 8, 0.1, "Paint detail smoothed out before the bands (pixels of the classic texture)"),
+            .. Band("HeightBand", "Band weights", 0, 1, 0.01, "bands:weights", "How much each band (fine to coarse) adds to the height"),
+            .. Band("HeightBandContrast", "Band contrast", -2, 2, 0.05, "bands:contrast", "Each band's contrast (negative: inverted, e.g. cracks)"),
+            new("HeightContrast", "Contrast", 0, 4, 0.05, "The final contrast around mid grey"),
+            new("HeightBias", "Bias", -0.5, 0.5, 0.01, "Added after the contrast"),
+            new("HeightGain", "S-curve", -1, 1, 0.05, "Steeper (above 0) or flatter (below) around mid grey"),
             new("HeightInvert", "Dark is high", 0, 1, 1, "Invert"),
+            .. Samples("Height", "Height", "This colour's height"),
+            new("HeightSampleBlend", "Samples' pull", 0, 1, 0.01, "How far the colour samples pull the height to their values"),
+            .. MaskSettings("Height"),
             new("HeightScale", "Parallax depth", 0, 0.2, 0.005, "The material's parallax depth (0: no height map in the material)", MaterialOnly: true),
         ],
         [MaterialStep.Normal] =
@@ -133,6 +161,12 @@ public sealed class MaterialPipeline
             new("NormalBlur", "Smoothing", 0, 8, 0.1, "The height smoothed first (pixels of the classic texture)"),
             new("NormalFilter", "Filter", 0, 1, 1, "Sobel or Scharr (crisper on diagonals)"),
             new("NormalInvert", "Invert", 0, 1, 1, "Swap up and down"),
+            .. Band("NormalBand", "Band weights", 0, 1, 0.01, "bands:normal", "Each band of the slopes (fine to coarse): crisp, mids or smooth"),
+            new("NormalLightAngle", "Painted light", 0, 360, 1, "Where the texture's painted light comes from (degrees; drag the arrow on the map)"),
+            new("NormalShape", "Shape from shading", 0, 1, 0.05, "How much of the slope along the painted light comes from the shading"),
+            new("NormalShapeRadius", "Shading size", 0.5, 32, 0.5, "What is wider counts as paint, not shape (pixels of the classic texture)"),
+            new("NormalAngularity", "Angularity", 0, 1, 0.05, "A bevelled, faceted look: every slope pulled to the same tilt"),
+            new("NormalContrast", "Contrast", 0, 4, 0.05, "The final tilt scaled"),
         ],
         [MaterialStep.Roughness] =
         [
@@ -141,20 +175,36 @@ public sealed class MaterialPipeline
             new("RoughnessDetail", "Detail share", 0, 1, 0.05, "Local contrast against brightness"),
             new("RoughnessDetailRadius", "Detail size", 0.5, 16, 0.5, "The local contrast's radius (pixels of the classic texture)"),
             new("RoughnessInvert", "Brighter is rougher", 0, 1, 1, "Invert"),
+            .. Samples("Roughness", "Roughness", "This colour's roughness"),
+            .. MaskSettings("Roughness"),
+            new("RoughnessMetal", "Metal's roughness", 0, 1, 0.01, "Where the metallic map is on"),
+            new("RoughnessContrast", "Contrast", 0, 4, 0.05, "Around mid grey"),
+            new("RoughnessBias", "Bias", -0.5, 0.5, 0.01, "Added after the contrast"),
+            new("RoughnessOverlay", "Fine detail", 0, 4, 0.05, "The fine detail laid over (x (1 + high-pass x amount))"),
+            new("RoughnessEdgeWear", "Edge wear", 0, 1, 0.05, "Convex edges (the normals' curvature) smoother"),
         ],
         [MaterialStep.Metallic] =
         [
             new("Metallic", "Value", 0, 1, 0.01, "The constant (Skip), or the mask's value where it is on"),
-            new("MetallicThreshold", "Mask from brightness", 0, 1.01, 0.01, "Where the brightness passes it, metal (above 1: the value everywhere)"),
+            new("MetallicColour", "Metal's colour", 0, 1, 1, "Pick the metal's colour (a colour mask); none: the brightness mask below", Group: "sample"),
+            .. MaskSettings("Metallic"),
+            new("MetallicBlur", "Pre-blur", 0, 8, 0.1, "The copy the mask reads is blurred first (pixels of the classic texture)"),
+            new("MetallicThreshold", "Mask from brightness", 0, 1.01, 0.01, "Without a colour: where the brightness passes it, metal (above 1: the value everywhere)"),
             new("MetallicSoftness", "Softness", 0, 0.5, 0.01, "The ramp around the threshold"),
-            new("MetallicInvert", "Dark is metal", 0, 1, 1, "Invert the mask"),
+            new("MetallicInvert", "Dark is metal", 0, 1, 1, "Invert the brightness mask"),
+            new("MetallicContrast", "Contrast", 0, 4, 0.05, "Around mid grey"),
+            new("MetallicBias", "Bias", -0.5, 0.5, 0.01, "Added after the contrast"),
+            new("MetallicOverlay", "Fine detail", 0, 4, 0.05, "The fine detail laid over"),
         ],
         [MaterialStep.Occlusion] =
         [
             new("OcclusionRadius", "Radius", 0, 32, 0.5, "How far it looks (pixels of the classic texture)"),
             new("OcclusionStrength", "Strength", 0, 4, 0.05, "Factor on the darkening"),
             new("OcclusionDepth", "Depth", 1, 64, 0.5, "How deep the relief is"),
-            new("OcclusionSamples", "Directions", 4, 32, 1, "Directions per pixel"),
+            new("OcclusionSamples", "Directions", 4, 64, 4, "Directions per pixel (the preview adds four a frame)"),
+            new("OcclusionNormalShare", "From the normals", 0, 1, 0.05, "The surface's own tilt against the height's horizon"),
+            new("OcclusionBias", "Bias", -0.5, 0.5, 0.01, "Added at the end"),
+            new("OcclusionPower", "Power", 0.1, 4, 0.05, "The occlusion raised to it (above 1: darker)"),
         ],
         [MaterialStep.Emission] =
         [
@@ -163,6 +213,25 @@ public sealed class MaterialPipeline
             new("EmissionEnergy", "Energy", 0, 16, 0.05, "The material's emission energy", MaterialOnly: true),
         ],
     };
+
+    private static IEnumerable<StepSetting> Band(string prefix, string label, double min, double max, double step, string group, string tip) =>
+        Enumerable.Range(0, 7).Select(k => new StepSetting($"{prefix}{k}", $"{label} {k}", min, max, step, tip, Group: group));
+
+    private static IEnumerable<StepSetting> Samples(string step, string what, string tip) =>
+        Enumerable.Range(1, 3).SelectMany(i => new StepSetting[]
+        {
+            new($"{step}Sample{i}", $"Colour {i}", 0, 1, 1, "Pick a colour in the 2D map (none: off)", Group: "sample"),
+            new($"{step}SampleValue{i}", $"{what} {i}", 0, 1, 0.01, tip, Group: "sample"),
+        });
+
+    private static IEnumerable<StepSetting> MaskSettings(string step) =>
+    [
+        new($"{step}MaskHue", "Mask: hue", 0, 1, 0.05, "The colour masks' weight on hue"),
+        new($"{step}MaskSat", "Mask: saturation", 0, 1, 0.05, "Their weight on saturation"),
+        new($"{step}MaskLum", "Mask: lightness", 0, 1, 0.05, "Their weight on lightness"),
+        new($"{step}MaskLow", "Mask: from", 0, 1, 0.01, "The similarity where a mask starts"),
+        new($"{step}MaskHigh", "Mask: full", 0, 1, 0.01, "The similarity where it is full"),
+    ];
 
     /// <summary>The settings of the material only (no map made again when they change).</summary>
     public static readonly HashSet<string> MaterialOnly = Settings.Values.SelectMany(s => s).Where(s => s.MaterialOnly).Select(s => s.Property).ToHashSet();
@@ -186,16 +255,23 @@ public sealed class MaterialPipeline
     /// </summary>
     public static void Migrate(PbrRecipe r)
     {
-        if (r.Version >= 2)
+        if (r.Version >= 3)
             return;
-        r.Version = 2;
+        if (r.Version == 2)
+        {
+            // phase 1's: the same settings, phase 2's algorithms
+            r.Version = 3;
+            return;
+        }
+        r.Version = 3;
         r.EmissionMode = r.EmissionThreshold <= 1f ? StepMode.Generate : StepMode.Skip;
         r.MetallicMode = StepMode.Skip;
     }
 
     // ---- running ---------------------------------------------------------------------------------
 
-    private readonly Dictionary<(int Side, MaterialStep? Step), (string Sig, RgbaImage Image)> _cache = new();
+    private readonly Dictionary<int, CpuBackend> _backends = new();
+    private readonly ConditionalWeakTable<Tex, RgbaImage> _converted = new();
     private Task _chain = Task.CompletedTask;
     private CancellationTokenSource? _cts;
     private int _run;
@@ -212,12 +288,16 @@ public sealed class MaterialPipeline
     /// <summary>The last run's error (null: none).</summary>
     public string? Error { get; private set; }
 
+    /// <summary>The colour sample shown as a mask (the 2D view's isolate), or null.</summary>
+    public (MaterialStep Step, int Sample)? Isolate { get; set; }
+
     /// <summary>
     /// Asks for the maps of <paramref name="inputs"/> at each of <paramref name="sides"/>
     /// (smallest first), <paramref name="focus"/>'s chain first; the run before is cancelled
     /// (unless it was a kept one: the save's). <paramref name="keep"/>: this run is not cancelled
     /// by later ones (they wait for it). Returns the run's number (results carry it; older ones
-    /// are stale).
+    /// are stale). At the working size the occlusion comes in two parts (its first directions,
+    /// then all), as the GPU's settles over frames; the save's takes every direction at once.
     /// </summary>
     public int Request(Inputs inputs, MaterialStep focus, int[] sides, bool keep = false)
     {
@@ -229,6 +309,7 @@ public sealed class MaterialPipeline
         int run = ++_run;
         var clock = Stopwatch.StartNew();
         var order = Chain(focus).Concat(Steps).Distinct().ToList();
+        var isolate = Isolate;
         _chain = _chain.ContinueWith(_ =>
         {
             try
@@ -236,13 +317,41 @@ public sealed class MaterialPipeline
                 if (cts.IsCancellationRequested)
                     return;
                 Error = null;
+                var posts = new List<Result>();
+                void Post(Result r)
+                {
+                    // held back one, so the last can say it is
+                    if (posts.Count > 0)
+                        Results.Enqueue(posts[^1]);
+                    posts.Clear();
+                    posts.Add(r);
+                }
                 for (int i = 0; i < sides.Length; i++)
                 {
+                    bool bake = keep || sides[i] == FullSide;
+                    bool small = !bake && i < sides.Length - 1;
+                    var b = Backend(bake ? -1 : sides[i]);
+                    b.Cancel = cts.Token;
+                    var (w, h, scale) = Size(inputs, sides[i]);
+                    var outs = MaterializeGraph.Build(b, inputs.Key, inputs.Original, inputs.Imports, inputs.Recipe,
+                        new BuildRequest(w, h, scale, bake || small ? -1 : 1, isolate));
                     foreach (var s in order)
-                        Results.Enqueue(new Result(run, sides[i], s, Map(inputs, s, sides[i], cts.Token), clock.Elapsed.TotalMilliseconds, false));
-                    var orm = Orm(inputs, sides[i], cts.Token);
-                    Results.Enqueue(new Result(run, sides[i], null, orm, clock.Elapsed.TotalMilliseconds, i == sides.Length - 1));
+                        Post(MakeResult(b, outs, run, sides[i], s, clock));
+                    Post(new Result(run, sides[i], null, ToImage8(b, outs.Orm), clock.Elapsed.TotalMilliseconds, false, ResultKind.Orm));
+                    if (outs.Mask != null)
+                        Post(new Result(run, sides[i], null, ToImage8(b, outs.Mask), clock.Elapsed.TotalMilliseconds, false, ResultKind.Mask));
+                    if (!bake && !small && outs.AoDone < outs.AoChunks)
+                    {
+                        // the occlusion's other directions
+                        outs = MaterializeGraph.Build(b, inputs.Key, inputs.Original, inputs.Imports, inputs.Recipe, new BuildRequest(w, h, scale, 64, isolate));
+                        Post(MakeResult(b, outs, run, sides[i], MaterialStep.Occlusion, clock));
+                        Post(new Result(run, sides[i], null, ToImage8(b, outs.Orm), clock.Elapsed.TotalMilliseconds, false, ResultKind.Orm));
+                    }
+                    if (bake)
+                        _backends.Remove(-1);
                 }
+                if (posts.Count > 0)
+                    Results.Enqueue(posts[0] with { Last = true });
             }
             catch (OperationCanceledException)
             {
@@ -255,6 +364,31 @@ public sealed class MaterialPipeline
             }
         }, TaskScheduler.Default);
         return run;
+    }
+
+    private CpuBackend Backend(int side)
+    {
+        if (!_backends.TryGetValue(side, out var b))
+            _backends[side] = b = new CpuBackend();
+        return b;
+    }
+
+    /// <summary>A pass's image as 8-bit RGBA, once per image (the same map gives the same object).</summary>
+    private RgbaImage ToImage8(CpuBackend b, Tex t) => _converted.GetValue(t, _ => b.Get(t).ToRgba());
+
+    private Result MakeResult(CpuBackend b, MaterializeOutputs outs, int run, int side, MaterialStep s, Stopwatch clock)
+    {
+        var tex = outs.Maps[s];
+        var img = ToImage8(b, tex);
+        float[]? f = s == MaterialStep.Height ? b.Get(tex).Red() : null;
+        ColourCheck? check = null;
+        if (s == MaterialStep.Albedo && outs.AlbedoStats != null && outs.SourceStats != null)
+        {
+            var src = b.Get(outs.SourceStats).Fet(0, 0);
+            var alb = b.Get(outs.AlbedoStats).Fet(0, 0);
+            check = new ColourCheck(src.X, src.Y, alb.X, alb.Y);
+        }
+        return new Result(run, side, s, img, clock.Elapsed.TotalMilliseconds, false, ResultKind.Map, f, check);
     }
 
     /// <summary>Cancels the run going (if any; not a kept one).</summary>
@@ -275,56 +409,6 @@ public sealed class MaterialPipeline
         return (w, h, (double)w / Math.Max(1, inputs.Original.Width));
     }
 
-    /// <summary>The signature of <paramref name="s"/>'s map: what made it (its settings, mode, file, and its inputs').</summary>
-    public static string Signature(Inputs inputs, MaterialStep s)
-    {
-        var r = inputs.Recipe;
-        var sb = new System.Text.StringBuilder();
-        sb.Append(s).Append('|');
-        if (s == MaterialStep.Source)
-            sb.Append(inputs.Key).Append('|').Append(inputs.Original.Width).Append('x').Append(inputs.Original.Height)
-              .Append('|').Append(Text(r, "Upscale")).Append('|').Append(Text(r, "MaxSide")).Append('|').Append(Text(r, "Wrap"));
-        var mode = ModeOf(r, s);
-        sb.Append('|').Append(mode);
-        if (mode == StepMode.Import)
-            sb.Append('|').Append(FileOf(r, s));
-        if (mode == StepMode.Generate || s is MaterialStep.Roughness or MaterialStep.Metallic)
-            foreach (var st in Settings[s])
-                if (!st.MaterialOnly && st.Property is not ("Upscale" or "MaxSide" or "Wrap" or "WorkingSide"))
-                    sb.Append('|').Append(Text(r, st.Property));
-        if (mode == StepMode.Generate)
-            foreach (var i in Needs[s])
-                sb.Append("|<").Append(Signature(inputs, i)).Append('>');
-        else if (s != MaterialStep.Source)
-            // an imported map or a constant still takes the source's size
-            sb.Append("|<").Append(Signature(inputs, MaterialStep.Source)).Append('>');
-        return sb.ToString();
-    }
-
-    private RgbaImage Map(Inputs inputs, MaterialStep s, int side, CancellationToken cancel)
-    {
-        cancel.ThrowIfCancellationRequested();
-        var sig = Signature(inputs, s);
-        if (_cache.TryGetValue((side, s), out var hit) && hit.Sig == sig)
-            return hit.Image;
-        var img = Make(inputs, s, side, cancel);
-        _cache[(side, s)] = (sig, img);
-        return img;
-    }
-
-    private RgbaImage Orm(Inputs inputs, int side, CancellationToken cancel)
-    {
-        var sig = Signature(inputs, MaterialStep.Occlusion) + Signature(inputs, MaterialStep.Roughness) + Signature(inputs, MaterialStep.Metallic);
-        if (_cache.TryGetValue((side, null), out var hit) && hit.Sig == sig)
-            return hit.Image;
-        var ao = Map(inputs, MaterialStep.Occlusion, side, cancel);
-        var rough = Map(inputs, MaterialStep.Roughness, side, cancel);
-        var metal = Map(inputs, MaterialStep.Metallic, side, cancel);
-        var orm = PackOrm(ao, rough, metal);
-        _cache[(side, null)] = (sig, orm);
-        return orm;
-    }
-
     /// <summary>ORM: R occlusion, G roughness, B metallic (Godot's ORMMaterial3D).</summary>
     public static RgbaImage PackOrm(RgbaImage ao, RgbaImage rough, RgbaImage metal)
     {
@@ -339,88 +423,12 @@ public sealed class MaterialPipeline
         return new RgbaImage(ao.Width, ao.Height, orm);
     }
 
-    private RgbaImage Make(Inputs inputs, MaterialStep s, int side, CancellationToken cancel)
-    {
-        var r = inputs.Recipe;
-        var (w, h, scale) = Size(inputs, side);
-        bool wrap = r.Wrap;
-        var mode = ModeOf(r, s);
-        if (s == MaterialStep.Source)
-        {
-            var orig = mode == StepMode.Import && inputs.Imports.TryGetValue(r.SourceFile, out var own) ? own : inputs.Original;
-            return orig.Width == w && orig.Height == h ? orig : Lanczos.Resize(orig, w, h, ResizeOptions.Colour, null, cancel);
-        }
-        if (mode == StepMode.Import && inputs.Imports.TryGetValue(FileOf(r, s), out var file))
-            return file.Width == w && file.Height == h ? file
-                : Lanczos.Resize(file, w, h, s is MaterialStep.Albedo or MaterialStep.Emission ? ResizeOptions.Colour : ResizeOptions.Data, null, cancel);
-        RgbaImage In(MaterialStep i) => Map(inputs, i, side, cancel);
-        if (mode != StepMode.Generate)
-            return s switch
-            {
-                // an import whose file is missing falls back to the constant
-                MaterialStep.Albedo => In(MaterialStep.Source),
-                MaterialStep.Height => Solid(w, h, 128, 128, 128),
-                MaterialStep.Normal => Solid(w, h, 128, 128, 255),
-                MaterialStep.Roughness => Grey(w, h, r.RoughnessBase),
-                MaterialStep.Metallic => Grey(w, h, r.Metallic),
-                MaterialStep.Occlusion => Solid(w, h, 255, 255, 255),
-                _ => Solid(w, h, 0, 0, 0),
-            };
-        switch (s)
-        {
-            case MaterialStep.Albedo:
-            {
-                var opt = new AlbedoOptions(r.Delight, r.DelightRadius, r.AlbedoEdgeKeep, r.AlbedoOcclusion, 6, r.AlbedoCavity, 2,
-                    r.AlbedoHighlights, 0.25, r.AlbedoColourCast, r.AlbedoNeutralise, wrap);
-                return MapGenerator.Albedo(In(MaterialStep.Source), opt, null, scale, null, cancel);
-            }
-            case MaterialStep.Height:
-                return MapGenerator.Height(In(r.HeightFrom == HeightInput.Albedo ? MaterialStep.Albedo : MaterialStep.Source),
-                    new HeightOptions(r.HeightContrast, r.HeightBlur, r.HeightInvert, wrap), scale, null, cancel);
-            case MaterialStep.Normal:
-                return MapGenerator.Normal(In(MaterialStep.Height), new NormalOptions(HeightSource.HeightMap, r.NormalFilter, r.NormalStrength,
-                    r.NormalBlur, r.NormalInvert, NormalConvention.OpenGl, wrap), scale, null, cancel);
-            case MaterialStep.Roughness:
-                return MapGenerator.Roughness(In(MaterialStep.Albedo), new RoughnessOptions(r.RoughnessBase, r.RoughnessRange, r.RoughnessDetail,
-                    r.RoughnessDetailRadius, r.RoughnessInvert, wrap), scale, null, cancel);
-            case MaterialStep.Metallic:
-                return MapGenerator.Metallic(In(MaterialStep.Albedo), new MetallicOptions(r.Metallic,
-                    r.MetallicThreshold <= 1f ? r.MetallicThreshold : null, r.MetallicSoftness, r.MetallicInvert), null, cancel);
-            case MaterialStep.Occlusion:
-                _ = In(MaterialStep.Normal);
-                return MapGenerator.AmbientOcclusion(In(MaterialStep.Height), new AmbientOcclusionOptions(HeightSource.HeightMap, r.OcclusionRadius,
-                    r.OcclusionStrength, r.OcclusionSamples, r.OcclusionDepth, wrap), scale, null, cancel);
-            case MaterialStep.Emission:
-            {
-                var albedo = In(MaterialStep.Albedo);
-                var mask = MapGenerator.EmissionMask(albedo, new EmissionMaskOptions(Math.Min(r.EmissionThreshold, 1f), r.EmissionSoftness), null, cancel);
-                var e = new byte[albedo.Rgba.Length];
-                for (int i = 0; i < e.Length; i += 4)
-                {
-                    int m = mask.Rgba[i];
-                    e[i] = (byte)(albedo.Rgba[i] * m / 255);
-                    e[i + 1] = (byte)(albedo.Rgba[i + 1] * m / 255);
-                    e[i + 2] = (byte)(albedo.Rgba[i + 2] * m / 255);
-                    e[i + 3] = 255;
-                }
-                return new RgbaImage(albedo.Width, albedo.Height, e);
-            }
-        }
-        throw new ArgumentOutOfRangeException(nameof(s));
-    }
-
     public static RgbaImage Solid(int w, int h, byte r, byte g, byte b)
     {
         var px = new byte[w * h * 4];
         for (int i = 0; i < px.Length; i += 4)
             (px[i], px[i + 1], px[i + 2], px[i + 3]) = (r, g, b, 255);
         return new RgbaImage(w, h, px);
-    }
-
-    private static RgbaImage Grey(int w, int h, float v)
-    {
-        byte b = (byte)Math.Clamp((int)MathF.Round(v * 255), 0, 255);
-        return Solid(w, h, b, b, b);
     }
 
     /// <summary>Whether <paramref name="img"/> holds anything but black (an emission map worth saving).</summary>
